@@ -18,10 +18,19 @@ const createWindow = () => {
     minHeight: 600,
     backgroundColor: '#f6f7f8',
     title: 'DevEmu',
+    frame: false,
+    icon: path.join(app.getAppPath(), 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
+
+  // 自绘标题栏需要知道最大化状态以切换按钮图标
+  const sendMaximized = () => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send('win:maximized', mainWindow.isMaximized());
+  };
+  mainWindow.on('maximize', sendMaximized);
+  mainWindow.on('unmaximize', sendMaximized);
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);

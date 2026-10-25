@@ -5,6 +5,15 @@ function invoke(channel: string): (...args: unknown[]) => Promise<unknown> {
 }
 
 contextBridge.exposeInMainWorld('devemu', {
+  winMinimize: invoke('win:minimize'),
+  winToggleMaximize: invoke('win:toggleMaximize'),
+  winClose: invoke('win:close'),
+  winIsMaximized: invoke('win:isMaximized'),
+  onWinMaximized: (cb: (maximized: boolean) => void) => {
+    const listener = (_e: unknown, maximized: boolean) => cb(maximized);
+    ipcRenderer.on('win:maximized', listener);
+    return () => ipcRenderer.removeListener('win:maximized', listener);
+  },
   envStatus: invoke('env:status'),
   saveSettings: invoke('settings:save'),
   probeRoutes: invoke('settings:probe'),

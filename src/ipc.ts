@@ -31,6 +31,24 @@ onDownloadsChanged(() => {
   }
 });
 
+// 自绘标题栏的窗口控制
+ipcMain.handle('win:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+  return ok(true);
+});
+ipcMain.handle('win:toggleMaximize', (event) => {
+  const w = BrowserWindow.fromWebContents(event.sender);
+  if (w) (w.isMaximized() ? w.unmaximize() : w.maximize());
+  return ok(true);
+});
+ipcMain.handle('win:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
+  return ok(true);
+});
+ipcMain.handle('win:isMaximized', (event) => {
+  return ok(BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false);
+});
+
 function handle(channel: string, fn: (...args: never[]) => unknown): void {
   ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
     const progress: ProgressFn = (line) => {

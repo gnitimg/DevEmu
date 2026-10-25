@@ -63,7 +63,17 @@ export function onDownloadsChanged(cb: (snap: { active: DownloadItem[]; finished
     : () => undefined;
 }
 
+export function onWinMaximized(cb: (maximized: boolean) => void): () => void {
+  const fn = (window as unknown as { devemu: { onWinMaximized?: (cb: (m: boolean) => void) => () => void } }).devemu
+    .onWinMaximized;
+  return fn ? fn(cb) : () => undefined;
+}
+
 export const api = {
+  winMinimize: () => call<boolean>('winMinimize'),
+  winToggleMaximize: () => call<boolean>('winToggleMaximize'),
+  winClose: () => call<boolean>('winClose'),
+  winIsMaximized: () => call<boolean>('winIsMaximized'),
   envStatus: () =>
     call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; images: SystemImage[] }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),

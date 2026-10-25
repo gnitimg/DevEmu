@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type EmuDevice } from './api.ts';
+import { api, onWinMaximized, type EmuDevice } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -41,6 +41,14 @@ export function App() {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [devicesOpen, setDevicesOpen] = useState(true);
   const [settingsSection, setSettingsSection] = useState('storage');
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    api.winIsMaximized().then((r) => {
+      if (r.ok) setMaximized(r.data);
+    });
+    return onWinMaximized(setMaximized);
+  }, []);
 
   const goto = (p: Page) => {
     setPage(p);
@@ -118,16 +126,30 @@ export function App() {
           </svg>
         </button>
         <div className="topbar-flex" />
-        {env && (
-          <button
-            className={`sdk-chip${env.sdk ? '' : ' err'}`}
-            onClick={() => goto('settings')}
-            title={env.sdk ? env.sdk.root : '未检测到 Android SDK，点击前往设置'}
-          >
-            <span className={`dot${env.sdk ? ' on' : ''}`} />
-            {env.sdk ? 'SDK 就绪' : 'SDK 未检测到'}
+        <div className="winctl">
+          <button className="winctl-btn" title="最小化" onClick={() => void api.winMinimize()}>
+            <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
+              <path d="M0 5.5h10" />
+            </svg>
           </button>
-        )}
+          <button className="winctl-btn" title={maximized ? '还原' : '最大化'} onClick={() => void api.winToggleMaximize()}>
+            {maximized ? (
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
+                <rect x="0.5" y="2.5" width="7" height="7" />
+                <path d="M2.8 2.2V0.5h6.7v6.7H7.8" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
+                <rect x="0.5" y="0.5" width="9" height="9" />
+              </svg>
+            )}
+          </button>
+          <button className="winctl-btn winctl-close" title="关闭" onClick={() => void api.winClose()}>
+            <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
+              <path d="M0 0l10 10M10 0L0 10" />
+            </svg>
+          </button>
+        </div>
       </header>
       <div className="body">
         <aside className={`sidebar${sideOpen ? '' : ' collapsed'}`}>
