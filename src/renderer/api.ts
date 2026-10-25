@@ -3,7 +3,27 @@ import type { ApkMeta, AvdInfo, DeviceDef, ProjectMeta, RunRecord, Settings, Sdk
 export type Scope = { kind: 'project'; projectId: string } | { kind: 'shared' };
 export type R<T> = { ok: true; data: T } | { ok: false; error: string };
 export type EmuDevice = { serial: string; state: string; avdName?: string };
-export type ImageEntry = { pkg: string; version: string; desc: string };
+export type SdkPkg = { pkg: string; version: string; desc: string };
+
+export function osFromImagePkg(pkg?: string): string {
+  const m = pkg?.match(/android-([\d.]+)/);
+  if (!m) return pkg ? 'Android' : '—';
+  const api = parseFloat(m[1]);
+  const map: Record<number, string> = {
+    21: '5.0', 22: '5.1', 23: '6', 24: '7', 25: '7.1', 26: '8', 27: '8.1', 28: '9', 29: '10',
+    30: '11', 31: '12', 32: '12L', 33: '13', 34: '14', 35: '15', 36: '16',
+  };
+  return map[api] ? `Android ${map[api]}` : `Android (API ${m[1]})`;
+}
+
+export function prettyModel(deviceName?: string): string {
+  if (!deviceName) return '—';
+  return deviceName
+    .split(/[_-]/)
+    .filter(Boolean)
+    .map((w) => (w.length <= 2 && /^\d/.test(w) ? w.toUpperCase() : w[0]!.toUpperCase() + w.slice(1)))
+    .join(' ');
+}
 export type OpResult = { ok: boolean; error?: string };
 
 interface RawApi {
@@ -20,8 +40,9 @@ export const api = {
   envStatus: () =>
     call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; images: SystemImage[] }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
-  availableImages: () => call<ImageEntry[]>('availableImages'),
-  downloadImage: (pkg: string) => call<boolean>('downloadImage', pkg),
+  sdkPackages: () => call<{ installed: SdkPkg[]; available: SdkPkg[] }>('sdkPackages'),
+  sdkInstall: (pkg: string) => call<boolean>('sdkInstall', pkg),
+  sdkUninstall: (pkg: string) => call<boolean>('sdkUninstall', pkg),
   listProjects: () => call<ProjectMeta[]>('listProjects'),
   createProject: (name: string, note?: string) => call<ProjectMeta>('createProject', name, note),
   updateProject: (id: string, patch: { name?: string; note?: string }) => call<ProjectMeta | null>('updateProject', id, patch),
@@ -34,6 +55,7 @@ export const api = {
   stopEmu: (scope: Scope, avdName: string) => call<boolean>('stopEmu', scope, avdName),
   listEmulators: () => call<EmuDevice[]>('listEmulators'),
   openApkDialog: () => call<string | null>('openApkDialog'),
+  openDirDialog: (title?: string) => call<string | null>('openDirDialog', title),
   importApk: (scope: Scope, filePath: string) => call<ApkMeta>('importApk', scope, filePath),
   listApps: (scope: Scope) => call<ApkMeta[]>('listApps', scope),
   removeApk: (scope: Scope, id: string) => call<boolean>('removeApk', scope, id),

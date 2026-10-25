@@ -103,20 +103,30 @@ export interface SdkmanagerEntry {
   desc: string;
 }
 
-/** 解析 sdkmanager --list 的 Available packages 段（仅保留 system-images） */
-export function parseSdkmanagerList(stdout: string): SdkmanagerEntry[] {
-  const start = stdout.indexOf('Available Packages:');
-  const end = stdout.indexOf('Available Updates:');
-  if (start === -1) return [];
-  const section = stdout.slice(start, end === -1 ? undefined : end);
+/** sdkmanager --list 里的包行：pkg | 版本 | 描述 */
+function parseSection(section: string): SdkmanagerEntry[] {
   const entries: SdkmanagerEntry[] = [];
   for (const line of section.split(/\r?\n/)) {
-    const m = line.match(/^\s+(system-images;[^|]+)\|\s*([^|]+)\|\s*(.+)$/);
-    if (!m) continue;
-    entries.push({ pkg: m[1]!.trim(), version: m[2]!.trim(), desc: m[3]!.trim() });
+    const m = line.match(/^\s+([\w.-]+(?:;[\w.-]+)*)\s*\|\s*([^|]*)\|\s*(.*)$/);
+    if (m) entries.push({ pkg: m[1]!, version: m[2]!.trim(), desc: m[3]!.trim() });
   }
   return entries;
 }
+
+/** 解析 sdkmanager --list 的 Installed 与 Available 两段 */
+export function parseSdkmanagerSections(stdout: string): { installed: SdkmanagerEntry[]; available: SdkmanagerEntry[] } {
+  const installedStart = stdout.indexOf('Installed packages:');
+  const availableStart = stdout.indexOf('Available Packages:');
+  const updatesStart = stdout.indexOf('Available Updates:');
+  const grab = (from: number, to: number) => (from === -1 ? [] : parseSection(stdout.slice(from, to === -1 ? undefined : to)));
+  return {
+    installed: grab(installedStart, availableStart === -1 ? updatesStart : availableStart),
+    available: grab(availableStart, updatesStart),
+  };
+}
+
+/** sdkmanager 管理界面关心的包组 */
+export const SDK_PKG_GROUPS = /^(platform-tools|emulator|cmdline-tools|build-tools|platforms;|system-images;)/;
 
 export interface JavaTool {
   exe: string;

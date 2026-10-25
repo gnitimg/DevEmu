@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type EmuDevice, type ImageEntry, type Scope } from '../api.ts';
+import { api, osFromImagePkg, prettyModel, type EmuDevice, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
+import { SdkManager } from './SdkManager.tsx';
 import type { EnvStatus } from '../App.tsx';
 import type { AvdInfo, DeviceDef } from '../../core/types.ts';
 
@@ -90,7 +91,8 @@ export function VmPanel({
             <tr>
               <th style={{ width: 90 }}>状态</th>
               <th>名称</th>
-              <th>镜像</th>
+              <th style={{ width: 130 }}>系统</th>
+              <th style={{ width: 150 }}>型号</th>
               <th style={{ width: 170 }}></th>
             </tr>
           </thead>
@@ -104,9 +106,8 @@ export function VmPanel({
                     {run ? '运行中' : '已停止'}
                   </td>
                   <td className="mono">{avd.name}</td>
-                  <td className="mono" style={{ color: 'var(--text-2)' }}>
-                    {shortPkg(avd.imagePkg)}
-                  </td>
+                  <td>{osFromImagePkg(avd.imagePkg)}</td>
+                  <td>{prettyModel(avd.deviceName)}</td>
                   <td>
                     <div className="row-actions">
                       {run ? (
@@ -154,12 +155,6 @@ export function VmPanel({
   );
 }
 
-function shortPkg(pkg?: string): string {
-  if (!pkg) return '—';
-  const parts = pkg.split(';');
-  return `${parts[1] ?? ''} · ${parts[2] ?? ''} · ${parts[3] ?? ''}`;
-}
-
 function NewVmModal({
   scope,
   env,
@@ -175,9 +170,7 @@ function NewVmModal({
   const [defs, setDefs] = useState<DeviceDef[] | null>(null);
   const [defId, setDefId] = useState('');
   const [imagePkg, setImagePkg] = useState('');
-  const [available, setAvailable] = useState<ImageEntry[] | null>(null);
-  const [loadingAvail, setLoadingAvail] = useState(false);
-  const [downloading, setDownloading] = useState('');
+  const [managing, setManaging] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
@@ -193,29 +186,6 @@ function NewVmModal({
 
   const installed = env?.images ?? [];
 
-  async function loadAvailable() {
-    setLoadingAvail(true);
-    setError('');
-    const r = await api.availableImages();
-    if (r.ok) setAvailable(r.data);
-    else setError(r.error);
-    setLoadingAvail(false);
-  }
-
-  async function download(pkg: string) {
-    setDownloading(pkg);
-    setError('');
-    const r = await api.downloadImage(pkg);
-    setDownloading('');
-    if (!r.ok) {
-      setError(r.error);
-      return;
-    }
-    refreshEnv();
-    setImagePkg(pkg);
-    setAvailable(null);
-  }
-
   async function create() {
     if (!name.trim() || !imagePkg) return;
     setCreating(true);
@@ -227,6 +197,17 @@ function NewVmModal({
       return;
     }
     onDone();
+  }
+
+  if (managing) {
+    return (
+      <SdkManager
+        onClose={() => setManaging(false)}
+        onChanged={() => {
+          refreshEnv();
+        }}
+      />
+    );
   }
 
   return (
@@ -249,42 +230,24 @@ function NewVmModal({
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 pixel6_test" autoFocus />
       </div>
       <div className="form-row">
-        <label>系统镜像</label>
+        <label>系统</label>
         <select value={imagePkg} onChange={(e) => setImagePkg(e.target.value)}>
           <option value="">选择已安装的镜像</option>
           {installed.map((img) => (
             <option key={img.pkg} value={img.pkg}>
-              API {img.api} · {img.tag} · {img.abi}
+              {osFromImagePkg(img.pkg)}（API {img.api}）· {img.tag} · {img.abi}
             </option>
           ))}
         </select>
         <div className="form-hint">
-          没有合适的？{' '}
-          <button className="link-btn" onClick={loadAvailable} disabled={loadingAvail}>
-            {loadingAvail ? '查询中' : '从 SDK 仓库获取'}
+          缺少镜像或组件？{' '}
+          <button className="link-btn" onClick={() => setManaging(true)}>
+            管理 SDK
           </button>
         </div>
-        {available && (
-          <div className="img-list">
-            {available.map((e) => (
-              <div key={e.pkg} className="img-row">
-                <span className="mono" title={e.pkg}>
-                  {e.pkg}
-                </span>
-                <button
-                  className="btn btn-sm"
-                  disabled={downloading !== ''}
-                  onClick={() => download(e.pkg)}
-                >
-                  {downloading === e.pkg ? '下载中' : '下载'}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
       <div className="form-row">
-        <label>机型</label>
+        <label>型号</label>
         <select value={defId} onChange={(e) => setDefId(e.target.value)}>
           {defs === null ? <option value="">读取中</option> : null}
           {defs?.map((d) => (
@@ -295,7 +258,6 @@ function NewVmModal({
         </select>
       </div>
       {error && <div className="error-line" style={{ border: 'none', padding: '0 0 0 1px' }}>{error}</div>}
-      <div className="form-hint">下载镜像可能需要数分钟，取决于网络。</div>
     </Modal>
   );
 }

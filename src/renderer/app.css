@@ -786,7 +786,7 @@ table.tbl {
 /* ---------- 设置 ---------- */
 
 .settings-form {
-  max-width: 560px;
+  max-width: 620px;
 }
 
 .status-line {
@@ -800,6 +800,155 @@ table.tbl {
 .status-line .k {
   color: var(--text-2);
   width: 64px;
+}
+
+.path-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.save-hint {
+  font-size: 12px;
+  color: var(--ok);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.save-hint.show {
+  opacity: 1;
+}
+
+.sdk-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* ---------- SDK 管理 ---------- */
+
+.sdk-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sdk-tab {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.sdk-tab:hover {
+  color: var(--text);
+}
+
+.sdk-tab.on {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+.sdk-search {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.sdk-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.sdk-pkg {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.sdk-pkg .mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdk-desc {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 系统切换 ---------- */
+
+.sys-switch {
+  position: relative;
+  display: flex;
+  padding: 3px;
+  background: #eceef1;
+  border-radius: 8px;
+  width: 200px;
+}
+
+.sys-pill {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  background: var(--surface);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(23, 26, 30, 0.12);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sys-btn {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  height: 26px;
+  font-size: 12px;
+  color: var(--text-2);
+  border-radius: 6px;
+  transition: color 0.2s;
+}
+
+.sys-btn.on {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.sys-page {
+  animation: pageIn 0.22s ease;
+}
+
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ---------- 滚动条 ---------- */

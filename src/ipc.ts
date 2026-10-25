@@ -1,6 +1,6 @@
 import { ipcMain, dialog } from 'electron';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
-import { detectSdk, detectJava, listInstalledImages, runSdkmanager, parseSdkmanagerList } from './core/sdk.ts';
+import { detectSdk, detectJava, listInstalledImages, runSdkmanager, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
@@ -60,22 +60,36 @@ export function registerIpc(): void {
     return ok(loadAppSettings());
   });
 
-  handle('sdk:availableImages', async () => {
+  handle('sdk:packages', async () => {
     const { sdk, java } = status();
     if (!sdk?.sdkmanager) {
-      return fail('SDK 缺少 cmdline-tools，无法列出可下载镜像。可在 Android Studio 的 SDK Manager 中安装');
+      return fail('SDK 缺少 cmdline-tools，无法管理组件。可在 Android Studio 的 SDK Manager 中安装');
     }
     const res = await runSdkmanager(sdk, ['--list'], { javaPath: java });
     if (res.code !== 0) return fail('sdkmanager 执行失败：' + (res.stderr || res.stdout).slice(0, 300));
-    return ok(parseSdkmanagerList(res.stdout).filter((e) => /x86_64|arm64-v8a/.test(e.pkg)));
+    const sections = parseSdkmanagerSections(res.stdout);
+    return ok({
+      installed: sections.installed.filter((e) => SDK_PKG_GROUPS.test(e.pkg)),
+      available: sections.available.filter((e) => SDK_PKG_GROUPS.test(e.pkg)),
+    });
   });
 
-  handle('sdk:downloadImage', async (pkg: string) => {
+  const PKG_RE = /^[\w.-]+(;[\w.-]+)*$/;
+  handle('sdk:install', async (pkg: string) => {
     const { sdk, java } = status();
     if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
-    if (typeof pkg !== 'string' || !/^system-images;[\w.-]+$/.test(pkg)) return fail('非法的镜像包名');
+    if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
     const res = await runSdkmanager(sdk, [pkg], { javaPath: java });
-    if (res.code !== 0) return fail('下载失败：' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
+    if (res.code !== 0) return fail('安装失败：' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
+    return ok(true);
+  });
+
+  handle('sdk:uninstall', async (pkg: string) => {
+    const { sdk, java } = status();
+    if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
+    if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
+    const res = await runSdkmanager(sdk, ['--uninstall', pkg], { javaPath: java });
+    if (res.code !== 0) return fail('卸载失败：' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
     return ok(true);
   });
 
@@ -149,6 +163,14 @@ export function registerIpc(): void {
       title: '选择 APK',
       filters: [{ name: 'APK', extensions: ['apk'] }],
       properties: ['openFile'],
+    });
+    return ok(r.canceled ? null : r.filePaths[0] ?? null);
+  });
+
+  handle('dialog:openDir', async (title: string) => {
+    const r = await dialog.showOpenDialog({
+      title: typeof title === 'string' && title ? title : '选择文件夹',
+      properties: ['openDirectory'],
     });
     return ok(r.canceled ? null : r.filePaths[0] ?? null);
   });

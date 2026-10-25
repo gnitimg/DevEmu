@@ -56,15 +56,17 @@ export function listAvds(dataRoot: string, scope: Scope): AvdInfo[] {
     const name = ini.slice(0, -4);
     const iniPath = path.join(dirs.avdHome, ini);
     let imagePkg: string | undefined;
+    let deviceName: string | undefined;
     try {
       const config = parseConfigIni(fs.readFileSync(path.join(dirs.avdHome, `${name}.avd`, 'config.ini'), 'utf8'));
       // 新版 avdmanager 写相对路径的 image.sysdir.1；老版本写绝对路径的 image.sysimg.1.dir
       const rawDir = config['image.sysdir.1'] ?? config['image.sysimg.1.dir'];
       if (rawDir) imagePkg = imageDirToPkg(rawDir);
+      if (config['hw.device.name']) deviceName = config['hw.device.name'];
     } catch {
       // config.ini 读不到就只有名字
     }
-    avds.push({ name, iniPath, imagePkg });
+    avds.push({ name, iniPath, imagePkg, deviceName });
   }
   return avds.sort((a, b) => a.name.localeCompare(b.name));
 }

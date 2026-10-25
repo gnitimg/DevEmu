@@ -1,14 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
+import { SdkManager } from '../components/SdkManager.tsx';
 import type { EnvStatus } from '../App.tsx';
 
 export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEnv: () => void }) {
   const [dataRoot, setDataRoot] = useState('');
   const [sdkPath, setSdkPath] = useState('');
   const [javaPath, setJavaPath] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+  const [hintOn, setHintOn] = useState(false);
   const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const dirty = useRef(false);
+
+  // 「已保存」提示显示 1.8 秒后淡出
+  useEffect(() => {
+    if (!savedAt) return;
+    setHintOn(true);
+    const t = setTimeout(() => setHintOn(false), 1800);
+    return () => clearTimeout(t);
+  }, [savedAt]);
 
   useEffect(() => {
     if (env) {
@@ -18,47 +29,78 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
     }
   }, [env]);
 
-  async function save() {
-    setBusy(true);
-    setError('');
-    setSaved(false);
-    const r = await api.saveSettings({ dataRoot: dataRoot.trim(), sdkPath: sdkPath.trim() || undefined, javaPath: javaPath.trim() || undefined });
-    if (!r.ok) setError(r.error);
-    else {
-      setSaved(true);
-      refreshEnv();
+  // 自动保存：改动 600ms 后落盘，无需保存按钮
+  useEffect(() => {
+    if (!dirty.current || !dataRoot.trim()) return;
+    const timer = setTimeout(async () => {
+      setError('');
+      const r = await api.saveSettings({
+        dataRoot: dataRoot.trim(),
+        sdkPath: sdkPath.trim() || undefined,
+        javaPath: javaPath.trim() || undefined,
+      });
+      if (!r.ok) setError(r.error);
+      else {
+        setSavedAt(Date.now());
+        refreshEnv();
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [dataRoot, sdkPath, javaPath, refreshEnv]);
+
+  const markDirty = (setter: (v: string) => void) => (v: string) => {
+    dirty.current = true;
+    setter(v);
+  };
+
+  async function browse(field: 'dataRoot' | 'sdkPath' | 'javaPath', title: string) {
+    const r = await api.openDirDialog(title);
+    if (r.ok && r.data) {
+      dirty.current = true;
+      if (field === 'dataRoot') setDataRoot(r.data);
+      else if (field === 'sdkPath') setSdkPath(r.data);
+      else setJavaPath(r.data);
     }
-    setBusy(false);
   }
 
   return (
     <div>
       <div className="page-head">
         <h1 className="page-title">设置</h1>
+        <span className={`save-hint${hintOn ? ' show' : ''}`}>已保存</span>
       </div>
       <div className="settings-form">
         <div className="form-row">
           <label>数据根目录（项目、设备与记录存放位置）</label>
-          <input value={dataRoot} onChange={(e) => setDataRoot(e.target.value)} spellCheck={false} />
+          <div className="path-row">
+            <input value={dataRoot} onChange={(e) => markDirty(setDataRoot)(e.target.value)} spellCheck={false} />
+            <button className="btn" onClick={() => browse('dataRoot', '选择数据根目录')}>
+              浏览
+            </button>
+          </div>
           <div className="form-hint">修改后新数据写到新位置，已有项目需要自行迁移目录。</div>
         </div>
         <div className="form-row">
           <label>Android SDK 路径（留空则自动检测）</label>
-          <input value={sdkPath} onChange={(e) => setSdkPath(e.target.value)} placeholder="%LOCALAPPDATA%\Android\Sdk" spellCheck={false} />
+          <div className="path-row">
+            <input value={sdkPath} onChange={(e) => markDirty(setSdkPath)(e.target.value)} spellCheck={false} />
+            <button className="btn" onClick={() => browse('sdkPath', '选择 Android SDK 目录')}>
+              浏览
+            </button>
+          </div>
         </div>
         <div className="form-row">
           <label>Java 路径（留空则自动检测）</label>
-          <input value={javaPath} onChange={(e) => setJavaPath(e.target.value)} placeholder="java.exe 或 jbr 完整路径" spellCheck={false} />
+          <div className="path-row">
+            <input value={javaPath} onChange={(e) => markDirty(setJavaPath)(e.target.value)} spellCheck={false} />
+            <button className="btn" onClick={() => browse('javaPath', '选择 Java bin 目录或 jbr 目录')}>
+              浏览
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button className="btn btn-primary" onClick={save} disabled={busy || !dataRoot.trim()}>
-            {busy ? '保存中' : '保存'}
-          </button>
-          {saved && <span style={{ color: 'var(--ok)', fontSize: 12 }}>已保存</span>}
-        </div>
-        {error && <div className="error-line" style={{ marginTop: 12 }}>{error}</div>}
+        {error && <div className="error-line" style={{ border: 'none', padding: '0 0 6px 1px' }}>{error}</div>}
         {env && (
-          <div style={{ marginTop: 28 }}>
+          <div style={{ marginTop: 20 }}>
             <div className="status-line">
               <span className="k">SDK</span>
               {env.sdk ? (
@@ -77,7 +119,23 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
             </div>
           </div>
         )}
+        <div className="sdk-manage-row">
+          <button className="btn" onClick={() => setManaging(true)} disabled={!!env && !env.sdk}>
+            管理 SDK
+          </button>
+          <span className="form-hint" style={{ marginTop: 0 }}>
+            安装、卸载平台工具与系统镜像等组件
+          </span>
+        </div>
       </div>
+      {managing && (
+        <SdkManager
+          onClose={() => setManaging(false)}
+          onChanged={() => {
+            refreshEnv();
+          }}
+        />
+      )}
     </div>
   );
 }

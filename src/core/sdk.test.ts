@@ -3,35 +3,47 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { parseSdkmanagerList, listInstalledImages } from './sdk.ts';
+import { parseSdkmanagerSections, listInstalledImages, SDK_PKG_GROUPS } from './sdk.ts';
 
 const LIST_OUTPUT = `Warning: File C:\\Users\\x\\.android\\repositories.cfg could not be loaded.
 Installed packages:
   platform-tools                                   | 35.0.2 |
   system-images;android-35;google_apis;x86_64      | 5     | Android SDK Platform 35
+  sources;android-35                               | 1     | Sources for Android 35
 Available Packages:
   system-images;android-36;google_apis;x86_64      | 36.1.23 | Google Play Intel x86_64 Atom System Image
   system-images;android-36;google_apis_playstore;x86_64 | 36.1.23 | Google Play Intel x86_64 Atom System Image
   system-images;android-35;android-tv;x86_64       | 5      | Android TV x86_64 System Image
   platforms;android-36                             | 1      | Android SDK Platform 36
   build-tools;36.0.0                               | 36.0.0 | Android SDK Build-Tools 36
+  ndk;27.0.0                                       | 27     | Some NDK
 Available Updates:
   emulator                                         | 36.1.4 | Available
 Done.`;
 
-test('parseSdkmanagerList 只取 Available 段的 system-images', () => {
-  const entries = parseSdkmanagerList(LIST_OUTPUT);
-  assert.equal(entries.length, 3);
-  assert.equal(entries[0]!.pkg, 'system-images;android-36;google_apis;x86_64');
-  assert.equal(entries[0]!.version, '36.1.23');
-  assert.ok(entries[0]!.desc.includes('Google Play'));
-  assert.ok(entries.every((e) => e.pkg.startsWith('system-images;')));
-  // Installed 段的 system-images 不能混进来
-  assert.ok(!entries.some((e) => e.pkg.includes('android-35;google_apis')));
+test('parseSdkmanagerSections 分段解析 installed/available', () => {
+  const { installed, available } = parseSdkmanagerSections(LIST_OUTPUT);
+  assert.equal(installed.length, 3);
+  assert.equal(installed[0]!.pkg, 'platform-tools');
+  assert.equal(installed[1]!.pkg, 'system-images;android-35;google_apis;x86_64');
+
+  assert.equal(available.length, 6);
+  assert.equal(available[0]!.pkg, 'system-images;android-36;google_apis;x86_64');
+  assert.equal(available[0]!.version, '36.1.23');
+  assert.ok(available[0]!.desc.includes('Google Play'));
+  // Updates 段不混入
+  assert.ok(!available.some((e) => e.pkg === 'emulator'));
 });
 
-test('parseSdkmanagerList 无 Available 段返回空', () => {
-  assert.deepEqual(parseSdkmanagerList('nothing here'), []);
+test('SDK_PKG_GROUPS 过滤出管理界面的包组', () => {
+  const { installed, available } = parseSdkmanagerSections(LIST_OUTPUT);
+  assert.ok(installed.filter((e) => SDK_PKG_GROUPS.test(e.pkg)).every((e) => e.pkg !== 'sources;android-35'));
+  assert.equal(available.filter((e) => SDK_PKG_GROUPS.test(e.pkg)).length, 5);
+  assert.ok(!SDK_PKG_GROUPS.test('ndk;27.0.0'));
+});
+
+test('parseSdkmanagerSections 空输出', () => {
+  assert.deepEqual(parseSdkmanagerSections('nothing here'), { installed: [], available: [] });
 });
 
 test('listInstalledImages 扫描目录并按 API 倒序', () => {

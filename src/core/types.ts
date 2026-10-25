@@ -27,6 +27,7 @@ export interface AvdInfo {
   name: string;
   iniPath: string;
   imagePkg?: string;
+  deviceName?: string;
 }
 
 export interface DeviceDef {
