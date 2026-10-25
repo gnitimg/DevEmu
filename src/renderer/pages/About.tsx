@@ -1,71 +1,103 @@
+import { useState } from 'react';
 import logoUrl from '../../../assets/icon.png';
+import usageMd from '../../../assets/docs/usage.md?raw';
+import termsMd from '../../../assets/docs/terms.md?raw';
+import licenseMd from '../../../assets/docs/license.md?raw';
+import developerMd from '../../../assets/docs/developer.md?raw';
+import changelogMd from '../../../assets/docs/changelog.md?raw';
 import { api } from '../api.ts';
+import { Markdown } from '../components/Markdown.tsx';
 import type { EnvStatus } from '../App.tsx';
 
-/** 关于页：logo、使用说明、使用条款、开源协议、开发者、版本更新 */
+const DOCS: { id: string; title: string; body: string }[] = [
+  { id: 'usage', title: '使用说明', body: usageMd },
+  { id: 'terms', title: '使用条款', body: termsMd },
+  { id: 'license', title: '开源协议', body: licenseMd },
+  { id: 'developer', title: '开发者', body: developerMd },
+];
+
+/** 关于页：文档默认折叠，点击经 md 阅读器弹窗阅读 */
 export function About({ env }: { env: EnvStatus | null }) {
+  const [doc, setDoc] = useState<{ title: string; body: string } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [update, setUpdate] = useState<{ upToDate: boolean; latest: string; current: string; url: string } | null>(null);
+  const [updateError, setUpdateError] = useState('');
+
+  async function checkUpdate() {
+    setChecking(true);
+    setUpdateError('');
+    setUpdate(null);
+    const r = await api.checkUpdate();
+    setChecking(false);
+    if (r.ok) setUpdate(r.data);
+    else setUpdateError(r.error);
+  }
+
   return (
     <div className="about">
       <div className="about-hero">
         <img className="about-logo" src={logoUrl} alt="DevEmu" draggable={false} />
         <div className="about-name">DevEmu</div>
         <div className="about-ver mono">v{env?.version ?? ''}</div>
+        <button className="btn about-changelog" onClick={() => setDoc({ title: '更新记录', body: changelogMd })}>
+          更新记录
+        </button>
+      </div>
+      <div className="section">
+        {DOCS.map((d) => (
+          <button key={d.id} className="about-row" onClick={() => setDoc(d)}>
+            <span>{d.title}</span>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 3.5 10.5 8 6 12.5" />
+            </svg>
+          </button>
+        ))}
       </div>
       <div className="section">
         <div className="section-head">
-          <h2 className="section-title">使用说明</h2>
-        </div>
-        <ol className="about-list">
-          <li>新建项目，在项目中“新建虚拟机”：型号与系统级联选择，高级配置留空即用推荐值</li>
-          <li>启动虚拟机，等待状态变为“运行中”；窗口可拖动，位置不会被拉回</li>
-          <li>设备详情页“测试的应用”导入 APK：设备运行时导入即自动安装；设备启动完成后自动补装库中全部应用</li>
-          <li>测试记录（结果 / 截图 / logcat）在设备详情下方按项目或设备池归档</li>
-          <li>SDK 组件、镜像、下载与限速在设置和下载管理中配置</li>
-        </ol>
-      </div>
-      <div className="section">
-        <div className="section-head">
-          <h2 className="section-title">使用条款</h2>
-        </div>
-        <ul className="about-list">
-          <li>本软件按“现状”提供，仅供开发与测试用途</li>
-          <li>不对虚拟机、APK 与测试数据的丢失承担责任，重要数据请自行备份</li>
-          <li>使用 Android SDK、HarmonyOS SDK 等第三方组件须遵守其各自条款</li>
-        </ul>
-      </div>
-      <div className="section">
-        <div className="section-head">
-          <h2 className="section-title">开源协议</h2>
-        </div>
-        <div className="about-body">
-          <p>本项目以 MIT 协议开源，协议全文见仓库根目录 LICENSE。</p>
-          <p>主要依赖 Electron、React、Vite 等，分别遵循其开源协议。</p>
-        </div>
-      </div>
-      <div className="section">
-        <div className="section-head">
-          <h2 className="section-title">开发者</h2>
-        </div>
-        <div className="about-body">
-          <p>
-            gnitimg
-            <button className="link-btn mono about-repo" onClick={() => void api.openUrl('https://github.com/gnitimg/DevEmu')}>
-              github.com/gnitimg/DevEmu
+          <h2 className="section-title">检查更新</h2>
+          <div className="section-actions">
+            <button className="btn" onClick={checkUpdate} disabled={checking}>
+              {checking ? '检查中' : '检查更新'}
             </button>
-          </p>
+          </div>
         </div>
+        {update && (
+          <div className="about-body">
+            {update.upToDate ? (
+              <p>已是最新版本（v{update.current}）</p>
+            ) : (
+              <p>
+                发现新版本 <span className="mono">v{update.latest}</span>（当前 v{update.current}）
+                <button
+                  className="link-btn"
+                  style={{ marginLeft: 10 }}
+                  onClick={() => void api.openUrl(update.url)}
+                >
+                  打开下载页
+                </button>
+              </p>
+            )}
+          </div>
+        )}
+        {updateError && <div className="error-line">{updateError}</div>}
       </div>
-      <div className="section">
-        <div className="section-head">
-          <h2 className="section-title">版本更新</h2>
+
+      {doc && (
+        <div className="overlay" onClick={() => setDoc(null)}>
+          <div className="modal doc-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2 className="modal-title">{doc.title}</h2>
+              <button className="modal-close" onClick={() => setDoc(null)}>
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <Markdown src={doc.body} />
+            </div>
+          </div>
         </div>
-        <ul className="about-list">
-          <li>
-            <span className="mono">0.1.0</span>
-            <span className="about-log">项目与设备池双模式、SDK 全生命周期管理、APK 导入与自动补装、下载管理与真实限速、自绘标题栏、HarmonyOS SDK 管理</span>
-          </li>
-        </ul>
-      </div>
+      )}
     </div>
   );
 }

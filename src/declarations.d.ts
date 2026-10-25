@@ -3,3 +3,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 
 declare module '*.css';
 declare module '*.png';
+declare module '*.md?raw' {
+  const content: string;
+  export default content;
+}

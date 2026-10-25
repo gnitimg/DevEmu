@@ -90,15 +90,26 @@ export function onAutoInstall(cb: (payload: AutoInstallPayload) => void): () => 
   return fn ? fn((p) => cb(p as AutoInstallPayload)) : () => undefined;
 }
 
+export type RouteId = 'direct' | 'proxy';
+export type RouteProbe = {
+  id: RouteId;
+  name: string;
+  ok: boolean;
+  latencyMs: number;
+  loss: number;
+  speedBps: number;
+};
+
 export const api = {
   winMinimize: () => call<boolean>('winMinimize'),
   winToggleMaximize: () => call<boolean>('winToggleMaximize'),
   winClose: () => call<boolean>('winClose'),
   winIsMaximized: () => call<boolean>('winIsMaximized'),
+  checkUpdate: () => call<{ latest: string; current: string; upToDate: boolean; url: string }>('checkUpdate'),
   envStatus: () =>
     call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; harmony: HarmonyInfo | null; version: string; images: SystemImage[] }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
-  probeRoutes: () => call<{ routes: { name: string; ok: boolean; latencyMs: number; loss: number }[]; chosen?: string }>('probeRoutes'),
+  probeRoutes: (system: 'android' | 'harmonyos') => call<RouteProbe[]>('probeRoutes', system),
   harmonyTargets: () => call<string[]>('harmonyTargets'),
   harmonyUninstall: (dir: string) => call<boolean>('harmonyUninstall', dir),
   openUrl: (url: string) => call<boolean>('openUrl', url),

@@ -1409,6 +1409,7 @@ table.tbl {
 }
 
 .about-hero {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1434,16 +1435,36 @@ table.tbl {
   color: var(--text-3);
 }
 
-.about-list {
-  margin: 0;
-  padding: 12px 18px 12px 34px;
-  font-size: 12.5px;
-  color: var(--text-2);
+.about-changelog {
+  position: absolute;
+  right: 0;
+  top: 30px;
 }
 
-.about-list li {
-  margin: 5px 0;
-  line-height: 1.5;
+.about-row {
+  width: 100%;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+
+.about-row:last-child {
+  border-bottom: none;
+}
+
+.about-row:hover {
+  background: var(--bg);
+}
+
+.about-row svg {
+  margin-left: auto;
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
 }
 
 .about-body {
@@ -1456,12 +1477,174 @@ table.tbl {
   margin: 5px 0;
 }
 
-.about-repo {
-  margin-left: 10px;
+/* ---------- Markdown 阅读器 ---------- */
+
+.doc-modal {
+  width: 680px;
 }
 
-.about-log {
-  margin-left: 10px;
+.doc-modal .modal-body {
+  max-height: 64vh;
+  user-select: text;
+  cursor: text;
+}
+
+.md h2 {
+  font-size: 15px;
+  margin: 18px 0 8px;
+}
+
+.md h3 {
+  font-size: 13.5px;
+  margin: 14px 0 6px;
+}
+
+.md h4 {
+  font-size: 12.5px;
+  margin: 12px 0 4px;
+  color: var(--text-2);
+}
+
+.md p {
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin: 6px 0;
+  color: var(--text-2);
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 14px 0;
+}
+
+.md .md-li {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-2);
+  margin-left: 20px;
+}
+
+.md .md-ol {
+  list-style: decimal;
+}
+
+.md code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.md .md-table-line {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ---------- 下载线路组 ---------- */
+
+.route-panel {
+  border-bottom: 1px solid var(--border);
+}
+
+.route-panel:last-child {
+  border-bottom: none;
+}
+
+.route-head {
+  width: 100%;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  transition: background 0.12s;
+}
+
+.route-head:hover {
+  background: var(--bg);
+}
+
+.route-title {
+  font-size: 13px;
+}
+
+.route-current {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.route-chev {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+
+.route-chev.open {
+  transform: rotate(90deg);
+}
+
+.route-rows {
+  padding: 0 14px 12px 22px;
+}
+
+.route-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.route-radio {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.route-radio:hover {
+  border-color: var(--accent);
+}
+
+.route-radio.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3.5px var(--accent);
+}
+
+.route-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+}
+
+.route-name > span:first-child {
+  font-size: 12.5px;
+}
+
+.route-addr {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.route-metrics {
+  flex: 1;
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.route-metrics.bad {
+  color: var(--danger);
 }
 
 /* ---------- 滚动条 ---------- */

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import { SdkPackages } from '../components/SdkPackages.tsx';
 import { Segmented } from '../components/Segmented.tsx';
+import { RoutePanel } from '../components/RoutePanel.tsx';
 import { About } from './About.tsx';
 import type { EnvStatus } from '../App.tsx';
 
@@ -47,10 +48,8 @@ export function Settings({
   const [proxyPort, setProxyPort] = useState('7890');
   const [maxKbps, setMaxKbps] = useState(0);
   const [parallel, setParallel] = useState('2');
-  const [probing, setProbing] = useState(false);
-  const [probeResult, setProbeResult] = useState<
-    { routes: { name: string; ok: boolean; latencyMs: number; loss: number }[]; chosen?: string } | null
-  >(null);
+  const [androidRoute, setAndroidRoute] = useState<'direct' | 'proxy'>('direct');
+  const [harmonyRoute, setHarmonyRoute] = useState<'direct' | 'proxy'>('direct');
   const [savedAt, setSavedAt] = useState(0);
   const [hintOn, setHintOn] = useState(false);
   const [error, setError] = useState('');
@@ -71,6 +70,8 @@ export function Settings({
       setProxyPort(env.settings.proxyPort ? String(env.settings.proxyPort) : '7890');
       setMaxKbps(env.settings.maxDownloadKbps && env.settings.maxDownloadKbps > 0 ? env.settings.maxDownloadKbps : 0);
       setParallel(env.settings.parallelDownloads ? String(env.settings.parallelDownloads) : '2');
+      setAndroidRoute(env.settings.androidDownloadRoute === 'proxy' ? 'proxy' : 'direct');
+      setHarmonyRoute(env.settings.harmonyDownloadRoute === 'proxy' ? 'proxy' : 'direct');
     }
   }, [env]);
 
@@ -97,6 +98,8 @@ export function Settings({
         proxyPort: Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined,
         maxDownloadKbps: maxKbps > 0 ? maxKbps : 0,
         parallelDownloads: Number(parallel) || 2,
+        androidDownloadRoute: androidRoute,
+        harmonyDownloadRoute: harmonyRoute,
       });
       if (!r.ok) setError(r.error);
       else {
@@ -105,7 +108,7 @@ export function Settings({
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [dataRoot, sdkPath, harmonyPath, javaPath, gpuMode, proxyEnabled, proxyPort, maxKbps, parallel, refreshEnv]);
+  }, [dataRoot, sdkPath, harmonyPath, javaPath, gpuMode, proxyEnabled, proxyPort, maxKbps, parallel, androidRoute, harmonyRoute, refreshEnv]);
 
   async function browse(field: 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath', title: string) {
     const r = await api.openDirDialog(title);
@@ -116,15 +119,6 @@ export function Settings({
       else if (field === 'harmonyPath') setHarmonyPath(r.data);
       else setJavaPath(r.data);
     }
-  }
-
-  async function probe() {
-    setProbing(true);
-    setProbeResult(null);
-    const r = await api.probeRoutes();
-    if (r.ok) setProbeResult(r.data);
-    else setError(r.error);
-    setProbing(false);
   }
 
   const mark = <T,>(setter: (v: T) => void) => (v: T) => {
@@ -224,23 +218,20 @@ export function Settings({
                 />
               </div>
             </div>
-            <div className="settings-row">
-              <span className="settings-row-label">SDK 下载线路</span>
-              <div className="proxy-row">
-                <button className="btn" onClick={probe} disabled={probing}>
-                  {probing ? '测速中…' : '自动测速选择'}
-                </button>
-                {probeResult && (
-                  <span className="probe-result">
-                    {probeResult.routes.map((r) => (
-                      <span key={r.name} className={probeResult.chosen === (r.name === '代理' ? 'proxy' : 'direct') ? 'probe-on' : ''}>
-                        {r.name} {r.latencyMs >= 0 ? `${r.latencyMs}ms · 丢包 ${Math.round(r.loss * 100)}%` : '不通'}
-                      </span>
-                    ))}
-                  </span>
-                )}
-              </div>
-            </div>
+            <RoutePanel
+              system="android"
+              title="Android 下载线路"
+              value={androidRoute}
+              proxyPort={proxyPort}
+              onPick={mark(setAndroidRoute)}
+            />
+            <RoutePanel
+              system="harmonyos"
+              title="HarmonyOS 下载线路"
+              value={harmonyRoute}
+              proxyPort={proxyPort}
+              onPick={mark(setHarmonyRoute)}
+            />
           </div>
         )}
 

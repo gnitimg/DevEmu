@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
-import { probeRoutes, type RouteProbe } from './core/net.ts';
+import { probeSystemRoutes, type RouteProbe } from './core/net.ts';
 import { detectHarmony, harmonyTargets, listHarmonyComponents } from './core/harmony.ts';
 import { startDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
@@ -118,8 +118,10 @@ function adbAlias(sdk: NonNullable<ReturnType<typeof detectSdk>>): string {
   return sdk.adb;
 }
 
-function proxyOf(settings: { downloadRoute?: 'direct' | 'proxy'; proxyPort?: number }): { port: number } | undefined {
-  return settings.downloadRoute === 'proxy' && settings.proxyPort ? { port: settings.proxyPort } : undefined;
+/** 按系统取生效线路（缺省直连）；仅当选中“本地代理”且配了端口才走代理 */
+function proxyOf(settings: { androidDownloadRoute?: 'direct' | 'proxy'; harmonyDownloadRoute?: 'direct' | 'proxy'; proxyPort?: number }, system: 'android' | 'harmonyos' = 'android'): { port: number } | undefined {
+  const route = system === 'harmonyos' ? settings.harmonyDownloadRoute : settings.androidDownloadRoute;
+  return route === 'proxy' && settings.proxyPort ? { port: settings.proxyPort } : undefined;
 }
 
 /** SDK 包操作共用的 sdkmanager 调用（应用下载线路设置） */
@@ -195,7 +197,8 @@ export function registerIpc(): void {
       gpuMode?: string;
       proxyEnabled?: boolean;
       proxyPort?: number;
-      downloadRoute?: string;
+      androidDownloadRoute?: string;
+      harmonyDownloadRoute?: string;
       maxDownloadKbps?: number;
       parallelDownloads?: number;
     };
@@ -207,7 +210,7 @@ export function registerIpc(): void {
         : undefined;
     const port = Number(s.proxyPort);
     const proxyPort = Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.round(port) : undefined;
-    const route = s.downloadRoute === 'proxy' || s.downloadRoute === 'direct' ? s.downloadRoute : undefined;
+    const routeOf = (v: unknown) => (v === 'proxy' || v === 'direct' ? v : undefined);
     const kbps = Number(s.maxDownloadKbps);
     const parallel = Number(s.parallelDownloads);
     saveAppSettings({
@@ -218,7 +221,8 @@ export function registerIpc(): void {
       gpuMode: gpu,
       proxyEnabled: s.proxyEnabled === true,
       proxyPort,
-      downloadRoute: route,
+      androidDownloadRoute: routeOf(s.androidDownloadRoute),
+      harmonyDownloadRoute: routeOf(s.harmonyDownloadRoute),
       maxDownloadKbps: Number.isFinite(kbps) && kbps >= 0 ? Math.round(kbps) : undefined,
       parallelDownloads:
         Number.isFinite(parallel) && parallel >= 1 && parallel <= 4 ? Math.round(parallel) : undefined,
@@ -226,16 +230,33 @@ export function registerIpc(): void {
     return ok(loadAppSettings());
   });
 
-  handle('settings:probe', async () => {
+  handle('settings:probe', async (rawSystem: unknown) => {
+    const system = rawSystem === 'harmonyos' ? 'harmonyos' : 'android';
     const { settings } = status();
-    const results: RouteProbe[] = await probeRoutes(settings.proxyEnabled ? settings.proxyPort : undefined);
-    // 自动选择：延迟低者胜，全失败保持直连
-    const usable = results.filter((r) => r.latencyMs >= 0);
-    if (usable.length > 0) {
-      const best = usable.reduce((a, b) => (a.latencyMs <= b.latencyMs ? a : b));
-      saveAppSettings({ ...loadAppSettings(), downloadRoute: best.name === '代理' ? 'proxy' : 'direct' });
+    const results: RouteProbe[] = await probeSystemRoutes(system, settings.proxyEnabled ? settings.proxyPort : undefined);
+    return ok(results);
+  });
+
+  handle('app:checkUpdate', async () => {
+    const current = app.getVersion();
+    try {
+      const res = await fetch('https://api.github.com/repos/gnitimg/DevEmu/releases/latest', {
+        headers: { 'User-Agent': `DevEmu/${current}` },
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!res.ok) return fail(res.status === 404 ? '仓库暂无发布版本' : `检查更新失败（HTTP ${res.status}）`);
+      const j = (await res.json()) as { tag_name?: string; html_url?: string };
+      if (!j.tag_name) return fail('未获取到发布信息');
+      const latest = j.tag_name.replace(/^v/, '');
+      return ok({
+        latest,
+        current,
+        upToDate: latest === current,
+        url: j.html_url ?? 'https://github.com/gnitimg/DevEmu/releases',
+      });
+    } catch {
+      return fail('检查更新失败（无法访问 GitHub）');
     }
-    return ok({ routes: results, chosen: loadAppSettings().downloadRoute });
   });
 
   handle('sdk:installed', async () => {
@@ -265,7 +286,7 @@ export function registerIpc(): void {
       parallel: settings.parallelDownloads,
       maxBps: Number.isFinite(kbps) && kbps > 0 ? kbps * 1024 : 0,
       upstreamPort:
-        settings.downloadRoute === 'proxy' && settings.proxyPort ? settings.proxyPort : undefined,
+        settings.androidDownloadRoute === 'proxy' && settings.proxyPort ? settings.proxyPort : undefined,
     };
     const r = await startDownload(sdk, java, proxyOf(settings), pkg, pkg, progress, dlOpts);
     if (!r.ok) return fail(r.error ?? '安装失败');

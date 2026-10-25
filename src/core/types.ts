@@ -12,8 +12,10 @@ export interface Settings {
   /** 设备网络代理 */
   proxyEnabled?: boolean;
   proxyPort?: number;
-  /** SDK 下载线路：direct 直连 / proxy 走本地代理 */
-  downloadRoute?: 'direct' | 'proxy';
+  /** Android SDK 下载线路：direct 直连 / proxy 本地代理 */
+  androidDownloadRoute?: 'direct' | 'proxy';
+  /** HarmonyOS SDK 下载线路：direct 直连 / proxy 本地代理 */
+  harmonyDownloadRoute?: 'direct' | 'proxy';
   /** 最高下载速度 KB/s，0 或缺省为无限制 */
   maxDownloadKbps?: number;
   /** 并行下载数 1-4 */

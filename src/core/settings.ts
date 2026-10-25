@@ -38,7 +38,10 @@ export function loadSettings(dataRoot: string): Settings {
       gpuMode: parsed.gpuMode,
       proxyEnabled: parsed.proxyEnabled,
       proxyPort: parsed.proxyPort,
-      downloadRoute: parsed.downloadRoute,
+      // 旧版单一 downloadRoute 迁移为 Android 线路
+      androidDownloadRoute:
+        parsed.androidDownloadRoute ?? (parsed as Partial<Settings> & { downloadRoute?: 'direct' | 'proxy' }).downloadRoute,
+      harmonyDownloadRoute: parsed.harmonyDownloadRoute,
       maxDownloadKbps: parsed.maxDownloadKbps,
       parallelDownloads: parsed.parallelDownloads,
     };
