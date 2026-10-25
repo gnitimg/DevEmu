@@ -31,6 +31,8 @@ export function App() {
   const [page, setPage] = useState<Page>('projects');
   const [projectId, setProjectId] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
+  // 详情页所属作用域：'shared' 或项目 id
+  const [deviceScope, setDeviceScope] = useState<'shared' | string>('shared');
   const [env, setEnv] = useState<EnvStatus | null>(null);
   const [emus, setEmus] = useState<EmuDevice[]>([]);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
@@ -48,6 +50,12 @@ export function App() {
   const openSdkManage = () => {
     setSettingsSection('sdk');
     goto('settings');
+  };
+
+  const openDevice = (name: string, scope: 'shared' | string) => {
+    setDeviceName(name);
+    setDeviceScope(scope);
+    setPage('device-detail');
   };
 
   const refreshEnv = useCallback(() => {
@@ -186,10 +194,7 @@ export function App() {
               <button
                 key={a.name}
                 className={`side-child${page === 'device-detail' && deviceName === a.name ? ' active' : ''}`}
-                onClick={() => {
-                  setPage('device-detail');
-                  setDeviceName(a.name);
-                }}
+                onClick={() => openDevice(a.name, 'shared')}
                 title={a.name}
               >
                 {a.name}
@@ -235,18 +240,28 @@ export function App() {
                 refreshEmus={refreshEmus}
                 env={env}
                 onOpenSdkManage={openSdkManage}
+                onOpenVm={(name) => openDevice(name, projectId)}
               />
             ))}
           {page === 'devices' && (
-            <DevicePool emus={emus} refreshEmus={refreshEmus} env={env} onOpenSdkManage={openSdkManage} />
+            <DevicePool
+              emus={emus}
+              refreshEmus={refreshEmus}
+              env={env}
+              onOpenSdkManage={openSdkManage}
+              onOpenVm={(name) => openDevice(name, 'shared')}
+            />
           )}
           {page === 'device-detail' && deviceName !== null && (
             <DeviceDetail
               avdName={deviceName}
+              scope={deviceScope === 'shared' ? { kind: 'shared' } : { kind: 'project', projectId: deviceScope }}
               emus={emus}
               refreshEmus={refreshEmus}
+              backLabel={deviceScope === 'shared' ? '返回设备池' : `返回 ${deviceScope}`}
               onBack={() => {
-                setPage('devices');
+                setPage(deviceScope === 'shared' ? 'devices' : 'projects');
+                if (deviceScope !== 'shared') setProjectId(deviceScope);
                 setDeviceName(null);
               }}
             />

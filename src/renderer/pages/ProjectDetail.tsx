@@ -12,6 +12,7 @@ export function ProjectDetail({
   refreshEmus,
   env,
   onOpenSdkManage,
+  onOpenVm,
 }: {
   projectId: string;
   onBack: () => void;
@@ -19,6 +20,7 @@ export function ProjectDetail({
   refreshEmus: () => void;
   env: EnvStatus | null;
   onOpenSdkManage?: () => void;
+  onOpenVm?: (name: string) => void;
 }) {
   const scope: Scope = { kind: 'project', projectId };
   const [runsKey, setRunsKey] = useState(0);
@@ -31,7 +33,14 @@ export function ProjectDetail({
       <div className="page-head">
         <h1 className="page-title">{projectId}</h1>
       </div>
-      <VmPanel scope={scope} emus={emus} refreshEmus={refreshEmus} env={env} onOpenSdkManage={onOpenSdkManage} />
+      <VmPanel
+        scope={scope}
+        emus={emus}
+        refreshEmus={refreshEmus}
+        env={env}
+        onOpenSdkManage={onOpenSdkManage}
+        onOpenVm={onOpenVm}
+      />
       <ApkPanel scope={scope} emus={emus} onRecorded={() => setRunsKey((k) => k + 1)} />
       <RunsPanel scope={scope} refreshKey={runsKey} />
     </div>

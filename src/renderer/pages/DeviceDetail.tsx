@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, osFromImagePkg, prettyModel, type EmuDevice } from '../api.ts';
+import { api, osFromImagePkg, prettyModel, type EmuDevice, type Scope } from '../api.ts';
 import { EditVmModal } from '../components/VmEdit.tsx';
 import { RunsPanel } from '../components/RunsPanel.tsx';
 import type { AvdInfo } from '../../core/types.ts';
 
 export function DeviceDetail({
   avdName,
+  scope,
   emus,
   refreshEmus,
   onBack,
+  backLabel,
 }: {
   avdName: string;
+  scope: Scope;
   emus: EmuDevice[];
   refreshEmus: () => void;
   onBack: () => void;
+  backLabel?: string;
 }) {
-  const scope = { kind: 'shared' as const };
   const [avd, setAvd] = useState<AvdInfo | null>(null);
   const [hw, setHw] = useState<{ ramMb?: number; cores?: number; storageGb?: number } | null>(null);
   const [starting, setStarting] = useState(false);
@@ -31,7 +34,7 @@ export function DeviceDetail({
     api.avdHardware(scope, avdName).then((r) => {
       if (r.ok) setHw(r.data);
     });
-  }, [avdName]);
+  }, [avdName, scope]);
 
   useEffect(reload, [reload]);
 
@@ -82,7 +85,7 @@ export function DeviceDetail({
   return (
     <div>
       <button className="back-link" onClick={onBack}>
-        ← 返回设备池
+        ← {backLabel ?? '返回'}
       </button>
       <div className="page-head">
         <h1 className="page-title mono">{avdName}</h1>

@@ -11,12 +11,14 @@ export function VmPanel({
   refreshEmus,
   env,
   onOpenSdkManage,
+  onOpenVm,
 }: {
   scope: Scope;
   emus: EmuDevice[];
   refreshEmus: () => void;
   env: EnvStatus | null;
   onOpenSdkManage?: () => void;
+  onOpenVm?: (name: string) => void;
 }) {
   const [avds, setAvds] = useState<AvdInfo[] | null>(null);
   const [error, setError] = useState('');
@@ -126,7 +128,15 @@ export function VmPanel({
                     <span className={`dot${isStarting ? ' starting' : run ? ' on' : ''}`} />
                     {isStarting ? '启动中' : run ? '运行中' : '已停止'}
                   </td>
-                  <td className="mono">{avd.name}</td>
+                  <td>
+                    {onOpenVm ? (
+                      <button className="link-btn mono" style={{ fontSize: 12 }} onClick={() => onOpenVm(avd.name)}>
+                        {avd.name}
+                      </button>
+                    ) : (
+                      <span className="mono">{avd.name}</span>
+                    )}
+                  </td>
                   <td>{osFromImagePkg(avd.imagePkg)}</td>
                   <td>{prettyModel(avd.deviceName)}</td>
                   <td>
