@@ -213,7 +213,7 @@ function parseHeaders(header: string): { status: number; location?: string; tota
   return { status, location, total };
 }
 
-/** 发起一次 GET，把响应体逐块交给 sink；3xx 返回 Location 由上层重连 */
+/** 发起一次 GET，把响应体逐块交给 sink（自动处理 chunked 编码）；3xx 返回 Location 由上层重连 */
 async function getOnce(
   target: DlTarget,
   viaProxy: boolean,
@@ -229,6 +229,11 @@ async function getOnce(
     let winStart = Date.now();
     let winBytes = 0;
     let settled = false;
+    // chunked 解码状态：pending 存半行/半块残余
+    let chunked = false;
+    let pending: Buffer | null = null;
+    let remaining = 0;
+    let chunkEnded = false;
     const done = (fn: () => void) => {
       if (settled) return;
       settled = true;
@@ -250,6 +255,53 @@ async function getOnce(
       `GET ${target.path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: DevEmu\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
     );
 
+    const emit = async (body: Buffer) => {
+      bytes += body.length;
+      winBytes += body.length;
+      // 令牌桶粗限速：单窗口超量则等满窗口
+      if (opts.maxBps && opts.maxBps > 0) {
+        const now = Date.now();
+        if (now - winStart >= 1000) {
+          winStart = now;
+          winBytes = body.length;
+        } else if (winBytes > opts.maxBps) {
+          await new Promise((r) => setTimeout(r, Math.max(50, 1000 - (now - winStart))));
+          winStart = Date.now();
+          winBytes = 0;
+        }
+      }
+      if (opts.isCancelled?.()) throw new Error('已取消');
+      await sink(body);
+      opts.onProgress?.(bytes, meta!.total);
+    };
+
+    /** chunked 解码：从 pending+buf 中切出完整数据块交给 emit */
+    const feedChunked = async (buf: Buffer): Promise<void> => {
+      let rest = pending && pending.length ? Buffer.concat([pending, buf]) : buf;
+      while (!chunkEnded) {
+        if (remaining > 0) {
+          if (rest.length === 0) break;
+          const take = Math.min(remaining, rest.length);
+          await emit(rest.subarray(0, take));
+          remaining -= take;
+          rest = rest.subarray(take);
+          continue;
+        }
+        const idx = rest.indexOf('\r\n');
+        if (idx === -1) break;
+        const line = rest.subarray(0, idx).toString('latin1').trim();
+        rest = rest.subarray(idx + 2);
+        const size = parseInt(line.split(';')[0] ?? '', 16);
+        if (!Number.isFinite(size)) continue; // 尾随头等非数据行：跳过
+        if (size === 0) {
+          chunkEnded = true;
+          break;
+        }
+        remaining = size;
+      }
+      pending = rest;
+    };
+
     s.on('data', (chunk: Buffer) => {
       if (settled) return;
       if (opts.isCancelled?.()) {
@@ -264,38 +316,27 @@ async function getOnce(
         meta = parseHeaders(header.slice(0, idx));
         if ([301, 302, 303, 307, 308].includes(meta.status) && meta.location) {
           s.destroy();
-          done(() => resolve({ ...meta, status: meta!.status, location: meta!.location, bytes: 0, total: 0 }));
+          done(() => resolve({ status: meta!.status, location: meta!.location, bytes: 0, total: 0 }));
           return;
         }
         if (meta.status < 200 || meta.status >= 300) {
           fail(new Error(`HTTP ${meta.status}`));
           return;
         }
+        chunked = /^transfer-encoding:\s*chunked/im.test(header.slice(0, idx));
         chunk = chunk.subarray(idx + 4);
         if (chunk.length === 0) return;
       }
-      const body = chunk;
-      bytes += body.length;
-      winBytes += body.length;
       s.pause();
       void (async () => {
         try {
-          // 令牌桶粗限速：单窗口超量则等满窗口
-          if (opts.maxBps && opts.maxBps > 0) {
-            const now = Date.now();
-            if (now - winStart >= 1000) {
-              winStart = now;
-              winBytes = body.length;
-            } else if (winBytes > opts.maxBps) {
-              await new Promise((r) => setTimeout(r, Math.max(50, 1000 - (now - winStart))));
-              winStart = Date.now();
-              winBytes = 0;
-            }
+          if (chunked) await feedChunked(chunk);
+          else {
+            await emit(chunk);
+            // 有 Content-Length 时收满即可结束，不等服务端关连接
+            if (meta!.total > 0 && bytes >= meta!.total) s.end();
           }
-          if (opts.isCancelled?.()) throw new Error('已取消');
-          await sink(body);
-          opts.onProgress?.(bytes, meta!.total);
-          s.resume();
+          if (!settled) s.resume();
         } catch (e) {
           fail(e instanceof Error ? e : new Error(String(e)));
         }

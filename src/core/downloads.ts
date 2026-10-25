@@ -140,8 +140,20 @@ export function onDownloadsChanged(cb: () => void): () => void {
 }
 
 function snapshot(entry: Entry): DownloadItem {
-  const { child: _child, samples: _samples, ...item } = entry;
-  return item;
+  // 显式白名单：Entry 上的函数字段（onStart/abort）与进程句柄不可跨 IPC 结构化克隆
+  return {
+    pkg: entry.pkg,
+    desc: entry.desc,
+    state: entry.state,
+    percent: entry.percent,
+    downloaded: entry.downloaded,
+    total: entry.total,
+    speedBps: entry.speedBps,
+    etaSec: entry.etaSec,
+    startedAt: entry.startedAt,
+    finishedAt: entry.finishedAt,
+    error: entry.error,
+  };
 }
 
 export function listDownloads(): { active: DownloadItem[]; finished: DownloadItem[] } {

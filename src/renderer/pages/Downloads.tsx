@@ -27,18 +27,20 @@ function fmtEta(sec: number): string {
 export function Downloads() {
   const [snap, setSnap] = useState<Snap>({ active: [], finished: [] });
   const [cancelling, setCancelling] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    api.downloadsList().then((r) => {
-      if (r.ok) setSnap(r.data);
-    });
+    const fetchList = () =>
+      api.downloadsList().then((r) => {
+        if (r.ok) {
+          setSnap(r.data);
+          setError('');
+        } else setError(r.error);
+      }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    void fetchList();
     const off = onDownloadsChanged((s) => setSnap(s));
     // 订阅之外每秒兜底拉取，防错过广播（主进程重启等）
-    const timer = setInterval(() => {
-      api.downloadsList().then((r) => {
-        if (r.ok) setSnap(r.data);
-      });
-    }, 1000);
+    const timer = setInterval(fetchList, 1000);
     return () => {
       off();
       clearInterval(timer);
@@ -50,6 +52,7 @@ export function Downloads() {
       <div className="page-head">
         <h1 className="page-title">下载管理</h1>
       </div>
+      {error && <div className="error-line">{error}</div>}
 
       <div className="section">
         <div className="section-head">

@@ -58,7 +58,8 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
   function install(pkg: string, rect: DOMRect) {
     flyToDownloads(rect);
     void api.sdkInstall(pkg).then((r) => {
-      if (!r.ok) toast(`安装失败：${r.error}`);
+      if (r.ok) toast(`${pkg} 安装完成`, 'ok');
+      else toast(`安装失败：${r.error}`);
     });
   }
 
@@ -71,6 +72,7 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
       setError(r.error);
       return;
     }
+    toast(`${pkg} 卸载完成`, 'ok');
     reloadInstalled();
     onChanged();
   }
@@ -84,6 +86,7 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
       setError(r.error);
       return;
     }
+    toast(`${c.name} 卸载完成`, 'ok');
     onChanged();
   }
 
