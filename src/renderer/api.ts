@@ -69,6 +69,17 @@ export function onWinMaximized(cb: (maximized: boolean) => void): () => void {
   return fn ? fn(cb) : () => undefined;
 }
 
+export type AutoInstallPayload = {
+  avdName: string;
+  results: { id: string; label: string; ok: boolean; error?: string }[];
+};
+
+export function onAutoInstall(cb: (payload: AutoInstallPayload) => void): () => void {
+  const fn = (window as unknown as { devemu: { onAutoInstall?: (cb: (p: unknown) => void) => () => void } }).devemu
+    .onAutoInstall;
+  return fn ? fn((p) => cb(p as AutoInstallPayload)) : () => undefined;
+}
+
 export const api = {
   winMinimize: () => call<boolean>('winMinimize'),
   winToggleMaximize: () => call<boolean>('winToggleMaximize'),

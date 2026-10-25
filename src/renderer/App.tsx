@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onWinMaximized, type EmuDevice } from './api.ts';
+import { api, onAutoInstall, onWinMaximized, type EmuDevice } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
 import { DeviceDetail } from './pages/DeviceDetail.tsx';
 import { Downloads } from './pages/Downloads.tsx';
 import { Settings } from './pages/Settings.tsx';
-import { Toaster } from './components/Toast.tsx';
+import { Toaster, toast } from './components/Toast.tsx';
 import type { AvdInfo, ProjectMeta } from '../core/types.ts';
 
 type Page = 'projects' | 'devices' | 'device-detail' | 'downloads' | 'settings';
@@ -51,6 +51,18 @@ export function App() {
     });
     return onWinMaximized(setMaximized);
   }, []);
+
+  // 设备启动完成后的自动补装结果：失败逐个提示，成功汇总一条
+  useEffect(
+    () =>
+      onAutoInstall((p) => {
+        const failed = p.results.filter((r) => !r.ok);
+        for (const f of failed) toast(`${f.label} 自动安装失败：${f.error ?? '未知错误'}`);
+        const installed = p.results.length - failed.length;
+        if (installed > 0) toast(`已自动安装 ${installed} 个应用${failed.length ? `，${failed.length} 个失败` : ''}`, 'ok');
+      }),
+    [],
+  );
 
   const goto = (p: Page) => {
     setPage(p);

@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('devemu', {
     ipcRenderer.on('win:maximized', listener);
     return () => ipcRenderer.removeListener('win:maximized', listener);
   },
+  onAutoInstall: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('apk:autoinstall', listener);
+    return () => ipcRenderer.removeListener('apk:autoinstall', listener);
+  },
   envStatus: invoke('env:status'),
   saveSettings: invoke('settings:save'),
   probeRoutes: invoke('settings:probe'),

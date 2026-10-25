@@ -31,6 +31,38 @@ onDownloadsChanged(() => {
   }
 });
 
+// 启动后自动补装结果广播
+type AutoInstallResult = { id: string; label: string; ok: boolean; error?: string };
+function broadcastAutoInstall(payload: { avdName: string; results: AutoInstallResult[] }): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.webContents.isDestroyed()) w.webContents.send('apk:autoinstall', payload);
+  }
+}
+
+// 设备启动完成后把该作用域库中的所有应用补装到设备，结果经 apk:autoinstall 广播
+function autoInstallAfterBoot(scope: Scope, avdName: string, serial: string): void {
+  void (async () => {
+    try {
+      const { sdk, settings } = status();
+      if (!sdk) return;
+      const apps = listApps(scopeDirs(settings.dataRoot, scope).appsDir);
+      if (apps.length === 0) return;
+      const booted = await waitBooted(sdk.adb, serial, 300_000);
+      if (!booted) return; // 启动超时或中途关闭：静默放弃
+      const results: AutoInstallResult[] = [];
+      for (const a of apps) {
+        const r = await installApk(sdk.adb, serial, apkFilePath(scopeDirs(settings.dataRoot, scope).appsDir, a.id)).catch(
+          (err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }),
+        );
+        results.push({ id: a.id, label: a.label ?? a.fileName, ok: !!r.ok, error: r.ok ? undefined : r.error });
+      }
+      broadcastAutoInstall({ avdName, results });
+    } catch {
+      // 等待启动失败（设备已被关闭等）：不提示
+    }
+  })();
+}
+
 // 自绘标题栏的窗口控制
 ipcMain.handle('win:minimize', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.minimize();
@@ -272,6 +304,7 @@ export function registerIpc(): void {
     const httpProxy =
       settings.proxyEnabled && settings.proxyPort ? `http://127.0.0.1:${settings.proxyPort}` : undefined;
     const entry = await launchEmulator(sdk, settings.dataRoot, scope, avdName, { gpu, httpProxy });
+    autoInstallAfterBoot(scope, avdName, entry.serial);
     return ok({ avdName: entry.avdName, port: entry.port, serial: entry.serial });
   });
   handle('emu:stop', async (rawScope: unknown, avdName: string) => {
