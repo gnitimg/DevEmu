@@ -933,43 +933,102 @@ table.tbl {
   font-family: var(--mono);
 }
 
-/* ---------- 侧栏底部图标组（左下角横排） ---------- */
+/* ---------- 侧栏底部：药丸下载管理 + 圆形设置；收起后双圆竖排 ---------- */
 
 .side-footer {
   display: flex;
-  gap: 2px;
-  padding: 6px 4px 2px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
   margin-top: 6px;
 }
 
-.side-foot-btn {
+.side-dl {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+  transition: background 0.12s, color 0.12s, padding 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+}
+
+.side-dl:hover {
+  background: #eceef1;
+  color: var(--text);
+}
+
+.side-dl.on {
+  background: var(--accent-weak);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.side-dl svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.side-dl-label {
+  font-size: 12px;
+  max-width: 80px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.12s;
+}
+
+.side-set {
   width: 30px;
   height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius);
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
   color: var(--text-2);
+  flex: none;
   transition: background 0.12s, color 0.12s;
 }
 
-.side-foot-btn:hover {
+.side-set:hover {
   background: #eceef1;
   color: var(--text);
 }
 
-.side-foot-btn.on {
+.side-set.on {
   background: var(--accent-weak);
   color: var(--accent);
+  border-color: transparent;
 }
 
-.side-foot-btn svg {
-  width: 15px;
-  height: 15px;
+.side-set svg {
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar.collapsed .side-footer {
+  flex-direction: column;
+  padding: 8px 0;
+}
+
+.sidebar.collapsed .side-dl {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
   justify-content: center;
+}
+
+.sidebar.collapsed .side-dl-label {
+  max-width: 0;
+  opacity: 0;
 }
 
 /* ---------- 级联双下拉 ---------- */

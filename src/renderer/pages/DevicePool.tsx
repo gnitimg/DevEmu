@@ -32,7 +32,6 @@ export function DevicePool({
     <div>
       <div className="page-head">
         <h1 className="page-title">设备池</h1>
-        <span className="page-sub">公共设备，任意 APK 可安装测试</span>
         <div className="page-actions">
           <Segmented options={SYSTEMS} value={system} onChange={setSystem} />
         </div>

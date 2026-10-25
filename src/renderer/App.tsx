@@ -200,7 +200,7 @@ export function App() {
           <div className="nav-flex" />
           <div className="side-footer">
             <button
-              className={`side-foot-btn${page === 'downloads' ? ' on' : ''}`}
+              className={`side-dl${page === 'downloads' ? ' on' : ''}`}
               title="下载管理"
               onClick={() => goto('downloads')}
             >
@@ -209,9 +209,10 @@ export function App() {
                 <path d="M5 7l3 3 3-3" />
                 <path d="M3 11.5v1A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-1" />
               </svg>
+              <span className="side-dl-label">下载管理</span>
             </button>
             <button
-              className={`side-foot-btn${page === 'settings' ? ' on' : ''}`}
+              className={`side-set${page === 'settings' ? ' on' : ''}`}
               title="设置"
               onClick={() => goto('settings')}
             >

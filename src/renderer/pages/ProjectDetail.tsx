@@ -30,7 +30,6 @@ export function ProjectDetail({
       </button>
       <div className="page-head">
         <h1 className="page-title">{projectId}</h1>
-        <span className="page-sub">虚拟机与数据仅本项目可见</span>
       </div>
       <VmPanel scope={scope} emus={emus} refreshEmus={refreshEmus} env={env} onOpenSdkManage={onOpenSdkManage} />
       <ApkPanel scope={scope} emus={emus} onRecorded={() => setRunsKey((k) => k + 1)} />

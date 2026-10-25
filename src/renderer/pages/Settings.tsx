@@ -52,9 +52,13 @@ export function Settings({
   const [hintOn, setHintOn] = useState(false);
   const [error, setError] = useState('');
   const dirty = useRef(false);
+  // 只在首次拿到 env 时回填一次；之后一律以用户输入为准，
+  // 避免保存后的 env 刷新把正在编辑的值跳回旧值
+  const syncedOnce = useRef(false);
 
   useEffect(() => {
-    if (env) {
+    if (env && !syncedOnce.current) {
+      syncedOnce.current = true;
       setDataRoot(env.settings.dataRoot);
       setSdkPath(env.settings.sdkPath ?? env.sdk?.root ?? '');
       setJavaPath(env.settings.javaPath ?? env.java ?? '');
@@ -253,10 +257,10 @@ export function Settings({
           <div className="section">
             <div className="settings-row">
               <span className="settings-row-label">图形后端</span>
-              <select value={gpuMode} onChange={(e) => mark(setGpuMode)(e.target.value)} style={{ width: 260 }}>
-                <option value="swiftshader_indirect">软件渲染（兼容性最好，推荐）</option>
-                <option value="angle_indirect">ANGLE / Direct3D（较快，个别驱动会黑屏）</option>
-                <option value="host">宿主 GPU（最快，需独立显卡，易崩溃）</option>
+              <select value={gpuMode} onChange={(e) => mark(setGpuMode)(e.target.value)} style={{ width: 200 }}>
+                <option value="swiftshader_indirect">软件渲染</option>
+                <option value="angle_indirect">ANGLE / Direct3D</option>
+                <option value="host">宿主 GPU</option>
               </select>
             </div>
           </div>

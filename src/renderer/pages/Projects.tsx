@@ -26,7 +26,6 @@ export function Projects({ onOpen }: { onOpen: (id: string) => void }) {
     <div>
       <div className="page-head">
         <h1 className="page-title">项目</h1>
-        <span className="page-sub">每个项目独立管理虚拟机、APK 与测试记录</span>
         <div className="page-actions">
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
             新建项目

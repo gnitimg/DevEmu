@@ -86,7 +86,6 @@ export function DeviceDetail({
       </button>
       <div className="page-head">
         <h1 className="page-title mono">{avdName}</h1>
-        <span className="page-sub">设备详情</span>
       </div>
       <div className="device-detail-grid">
         <div className="section" style={{ marginBottom: 0 }}>
