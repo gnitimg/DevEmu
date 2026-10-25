@@ -1,6 +1,6 @@
 # DevEmu
 
-多系统虚拟机测试工作台。按项目组织虚拟机与 APK，一键安装测试；提供设备池公共设备与 SDK 全生命周期管理。当前支持 Android，架构已按多系统插件化预留（core 层为纯 Node，不依赖 Electron）。
+多系统虚拟机测试工作台。按项目组织虚拟机与 APK，一键安装测试；提供设备池公共设备与 SDK 全生命周期管理。当前支持 Android；HarmonyOS 适配进行中（SDK 管理 / hdc 设备接入，见下文），架构已按多系统插件化预留（core 层为纯 Node，不依赖 Electron）。
 
 ## 功能
 
@@ -32,6 +32,12 @@
 **设备网络**
 
 - 设备代理：启用后模拟器网络走 `http://127.0.0.1:<端口>`（默认 7890）
+
+**HarmonyOS（适配中）**
+
+- SDK 管理页右上角可切换 Android / HarmonyOS
+- 自动探测 DevEco Studio 安装（`DEVECO_HOME`、`C:\Program Files\Huawei\DevEco Studio*`）与 SDK（`DEVECO_SDK_HOME`、`HOS_SDK_HOME`、`%LOCALAPPDATA%\Huawei\Sdk`），支持 default 与版本号两种目录布局；也可在设置中浏览指定
+- 展示 hdc 路径、SDK 版本（uni-package.json）、openharmony / hms 组件清单，并可经 `hdc list targets` 查询在线设备
 
 ## 环境要求
 
@@ -76,6 +82,7 @@ src/
     downloads.ts   下载管理器（解析、速度/ETA、并行队列、取消）
     throttle.ts    本地整形代理（令牌桶限速、CONNECT 隧道）
     net.ts         下载线路测速
+    harmony.ts     HarmonyOS 环境探测（DevEco/SDK/hdc）与设备列表
     win.ts         窗口重定位/禁拉伸/兜底强杀（Win32）
   renderer/     React 界面（侧栏工作目录 + 各页面）
 ```

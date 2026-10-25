@@ -34,6 +34,7 @@ export function loadSettings(dataRoot: string): Settings {
       dataRoot: parsed.dataRoot,
       sdkPath: parsed.sdkPath,
       javaPath: parsed.javaPath,
+      harmonySdkPath: parsed.harmonySdkPath,
       gpuMode: parsed.gpuMode,
       proxyEnabled: parsed.proxyEnabled,
       proxyPort: parsed.proxyPort,

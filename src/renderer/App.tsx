@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onWinMaximized, type EmuDevice } from './api.ts';
+import { api, onAutoInstall, onWinMaximized, type EmuDevice, type HarmonyInfo } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -8,24 +8,15 @@ import { DeviceDetail } from './pages/DeviceDetail.tsx';
 import { Downloads } from './pages/Downloads.tsx';
 import { Settings } from './pages/Settings.tsx';
 import { Toaster, toast } from './components/Toast.tsx';
-import type { AvdInfo, ProjectMeta } from '../core/types.ts';
+import type { AvdInfo, ProjectMeta, Settings as SettingsData } from '../core/types.ts';
 
 type Page = 'projects' | 'devices' | 'device-detail' | 'downloads' | 'settings';
 
 export interface EnvStatus {
-  settings: {
-    dataRoot: string;
-    sdkPath?: string;
-    javaPath?: string;
-    gpuMode?: string;
-    proxyEnabled?: boolean;
-    proxyPort?: number;
-    downloadRoute?: string;
-    maxDownloadKbps?: number;
-    parallelDownloads?: number;
-  };
+  settings: SettingsData;
   sdk: { root: string } | null;
   java: string | null;
+  harmony: HarmonyInfo | null;
   images: { pkg: string; api: number; tag: string; abi: string }[];
 }
 

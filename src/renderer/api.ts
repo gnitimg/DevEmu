@@ -1,9 +1,17 @@
-import type { ApkMeta, AvdInfo, DeviceDef, ProjectMeta, RunRecord, Settings, SdkInfo, SystemImage } from '../core/types.ts';
+import type { ApkMeta, AvdInfo, DeviceDef, HarmonyComponent, ProjectMeta, RunRecord, Settings, SdkInfo, SystemImage } from '../core/types.ts';
 
 export type Scope = { kind: 'project'; projectId: string } | { kind: 'shared' };
 export type R<T> = { ok: true; data: T } | { ok: false; error: string };
 export type EmuDevice = { serial: string; state: string; avdName?: string };
 export type SdkPkg = { pkg: string; version: string; desc: string };
+export type HarmonyInfo = {
+  sdkRoot: string;
+  hdc: string;
+  deveco?: string;
+  emulator?: string;
+  apiVersion?: string;
+  components: HarmonyComponent[];
+};
 
 export function osFromImagePkg(pkg?: string): string {
   const m = pkg?.match(/android-([\d.]+)/);
@@ -86,9 +94,10 @@ export const api = {
   winClose: () => call<boolean>('winClose'),
   winIsMaximized: () => call<boolean>('winIsMaximized'),
   envStatus: () =>
-    call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; images: SystemImage[] }>('envStatus'),
+    call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; harmony: HarmonyInfo | null; images: SystemImage[] }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
   probeRoutes: () => call<{ routes: { name: string; ok: boolean; latencyMs: number; loss: number }[]; chosen?: string }>('probeRoutes'),
+  harmonyTargets: () => call<string[]>('harmonyTargets'),
   sdkInstalled: () => call<SdkPkg[]>('sdkInstalled'),
   sdkAvailable: () => call<SdkPkg[]>('sdkAvailable'),
   sdkInstall: (pkg: string) => call<boolean>('sdkInstall', pkg),

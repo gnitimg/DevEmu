@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, dialog, type IpcMainInvokeEvent } from 'electro
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
 import { probeRoutes, type RouteProbe } from './core/net.ts';
+import { detectHarmony, harmonyTargets } from './core/harmony.ts';
 import { startDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
@@ -149,7 +150,18 @@ export function registerIpc(): void {
     const settings = loadAppSettings();
     const sdk = detectSdk(settings.sdkPath);
     const java = detectJava(settings.javaPath);
-    return ok({ settings, sdk, java, images: sdk ? listInstalledImages(sdk.root) : [] });
+    const harmony = detectHarmony(settings.harmonySdkPath);
+    return ok({ settings, sdk, java, harmony, images: sdk ? listInstalledImages(sdk.root) : [] });
+  });
+
+  handle('harmony:targets', async () => {
+    const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
+    if (!harmony) return fail('未检测到 HarmonyOS SDK');
+    try {
+      return ok(await harmonyTargets(harmony.hdc));
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
   });
 
   handle('settings:save', (raw: unknown) => {
@@ -157,6 +169,7 @@ export function registerIpc(): void {
       dataRoot?: string;
       sdkPath?: string;
       javaPath?: string;
+      harmonySdkPath?: string;
       gpuMode?: string;
       proxyEnabled?: boolean;
       proxyPort?: number;
@@ -166,6 +179,10 @@ export function registerIpc(): void {
     };
     if (!s.dataRoot || typeof s.dataRoot !== 'string') return fail('数据根不能为空');
     const gpu = s.gpuMode && ['angle_indirect', 'swiftshader_indirect', 'host'].includes(s.gpuMode) ? s.gpuMode : undefined;
+    const harmonyPath =
+      typeof s.harmonySdkPath === 'string' && s.harmonySdkPath.trim() && !/[<>"|?*]/.test(s.harmonySdkPath)
+        ? s.harmonySdkPath.trim()
+        : undefined;
     const port = Number(s.proxyPort);
     const proxyPort = Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.round(port) : undefined;
     const route = s.downloadRoute === 'proxy' || s.downloadRoute === 'direct' ? s.downloadRoute : undefined;
@@ -175,6 +192,7 @@ export function registerIpc(): void {
       dataRoot: s.dataRoot,
       sdkPath: s.sdkPath,
       javaPath: s.javaPath,
+      harmonySdkPath: harmonyPath,
       gpuMode: gpu,
       proxyEnabled: s.proxyEnabled === true,
       proxyPort,

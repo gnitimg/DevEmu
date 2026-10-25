@@ -5,6 +5,8 @@ export interface Settings {
   dataRoot: string;
   sdkPath?: string;
   javaPath?: string;
+  /** HarmonyOS SDK 根目录（含 default/openharmony 等结构） */
+  harmonySdkPath?: string;
   /** 模拟器图形后端：angle_indirect / swiftshader_indirect / host */
   gpuMode?: string;
   /** 设备网络代理 */
@@ -25,6 +27,27 @@ export interface SdkInfo {
   avdmanager?: string;
   sdkmanager?: string;
   aapt?: string;
+}
+
+/** HarmonyOS SDK 组件（openharmony / hms 下的子目录） */
+export interface HarmonyComponent {
+  name: string;
+  dir: string;
+  version?: string;
+}
+
+/** HarmonyOS 环境探测结果 */
+export interface HarmonyInfo {
+  /** SDK 根（含 default 或版本号子目录的那一层） */
+  sdkRoot: string;
+  hdc: string;
+  /** DevEco Studio 安装目录（如有） */
+  deveco?: string;
+  /** DevEco 模拟器可执行文件（如有） */
+  emulator?: string;
+  /** 从 uni-package.json 推断的 SDK 版本 */
+  apiVersion?: string;
+  components: HarmonyComponent[];
 }
 
 export interface SystemImage {
