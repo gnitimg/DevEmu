@@ -20,6 +20,18 @@ contextBridge.exposeInMainWorld('devemu', {
     return () => ipcRenderer.removeListener('apk:autoinstall', listener);
   },
   envStatus: invoke('env:status'),
+  envCheckDir: invoke('env:checkDir'),
+  envInstall: invoke('env:install'),
+  onEnvChanged: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('env:changed', listener);
+    return () => ipcRenderer.removeListener('env:changed', listener);
+  },
+  onEnvInstallResult: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('env:installResult', listener);
+    return () => ipcRenderer.removeListener('env:installResult', listener);
+  },
   saveSettings: invoke('settings:save'),
   probeRoutes: invoke('settings:probe'),
   checkUpdate: invoke('app:checkUpdate'),

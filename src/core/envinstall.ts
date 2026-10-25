@@ -149,10 +149,11 @@ async function extractZip(zipPath: string, destDir: string): Promise<void> {
   }
 }
 
-/** Android：解压 commandline-tools 并落位到 <dir>/cmdline-tools/latest */
+/** Android：解压 commandline-tools 并落位到 <dir>/cmdline-tools/latest（已存在则幂等跳过） */
 export async function installAndroidCmdtools(zipPath: string, dir: string, setPct: (p: number) => void): Promise<void> {
   if (exists(path.join(dir, 'cmdline-tools', 'latest', 'bin'))) {
-    throw new Error('该目录已存在 cmdline-tools/latest，请先移除或更换目录');
+    setPct(50); // 之前装过：直接进入链式补装
+    return;
   }
   const staging = path.join(dir, `.devemu-staging-${Date.now()}`);
   try {

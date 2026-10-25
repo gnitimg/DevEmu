@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../api.ts';
+import { api, ENV_LABELS, type EnvKind } from '../api.ts';
+import { Modal } from '../components/Modal.tsx';
+import { toast } from '../components/Toast.tsx';
 import { SdkPackages } from '../components/SdkPackages.tsx';
 import { Segmented } from '../components/Segmented.tsx';
 import { RoutePanel } from '../components/RoutePanel.tsx';
@@ -53,6 +55,9 @@ export function Settings({
   const [savedAt, setSavedAt] = useState(0);
   const [hintOn, setHintOn] = useState(false);
   const [error, setError] = useState('');
+  // 浏览目录未找到环境时的“在此安装”弹窗
+  const [installAsk, setInstallAsk] = useState<{ kind: EnvKind; field: 'sdkPath' | 'harmonyPath' | 'javaPath'; dir: string; title: string } | null>(null);
+  const [installing, setInstalling] = useState(false);
   const dirty = useRef(false);
   // 只在首次拿到 env 时回填一次；之后一律以用户输入为准，
   // 避免保存后的 env 刷新把正在编辑的值跳回旧值
@@ -110,14 +115,58 @@ export function Settings({
     return () => clearTimeout(timer);
   }, [dataRoot, sdkPath, harmonyPath, javaPath, gpuMode, proxyEnabled, proxyPort, maxKbps, parallel, androidRoute, harmonyRoute, refreshEnv]);
 
-  async function browse(field: 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath', title: string) {
+  type PickField = 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath';
+  const FIELD_KIND: Partial<Record<PickField, EnvKind>> = { sdkPath: 'android', harmonyPath: 'harmonyos', javaPath: 'java' };
+
+  function applyPick(field: PickField, dir: string) {
+    dirty.current = true;
+    if (field === 'dataRoot') setDataRoot(dir);
+    else if (field === 'sdkPath') setSdkPath(dir);
+    else if (field === 'harmonyPath') setHarmonyPath(dir);
+    else setJavaPath(dir);
+  }
+
+  async function browse(field: PickField, title: string) {
     const r = await api.openDirDialog(title);
-    if (r.ok && r.data) {
-      dirty.current = true;
-      if (field === 'dataRoot') setDataRoot(r.data);
-      else if (field === 'sdkPath') setSdkPath(r.data);
-      else if (field === 'harmonyPath') setHarmonyPath(r.data);
-      else setJavaPath(r.data);
+    if (!r.ok || !r.data) return;
+    const kind = FIELD_KIND[field];
+    // 环境目录：选中后先检测，目录里没有对应环境时弹“浏览其他路径 / 在此安装”
+    if (kind && field !== 'dataRoot') {
+      const c = await api.envCheckDir(kind, r.data);
+      if (!(c.ok && c.data.found)) {
+        setInstallAsk({ kind, field, dir: r.data, title });
+        return;
+      }
+    }
+    applyPick(field, r.data);
+  }
+
+  /** 弹窗里“浏览其他路径”：关掉当前弹窗重新选 */
+  function browseAgain() {
+    const ask = installAsk;
+    if (!ask) return;
+    setInstallAsk(null);
+    void browse(ask.field, ask.title);
+  }
+
+  /** 弹窗里“在此安装”：环境入下载队列；HarmonyOS 转官方下载页（需登录） */
+  async function installHere() {
+    const ask = installAsk;
+    if (!ask) return;
+    setInstalling(true);
+    const r = await api.envInstall(ask.kind, ask.dir);
+    setInstalling(false);
+    if (!r.ok) {
+      toast(r.error);
+      return;
+    }
+    applyPick(ask.field, ask.dir);
+    setInstallAsk(null);
+    if (r.data.manual && r.data.url) {
+      void api.openUrl(r.data.url);
+      toast('已打开官方下载页（需登录华为账号），下载完成后解压到所选目录', 'ok');
+    } else {
+      toast('已加入下载队列，可在“下载管理”查看进度', 'ok');
     }
   }
 
@@ -276,6 +325,36 @@ export function Settings({
 
         {error && <div className="error-line" style={{ marginTop: 12 }}>{error}</div>}
       </div>
+
+      {installAsk && (
+        <Modal
+          title={`未找到${ENV_LABELS[installAsk.kind]}`}
+          onClose={() => setInstallAsk(null)}
+          footer={
+            <>
+              <button className="btn" onClick={browseAgain}>
+                浏览其他路径
+              </button>
+              <button className="btn btn-primary" disabled={installing} onClick={() => void installHere()}>
+                {installing ? '解析中…' : installAsk.kind === 'harmonyos' ? '打开官方下载页' : `在此安装${ENV_LABELS[installAsk.kind]}`}
+              </button>
+            </>
+          }
+        >
+          <p>该文件夹内并未找到{ENV_LABELS[installAsk.kind]}，您希望？</p>
+          {installAsk.kind === 'harmonyos' ? (
+            <p className="page-sub">
+              华为要求登录开发者账号后才能下载命令行工具，点击“打开官方下载页”前往；
+              下载完成后将压缩包解压到所选目录即可被检测到。
+            </p>
+          ) : (
+            <p className="page-sub">
+              将下载官方最新版并解压到所选目录，进度可在“下载管理”中查看。
+              {installAsk.kind === 'android' && '命令行工具装好后会自动续装 platform-tools 与 emulator。'}
+            </p>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

@@ -5,7 +5,6 @@ import path from 'node:path';
 import { cmdlineTool } from './sdk.ts';
 import { downloadToFile } from './net.ts';
 import { ShapingProxy } from './throttle.ts';
-import type { SdkInfo } from './types.ts';
 
 export interface DownloadItem {
   pkg: string;
@@ -178,7 +177,7 @@ export function cancelDownload(pkg: string): boolean {
 }
 
 export function startDownload(
-  sdk: SdkInfo,
+  sdk: { root: string; sdkmanager?: string },
   javaPath: string | null,
   proxy: { port: number } | undefined,
   pkg: string,
@@ -322,7 +321,7 @@ async function fileTaskImpl(entry: Entry, task: FileTask): Promise<void> {
 }
 
 async function spawnTaskImpl(
-  sdk: SdkInfo,
+  sdk: { root: string; sdkmanager?: string },
   javaPath: string | null,
   proxy: { port: number } | undefined,
   pkg: string,
@@ -407,6 +406,34 @@ function finish(entry: Entry): void {
   }
   finished.unshift(entry);
   if (finished.length > 50) finished.pop();
+  persistFinished();
   pumpQueue();
   notify();
+}
+
+// ---------- 已下载历史持久化（主进程重启后不丢） ----------
+
+let storeFile: string | null = null;
+
+/** 注册历史存储位置并加载已有记录（registerIpc 时调用） */
+export function initDownloadStore(dataRoot: string): void {
+  storeFile = path.join(dataRoot, 'downloads.json');
+  if (finished.length > 0) return;
+  try {
+    const raw = JSON.parse(fs.readFileSync(storeFile, 'utf8')) as { finished?: DownloadItem[] };
+    for (const it of raw.finished ?? []) finished.push(it as Entry);
+  } catch {
+    // 无记录或损坏：空历史
+  }
+}
+
+function persistFinished(): void {
+  if (!storeFile) return;
+  try {
+    const tmp = `${storeFile}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ finished: finished.map(snapshot) }), 'utf8');
+    fs.renameSync(tmp, storeFile);
+  } catch {
+    // 写失败不影响下载
+  }
 }

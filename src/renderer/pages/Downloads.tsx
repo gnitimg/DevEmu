@@ -61,7 +61,9 @@ export function Downloads() {
           {snap.active.map((d) => (
             <div key={d.pkg + d.startedAt} className="dl-item">
               <div className="dl-head">
-                <span className="dl-name mono">{d.pkg}</span>
+                <span className={`dl-name${d.desc && d.desc !== d.pkg ? '' : ' mono'}`}>
+                  {d.desc && d.desc !== d.pkg ? d.desc : d.pkg}
+                </span>
                 {d.state === 'queued' && <span className="chip">排队中</span>}
                 <button
                   className="btn btn-sm btn-danger"
@@ -102,7 +104,9 @@ export function Downloads() {
           {snap.finished.map((d) => (
             <div key={d.pkg + d.startedAt} className="dl-item dl-done">
               <div className="dl-head">
-                <span className="dl-name mono">{d.pkg}</span>
+                <span className={`dl-name${d.desc && d.desc !== d.pkg ? '' : ' mono'}`}>
+                  {d.desc && d.desc !== d.pkg ? d.desc : d.pkg}
+                </span>
                 <span className={`chip ${d.state === 'done' ? 'ok' : d.state === 'failed' ? 'err' : ''}`}>
                   {d.state === 'done' ? '完成' : d.state === 'failed' ? `失败${d.error ? ` · ${d.error}` : ''}` : '已取消'}
                 </span>

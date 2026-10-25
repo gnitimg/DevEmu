@@ -10,7 +10,7 @@ import {
   type EnvKind,
 } from './core/envinstall.ts';
 import { importHap } from './core/hap.ts';
-import { startDownload, startFileDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
+import { startDownload, startFileDownload, listDownloads, cancelDownload, onDownloadsChanged, initDownloadStore } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
@@ -149,7 +149,7 @@ function sdkRun(
 /** 前端传来的硬件配置做数字与范围校验 */
 function parseHardware(raw: unknown): AvdHardware {
   const hw: AvdHardware = {};
-  const o = (raw ?? {}) as { ramMb?: unknown; cores?: unknown; storageGb?: unknown };
+  const o = (raw ?? {}) as { ramMb?: unknown; cores?: unknown; storageGb?: number };
   const ram = Number(o.ramMb);
   if (Number.isFinite(ram) && ram >= 512 && ram <= 32768) hw.ramMb = Math.round(ram);
   const cores = Number(o.cores);
@@ -159,7 +159,48 @@ function parseHardware(raw: unknown): AvdHardware {
   return hw;
 }
 
+const ENV_KINDS: EnvKind[] = ['android', 'harmonyos', 'java'];
+function parseEnvKind(raw: unknown): EnvKind | null {
+  return typeof raw === 'string' && (ENV_KINDS as string[]).includes(raw) ? (raw as EnvKind) : null;
+}
+
+/** 环境安装共用的下载选项（限速/并行取自设置，线路按 Android 线路） */
+function envDownloadOpts(settings: ReturnType<typeof loadAppSettings>) {
+  const proxy = proxyOf(settings, 'android');
+  const kbps = Number(settings.maxDownloadKbps);
+  return {
+    proxy,
+    maxBps: Number.isFinite(kbps) && kbps > 0 ? kbps * 1024 : 0,
+    parallel: settings.parallelDownloads,
+    upstreamPort: settings.androidDownloadRoute === 'proxy' && settings.proxyPort ? settings.proxyPort : undefined,
+  };
+}
+
+/**
+ * Android 命令行工具就位后链式补装核心组件：先静默接受许可，
+ * 再把 platform-tools 与 emulator 排入下载队列（完成后 adb/emulator 齐备，SDK 才算可用）。
+ */
+async function chainAndroidComponents(dir: string, settings: ReturnType<typeof loadAppSettings>): Promise<void> {
+  const sm = path.join(dir, 'cmdline-tools', 'latest', 'bin', 'sdkmanager.bat');
+  if (!fs.existsSync(sm)) throw new Error('cmdline-tools 未就位');
+  const java = detectJava(settings.javaPath);
+  if (!java) {
+    throw new Error('未检测到 Java：请先在“Java 路径”一行配置或安装 Java，然后重新选择 SDK 目录以补装组件');
+  }
+  // sdkmanager 首次安装会逐条询问许可；一次性喂入足量 y（已全部接受时立即退出）
+  await runCmd(sm, [`--sdk_root=${dir}`, '--licenses'], { stdin: 'y\n'.repeat(24), timeoutMs: 180_000 }).catch(() => undefined);
+  const dl = envDownloadOpts(settings);
+  const lite = { root: dir, sdkmanager: sm }; // startDownload 仅用到 root 与 sdkmanager
+  await startDownload(lite, java, dl.proxy, 'platform-tools', 'platform-tools', undefined, {
+    parallel: dl.parallel, maxBps: dl.maxBps, upstreamPort: dl.upstreamPort,
+  });
+  await startDownload(lite, java, dl.proxy, 'emulator', 'emulator', undefined, {
+    parallel: dl.parallel, maxBps: dl.maxBps, upstreamPort: dl.upstreamPort,
+  });
+}
+
 export function registerIpc(): void {
+  initDownloadStore(loadAppSettings().dataRoot);
   handle('env:status', () => {
     const settings = loadAppSettings();
     const sdk = detectSdk(settings.sdkPath);
@@ -245,6 +286,64 @@ export function registerIpc(): void {
     const { settings } = status();
     const results: RouteProbe[] = await probeSystemRoutes(system, settings.proxyEnabled ? settings.proxyPort : undefined);
     return ok(results);
+  });
+
+  // 环境目录检测：浏览选择的目录里是否有对应环境痕迹
+  handle('env:checkDir', (rawKind: unknown, rawDir: unknown) => {
+    const kind = parseEnvKind(rawKind);
+    const dir = typeof rawDir === 'string' ? rawDir : '';
+    if (!kind || !dir) return fail('参数错误');
+    return ok({ found: checkEnvDir(kind, dir) });
+  });
+
+  // 环境安装：从官方最新版下载 → 解压到所选目录（进度进下载管理）
+  handle('env:install', async (rawKind: unknown, rawDir: unknown) => {
+    const kind = parseEnvKind(rawKind);
+    const dir = typeof rawDir === 'string' ? rawDir.trim() : '';
+    if (!kind || !dir || !path.isAbsolute(dir)) return fail('参数错误');
+    if (kind === 'harmonyos') {
+      return ok({ manual: true, url: HARMONY_MANUAL_URL, label: ENV_LABELS[kind] });
+    }
+    const settings = loadAppSettings();
+    if (!fs.existsSync(dir)) return fail('所选目录不存在');
+    const dl = envDownloadOpts(settings);
+    let plan;
+    try {
+      plan = await resolveEnvPlan(kind, { viaProxy: !!dl.proxy, proxyPort: dl.proxy?.port });
+    } catch (err) {
+      return fail(`解析官方最新版失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    startFileDownload({
+      key: plan.key,
+      desc: plan.desc,
+      host: plan.host,
+      path: plan.path,
+      fileName: plan.fileName,
+      viaProxy: !!dl.proxy,
+      proxyPort: dl.proxy?.port,
+      maxBps: dl.maxBps,
+      postProcess:
+        kind === 'android'
+          ? async (filePath, setPct) => {
+              await installAndroidCmdtools(filePath, dir, setPct);
+              await chainAndroidComponents(dir, settings);
+            }
+          : async (filePath, setPct) => {
+              const javaExe = await installJdk(filePath, dir, setPct);
+              // 自动把 Java 路径指向解压出的 java.exe，安装完成即可用
+              saveAppSettings({ ...loadAppSettings(), javaPath: javaExe });
+            },
+      onDone: (r) => {
+        if (r.ok) broadcast('env:changed', { kind });
+        broadcast('env:installResult', {
+          label: plan.desc,
+          ok: r.ok,
+          cancelled: r.cancelled === true,
+          error: r.ok || r.cancelled ? undefined : r.error,
+        });
+      },
+    });
+    return ok({ manual: false, key: plan.key, desc: plan.desc, label: ENV_LABELS[kind] });
   });
 
   handle('app:checkUpdate', async () => {

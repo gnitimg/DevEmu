@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onDownloadsChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -22,22 +22,40 @@ export interface EnvStatus {
   images: { pkg: string; api: number; tag: string; abi: string }[];
 }
 
+const ss = {
+  get: (k: string, d: string) => sessionStorage.getItem(k) ?? d,
+  set: (k: string, v: string) => sessionStorage.setItem(k, v),
+  del: (k: string) => sessionStorage.removeItem(k),
+};
+
 export function App() {
-  const [page, setPage] = useState<Page>('projects');
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const [deviceName, setDeviceName] = useState<string | null>(null);
+  // 导航状态持久化：刷新/整页重载后回到原页面，不跳首页
+  const [page, setPage] = useState<Page>(() => ss.get('de.page', 'projects') as Page);
+  const [projectId, setProjectId] = useState<string | null>(() => sessionStorage.getItem('de.projectId'));
+  const [deviceName, setDeviceName] = useState<string | null>(() => sessionStorage.getItem('de.deviceName'));
   // 详情页所属作用域：'shared' 或项目 id
-  const [deviceScope, setDeviceScope] = useState<'shared' | string>('shared');
+  const [deviceScope, setDeviceScope] = useState<'shared' | string>(() => ss.get('de.deviceScope', 'shared'));
   const [env, setEnv] = useState<EnvStatus | null>(null);
   const [emus, setEmus] = useState<EmuDevice[]>([]);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [sharedAvds, setSharedAvds] = useState<AvdInfo[]>([]);
-  const [sideOpen, setSideOpen] = useState(true);
+  const [sideOpen, setSideOpen] = useState(() => sessionStorage.getItem('de.sideOpen') !== '0');
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [devicesOpen, setDevicesOpen] = useState(true);
-  const [settingsSection, setSettingsSection] = useState('storage');
+  const [settingsSection, setSettingsSection] = useState(() => ss.get('de.settingsSection', 'storage'));
   const [maximized, setMaximized] = useState(false);
   const [dlActive, setDlActive] = useState<DownloadItem[]>([]);
+
+  useEffect(() => {
+    ss.set('de.page', page);
+    ss.set('de.deviceScope', deviceScope);
+    ss.set('de.settingsSection', settingsSection);
+    ss.set('de.sideOpen', sideOpen ? '1' : '0');
+    if (projectId) ss.set('de.projectId', projectId);
+    else ss.del('de.projectId');
+    if (deviceName) ss.set('de.deviceName', deviceName);
+    else ss.del('de.deviceName');
+  }, [page, projectId, deviceName, deviceScope, settingsSection, sideOpen]);
 
   useEffect(() => {
     api.winIsMaximized().then((r) => {
@@ -104,6 +122,18 @@ export function App() {
     const timer = setInterval(refreshEmus, 3000);
     return () => clearInterval(timer);
   }, [refreshEnv, refreshEmus]);
+
+  // 环境安装完成：刷新环境探测，并以右上角弹窗告知结果
+  useEffect(() => onEnvChanged(() => refreshEnv()), [refreshEnv]);
+  useEffect(
+    () =>
+      onEnvInstallResult((r) => {
+        if (r.cancelled) toast(`${r.label} 下载已取消`, 'ok');
+        else if (r.ok) toast(`${r.label} 安装完成`, 'ok');
+        else toast(`${r.label} 安装失败：${r.error ?? '未知错误'}`);
+      }),
+    [],
+  );
 
   // 侧栏项目列表跟随数据变化（新建/删除后自动同步）
   useEffect(() => {

@@ -73,6 +73,27 @@ export function onDownloadsChanged(cb: (snap: { active: DownloadItem[]; finished
     : () => undefined;
 }
 
+/** 环境安装目标（设置页 SDK 分区三行） */
+export type EnvKind = 'android' | 'harmonyos' | 'java';
+
+export const ENV_LABELS: Record<EnvKind, string> = {
+  android: 'Android SDK',
+  harmonyos: 'HarmonyOS SDK',
+  java: 'Java 运行环境',
+};
+
+export type EnvInstallResult = { label: string; ok: boolean; cancelled?: boolean; error?: string };
+
+export function onEnvChanged(cb: () => void): () => void {
+  const api2 = (window as unknown as { devemu: { onEnvChanged?: (cb: (payload: unknown) => void) => () => void } }).devemu;
+  return api2?.onEnvChanged ? api2.onEnvChanged(() => cb()) : () => undefined;
+}
+
+export function onEnvInstallResult(cb: (r: EnvInstallResult) => void): () => void {
+  const api2 = (window as unknown as { devemu: { onEnvInstallResult?: (cb: (payload: unknown) => void) => () => void } }).devemu;
+  return api2?.onEnvInstallResult ? api2.onEnvInstallResult((p) => cb(p as EnvInstallResult)) : () => undefined;
+}
+
 export function onWinMaximized(cb: (maximized: boolean) => void): () => void {
   const fn = (window as unknown as { devemu: { onWinMaximized?: (cb: (m: boolean) => void) => () => void } }).devemu
     .onWinMaximized;
@@ -106,6 +127,9 @@ export const api = {
   winClose: () => call<boolean>('winClose'),
   winIsMaximized: () => call<boolean>('winIsMaximized'),
   checkUpdate: () => call<{ latest: string; current: string; upToDate: boolean; url: string }>('checkUpdate'),
+  envCheckDir: (kind: EnvKind, dir: string) => call<{ found: boolean }>('env:checkDir', kind, dir),
+  envInstall: (kind: EnvKind, dir: string) =>
+    call<{ manual?: boolean; url?: string; label: string }>('env:install', kind, dir),
   envStatus: () =>
     call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; harmony: HarmonyInfo | null; version: string; images: SystemImage[] }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
