@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, osFromImagePkg, prettyModel, type EmuDevice, type Scope } from '../api.ts';
 import { RunsPanel } from '../components/RunsPanel.tsx';
+import { toast } from '../components/Toast.tsx';
 import { fmtTime } from '../components/Modal.tsx';
 import type { ApkMeta, AvdInfo } from '../../core/types.ts';
 
@@ -35,6 +36,7 @@ export function DeviceDetail({
   const [storage, setStorage] = useState('');
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [apkBusy, setApkBusy] = useState('');
 
   const reload = useCallback(() => {
@@ -147,8 +149,21 @@ export function DeviceDetail({
     const d = await api.openApkDialog();
     if (d.ok && d.data) {
       const r = await api.importApk(scope, d.data);
-      if (!r.ok) setError(r.error);
+      if (!r.ok) {
+        toast(`导入失败：${r.error}`);
+        setImporting(false);
+        return;
+      }
       reload();
+      // 设备在运行则直接安装，失败弹右上角提示
+      if (run) {
+        setInstalling(true);
+        const ir = await api.install(scope, r.data.id, run.serial);
+        if (!ir.ok || !ir.data.ok) {
+          toast(`${r.data.label ?? r.data.fileName} 安装失败：${ir.ok ? ir.data.error ?? '未知错误' : ir.error}`);
+        }
+        setInstalling(false);
+      }
     }
     setImporting(false);
   }
@@ -158,7 +173,9 @@ export function DeviceDetail({
     setError('');
     if (action === 'update') {
       const r = await api.install(scope, apk.id, run!.serial);
-      if (!r.ok || !r.data.ok) setError(r.ok ? r.data.error ?? '更新失败' : r.error);
+      if (!r.ok || !r.data.ok) {
+        toast(`${apk.label ?? apk.fileName} 安装失败：${r.ok ? r.data.error ?? '未知错误' : r.error}`);
+      }
       setApkBusy('');
       return;
     }
@@ -286,8 +303,8 @@ export function DeviceDetail({
           <div className="section-head">
             <h2 className="section-title">测试的应用</h2>
             <div className="section-actions">
-              <button className="btn" onClick={doImport} disabled={importing}>
-                {importing ? '导入中' : '导入'}
+              <button className="btn" onClick={doImport} disabled={importing || installing}>
+                {installing ? '安装中' : importing ? '导入中' : '导入'}
               </button>
             </div>
           </div>

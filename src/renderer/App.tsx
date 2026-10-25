@@ -7,6 +7,7 @@ import { DevicePool } from './pages/DevicePool.tsx';
 import { DeviceDetail } from './pages/DeviceDetail.tsx';
 import { Downloads } from './pages/Downloads.tsx';
 import { Settings } from './pages/Settings.tsx';
+import { Toaster } from './components/Toast.tsx';
 import type { AvdInfo, ProjectMeta } from '../core/types.ts';
 
 type Page = 'projects' | 'devices' | 'device-detail' | 'downloads' | 'settings';
@@ -110,6 +111,7 @@ export function App() {
 
   return (
     <div className="shell">
+      <Toaster />
       <header className="topbar">
         <button className="brand" onClick={() => setSideOpen((v) => !v)} title={sideOpen ? '收起侧栏' : '展开侧栏'}>
           <img className="brand-logo" src={logoUrl} alt="DevEmu" draggable={false} />
