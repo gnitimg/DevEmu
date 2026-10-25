@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
+import { cmdlineTool } from './sdk.ts';
 import type { AvdInfo, DeviceDef, Scope, SdkInfo } from './types.ts';
 
 /** 解析 avdmanager list device 的 id/Name 对 */
@@ -57,15 +58,47 @@ export function listAvds(dataRoot: string, scope: Scope): AvdInfo[] {
     let imagePkg: string | undefined;
     try {
       const config = parseConfigIni(fs.readFileSync(path.join(dirs.avdHome, `${name}.avd`, 'config.ini'), 'utf8'));
-      imagePkg =
-        (config['image.sysimg.1.dir'] && imageDirToPkg(config['image.sysimg.1.dir'])) ||
-        (config['image.android.testdroid.dir'] && imageDirToPkg(config['image.android.testdroid.dir']));
+      // 新版 avdmanager 写相对路径的 image.sysdir.1；老版本写绝对路径的 image.sysimg.1.dir
+      const rawDir = config['image.sysdir.1'] ?? config['image.sysimg.1.dir'];
+      if (rawDir) imagePkg = imageDirToPkg(rawDir);
     } catch {
       // config.ini 读不到就只有名字
     }
     avds.push({ name, iniPath, imagePkg });
   }
   return avds.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** avdmanager 的 java 直调命令（绕开 .bat 与 cmd.exe 引号问题） */
+function avdTool(sdk: SdkInfo, javaPath?: string | null): { exe: string; prefix: string[] } | null {
+  if (!sdk.avdmanager) return null;
+  return cmdlineTool(
+    sdk.avdmanager,
+    javaPath,
+    'avdmanager-classpath.jar',
+    'com.android.sdklib.tool.AvdManagerCli',
+  );
+}
+
+/** 修改 AVD 的 config.ini 键值（存在则替换，不存在则追加） */
+export function patchAvdConfig(avdHome: string, name: string, patch: Record<string, string>): void {
+  const file = path.join(avdHome, `${name}.avd`, 'config.ini');
+  try {
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    const out = lines.map((line) => {
+      const m = line.match(/^([^=]+?)\s*=/);
+      const key = m ? m[1]!.trim() : null;
+      return key && key in patch ? `${key} = ${patch[key]}` : line;
+    });
+    for (const [k, v] of Object.entries(patch)) {
+      if (!out.some((l) => new RegExp(`^${k.replace(/\./g, '\\.')}\\s*=`).test(l))) {
+        out.push(`${k} = ${v}`);
+      }
+    }
+    fs.writeFileSync(file, out.join('\r\n'), 'utf8');
+  } catch {
+    // config.ini 不存在等问题不阻塞创建流程
+  }
 }
 
 export async function createAvd(
@@ -77,20 +110,20 @@ export async function createAvd(
   deviceDefId: string,
   javaPath?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!sdk.avdmanager) return { ok: false, error: 'SDK 缺少 cmdline-tools，无法创建虚拟机' };
+  const tool = avdTool(sdk, javaPath);
+  if (!tool) return { ok: false, error: 'SDK 缺少 cmdline-tools，无法创建虚拟机' };
   const dirs = scopeDirs(dataRoot, scope);
-  const env = { ...scopeEnv(dirs) };
-  if (javaPath && javaPath !== 'java.exe') {
-    env.JAVA_HOME = path.dirname(path.dirname(javaPath));
-  }
+  const env = scopeEnv(dirs);
   const res = await run(
-    sdk.avdmanager,
-    ['create', 'avd', '-n', name, '-k', `"${imagePkg}"`, '-d', deviceDefId],
+    tool.exe,
+    [...tool.prefix, 'create', 'avd', '-n', name, '-k', imagePkg, '-d', deviceDefId],
     { env, stdin: 'no\n', timeoutMs: 120_000 },
   );
   if (res.code !== 0) {
     return { ok: false, error: (res.stderr || res.stdout || '创建失败').trim().split(/\r?\n/).pop() };
   }
+  // avdmanager 默认 hw.gpu.enabled=no，Windows 上软件渲染会让启动极慢，强制改回宿主 GPU
+  patchAvdConfig(dirs.avdHome, name, { 'hw.gpu.enabled': 'yes', 'hw.gpu.mode': 'auto' });
   return { ok: true };
 }
 
@@ -101,13 +134,11 @@ export async function deleteAvd(
   name: string,
   javaPath?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!sdk.avdmanager) return { ok: false, error: 'SDK 缺少 cmdline-tools，无法删除虚拟机' };
+  const tool = avdTool(sdk, javaPath);
+  if (!tool) return { ok: false, error: 'SDK 缺少 cmdline-tools，无法删除虚拟机' };
   const dirs = scopeDirs(dataRoot, scope);
-  const env = { ...scopeEnv(dirs) };
-  if (javaPath && javaPath !== 'java.exe') {
-    env.JAVA_HOME = path.dirname(path.dirname(javaPath));
-  }
-  const res = await run(sdk.avdmanager, ['delete', 'avd', '-n', name], { env, timeoutMs: 60_000 });
+  const env = scopeEnv(dirs);
+  const res = await run(tool.exe, [...tool.prefix, 'delete', 'avd', '-n', name], { env, timeoutMs: 60_000 });
   if (res.code !== 0) {
     return { ok: false, error: (res.stderr || res.stdout || '删除失败').trim().split(/\r?\n/).pop() };
   }
@@ -118,12 +149,9 @@ export async function listDeviceDefs(
   sdk: SdkInfo,
   javaPath?: string | null,
 ): Promise<{ ok: boolean; defs?: DeviceDef[]; error?: string }> {
-  if (!sdk.avdmanager) return { ok: false, error: 'SDK 缺少 cmdline-tools' };
-  const env: Record<string, string> = {};
-  if (javaPath && javaPath !== 'java.exe') {
-    env.JAVA_HOME = path.dirname(path.dirname(javaPath));
-  }
-  const res = await run(sdk.avdmanager, ['list', 'device'], { env, timeoutMs: 60_000 });
+  const tool = avdTool(sdk, javaPath);
+  if (!tool) return { ok: false, error: 'SDK 缺少 cmdline-tools' };
+  const res = await run(tool.exe, [...tool.prefix, 'list', 'device'], { timeoutMs: 60_000 });
   if (res.code !== 0) return { ok: false, error: '读取设备定义失败' };
   return { ok: true, defs: parseDeviceList(res.stdout) };
 }

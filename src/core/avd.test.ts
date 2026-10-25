@@ -45,7 +45,7 @@ test('listAvds 从作用域目录读出 AVD 并推导镜像包名', () => {
   fs.writeFileSync(path.join(avdHome, 'TestDevice.ini'), `avd.ini.encoding=UTF-8\npath=${avdDir}\n`, 'utf8');
   fs.writeFileSync(
     path.join(avdDir, 'config.ini'),
-    'image.sysimg.1.dir=' + path.join(dataRoot, 'sysimg', 'system-images', 'android-35', 'google_apis', 'x86_64'),
+    'hw.device.name=pixel_6\nimage.sysdir.1 = system-images\\android-35\\google_apis\\x86_64\\\n',
     'utf8',
   );
 

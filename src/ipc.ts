@@ -65,7 +65,7 @@ export function registerIpc(): void {
     if (!sdk?.sdkmanager) {
       return fail('SDK 缺少 cmdline-tools，无法列出可下载镜像。可在 Android Studio 的 SDK Manager 中安装');
     }
-    const res = await runSdkmanager(sdk.sdkmanager, ['--list'], { javaPath: java });
+    const res = await runSdkmanager(sdk, ['--list'], { javaPath: java });
     if (res.code !== 0) return fail('sdkmanager 执行失败：' + (res.stderr || res.stdout).slice(0, 300));
     return ok(parseSdkmanagerList(res.stdout).filter((e) => /x86_64|arm64-v8a/.test(e.pkg)));
   });
@@ -74,7 +74,7 @@ export function registerIpc(): void {
     const { sdk, java } = status();
     if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
     if (typeof pkg !== 'string' || !/^system-images;[\w.-]+$/.test(pkg)) return fail('非法的镜像包名');
-    const res = await runSdkmanager(sdk.sdkmanager, [pkg], { javaPath: java });
+    const res = await runSdkmanager(sdk, [pkg], { javaPath: java });
     if (res.code !== 0) return fail('下载失败：' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
     return ok(true);
   });
@@ -180,8 +180,8 @@ export function registerIpc(): void {
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = listApps(dirs.appsDir).find((a) => a.id === apkId);
     if (!meta) return fail('APK 不存在');
-    const booted = await waitBooted(sdk.adb, serial, 120_000);
-    if (!booted) return fail('设备启动超时，未能完成安装');
+    const booted = await waitBooted(sdk.adb, serial, 300_000);
+    if (!booted) return fail('设备启动超时（5 分钟），未能完成安装');
     return ok(await installApk(sdk.adb, serial, apkFilePath(dirs.appsDir, apkId)));
   });
 

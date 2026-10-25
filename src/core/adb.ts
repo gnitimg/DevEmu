@@ -1,5 +1,6 @@
 import { run, stream } from './exec.ts';
 import type { ChildProcess } from 'node:child_process';
+import { stageAsciiPath, unstage } from './staging.ts';
 import type { DeviceInfo } from './types.ts';
 
 /** 解析 adb devices -l 输出 */
@@ -51,11 +52,16 @@ export async function installApk(
   serial: string,
   apkPath: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await run(adb, ['-s', serial, 'install', '-r', '-t', apkPath], { timeoutMs: 180_000 });
-  if (res.code !== 0 || !/Success/i.test(res.stdout)) {
-    return { ok: false, error: translateInstallError(res.stderr || res.stdout) };
+  const staged = await stageAsciiPath(apkPath);
+  try {
+    const res = await run(adb, ['-s', serial, 'install', '-r', '-t', staged], { timeoutMs: 180_000 });
+    if (res.code !== 0 || !/Success/i.test(res.stdout)) {
+      return { ok: false, error: translateInstallError(res.stderr || res.stdout) };
+    }
+    return { ok: true };
+  } finally {
+    unstage(staged, apkPath);
   }
-  return { ok: true };
 }
 
 export async function launchApp(
@@ -118,13 +124,20 @@ export async function uninstall(adb: string, serial: string, pkg: string): Promi
   return /Success/.test(res.stdout);
 }
 
-/** 等待系统启动完成（用于装包前的就绪检查） */
+/** 等待系统启动完成且包管理服务就绪（boot_completed 置 1 后 package 服务可能仍未发布） */
 export async function waitBooted(adb: string, serial: string, timeoutMs = 120_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  let booted = false;
   while (Date.now() < deadline) {
     try {
-      const res = await run(adb, ['-s', serial, 'shell', 'getprop', 'sys.boot_completed'], { timeoutMs: 8_000 });
-      if (res.stdout.trim() === '1') return true;
+      if (!booted) {
+        const res = await run(adb, ['-s', serial, 'shell', 'getprop', 'sys.boot_completed'], { timeoutMs: 8_000 });
+        if (res.stdout.trim() === '1') booted = true;
+      }
+      if (booted) {
+        const pm = await run(adb, ['-s', serial, 'shell', 'pm', 'path', 'android'], { timeoutMs: 8_000 });
+        if (pm.code === 0 && /package:/.test(pm.stdout)) return true;
+      }
     } catch {
       // 设备还没上线，继续等
     }

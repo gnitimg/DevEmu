@@ -118,14 +118,43 @@ export function parseSdkmanagerList(stdout: string): SdkmanagerEntry[] {
   return entries;
 }
 
+export interface JavaTool {
+  exe: string;
+  prefix: string[];
+}
+
+/**
+ * cmdline-tools 的 .bat 只是 java 包装；直接调 java 绕开 cmd.exe，
+ * 否则镜像包名里的分号会被 cmd 的引号剥离规则切碎
+ */
+export function cmdlineTool(
+  batPath: string,
+  javaPath: string | null | undefined,
+  jar: string,
+  mainClass: string,
+): JavaTool {
+  const home = path.dirname(path.dirname(batPath)); // bin/.. = cmdline-tools/latest
+  const exe = javaPath && javaPath !== 'java.exe' ? javaPath : 'java.exe';
+  return {
+    exe,
+    prefix: [`-Dcom.android.sdkmanager.toolsdir=${home}`, '-classpath', path.join(home, 'lib', jar), mainClass],
+  };
+}
+
 export function runSdkmanager(
-  sdkmanager: string,
+  sdk: { sdkmanager?: string; root: string },
   args: string[],
   opts: { javaPath?: string | null; onLine?: (line: string) => void } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const env: Record<string, string> = {};
-  if (opts.javaPath && opts.javaPath !== 'java.exe') {
-    env.JAVA_HOME = path.dirname(path.dirname(opts.javaPath));
-  }
-  return run(sdkmanager, args, { env, onLine: opts.onLine ? (l) => opts.onLine!(l) : undefined });
+  if (!sdk.sdkmanager) return Promise.resolve({ code: 1, stdout: '', stderr: 'SDK 缺少 cmdline-tools' });
+  const tool = cmdlineTool(
+    sdk.sdkmanager,
+    opts.javaPath,
+    'sdkmanager-classpath.jar',
+    'com.android.sdklib.tool.sdkmanager.SdkManagerCli',
+  );
+  // 直调 java 无法像 .bat 那样从自身位置推断 SDK 根，必须显式指定
+  return run(tool.exe, [...tool.prefix, `--sdk_root=${sdk.root}`, ...args], {
+    onLine: opts.onLine ? (l) => opts.onLine!(l) : undefined,
+  });
 }

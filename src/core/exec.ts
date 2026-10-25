@@ -19,18 +19,25 @@ export interface RunOptions {
 
 export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
-    // Windows 下 .bat/.cmd 不能被 spawn 直接执行，需经 cmd /c
-    const isBat = /\.(bat|cmd)$/i.test(cmd);
-    const finalCmd = isBat ? 'cmd.exe' : cmd;
-    const finalArgs = isBat ? ['/d', '/s', '/c', `"${cmd}"`, ...args.map(String)] : args.map(String);
-
-    const child = spawn(finalCmd, finalArgs, {
+    const base = {
       cwd: opts.cwd,
       env: opts.env ? { ...process.env, ...opts.env } : process.env,
       windowsHide: true,
-      windowsVerbatimArguments: isBat ? false : undefined,
-      stdio: [opts.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-    });
+      stdio: [opts.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] as Array<'pipe' | 'ignore'>,
+    };
+
+    // Windows 下 .bat/.cmd 需经 cmd /c 启动；整条命令拼成单个字符串并以 verbatim 传递，
+    // 避免 Node 自动加引号与 cmd 的引号剥离规则互相干扰
+    let child: ChildProcess;
+    if (/\.(bat|cmd)$/i.test(cmd)) {
+      const cmdline = `"${cmd}" ${args.map(String).join(' ')}`.trim();
+      child = spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', cmdline], {
+        ...base,
+        windowsVerbatimArguments: true,
+      });
+    } else {
+      child = spawn(cmd, args.map(String), base);
+    }
 
     let stdout = '';
     let stderr = '';

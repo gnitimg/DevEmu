@@ -32,12 +32,18 @@ function pickPort(): number {
   return port;
 }
 
+export interface LaunchOptions {
+  gpu?: string;
+  noSnapshotLoad?: boolean;
+}
+
 /** 启动模拟器；3 秒内退出视为启动失败并翻译错误 */
 export function launchEmulator(
   sdk: SdkInfo,
   dataRoot: string,
   scope: Scope,
   avdName: string,
+  opts: LaunchOptions = {},
 ): Promise<RunningEmu> {
   const dirs = scopeDirs(dataRoot, scope);
   const sKey = scope.kind === 'shared' ? 'shared' : `project:${scope.projectId}`;
@@ -45,11 +51,31 @@ export function launchEmulator(
     return Promise.reject(new Error('该虚拟机已在运行'));
   }
   const port = pickPort();
-  const child = spawn(
-    sdk.emulator,
-    ['-avd', avdName, '-port', String(port)],
-    { env: { ...process.env, ...scopeEnv(dirs) }, cwd: path.dirname(sdk.emulator), stdio: ['ignore', 'pipe', 'pipe'] },
-  );
+  // 对标 Android Studio 的启动参数：多核 + 足量内存 + 跳过开机动画 + 全速网络 + 快照快速启动
+  const args = [
+    '-avd',
+    avdName,
+    '-port',
+    String(port),
+    '-no-boot-anim',
+    '-cores',
+    '4',
+    '-memory',
+    '3072',
+    '-netdelay',
+    'none',
+    '-netspeed',
+    'full',
+  ];
+  // Windows 上 host GPU（gfxstream）易触发图形编码断言导致系统服务崩溃，angle_indirect 是稳定选择
+  const gpu = opts.gpu ?? (process.platform === 'win32' ? 'angle_indirect' : undefined);
+  if (gpu) args.push('-gpu', gpu);
+  if (opts.noSnapshotLoad) args.push('-no-snapshot-load');
+  const child = spawn(sdk.emulator, args, {
+    env: { ...process.env, ...scopeEnv(dirs) },
+    cwd: path.dirname(sdk.emulator),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
   let stderrTail = '';
   child.stderr?.on('data', (c: Buffer) => {

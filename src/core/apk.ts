@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { run } from './exec.ts';
+import { stageAsciiPath, unstage } from './staging.ts';
 import type { ApkMeta } from './types.ts';
 
 export interface BadgingInfo {
@@ -46,8 +47,10 @@ export async function importApk(
 
   let meta: ApkMeta = { id, fileName, size: stat.size, importedAt: new Date().toISOString() };
   if (aapt) {
+    let staged = dest;
     try {
-      const res = await run(aapt, ['dump', 'badging', dest], { timeoutMs: 30_000 });
+      staged = await stageAsciiPath(dest);
+      const res = await run(aapt, ['dump', 'badging', staged], { timeoutMs: 30_000 });
       const info = parseBadging(res.stdout);
       if (info) {
         meta = {
@@ -60,6 +63,8 @@ export async function importApk(
       }
     } catch {
       // aapt 失败不阻塞导入，仅缺元数据
+    } finally {
+      unstage(staged, dest);
     }
   }
   if (!meta.label) meta.label = fileName.replace(/\.apk$/i, '');
