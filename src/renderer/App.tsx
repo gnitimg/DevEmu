@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import logoUrl from '../../assets/icon.png';
 import { api, onWinMaximized, type EmuDevice } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
@@ -111,7 +112,7 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <button className="brand" onClick={() => setSideOpen((v) => !v)} title={sideOpen ? '收起侧栏' : '展开侧栏'}>
-          <span className="brand-logo">DE</span>
+          <img className="brand-logo" src={logoUrl} alt="DevEmu" draggable={false} />
           <span className="brand-name">DevEmu</span>
           <svg
             className={`brand-chev${sideOpen ? '' : ' flip'}`}
