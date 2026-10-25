@@ -173,7 +173,7 @@ export function Settings({
               </div>
             </div>
             <div className="section">
-              <div style={{ padding: '10px 14px 0' }}>
+              <div style={{ padding: '10px 14px 14px' }}>
                 <SdkPackages onChanged={refreshEnv} />
               </div>
             </div>
