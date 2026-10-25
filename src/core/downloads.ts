@@ -41,6 +41,14 @@ interface Entry extends DownloadItem {
   onStart?: () => void;
   /** 文件任务的 sock 中断（pkg 任务为空） */
   abort?: () => void;
+  // ---- sdkmanager 任务的显示进度重映射（原始百分比只反映全程位置） ----
+  /** 原始百分比 */
+  rawPct?: number;
+  /** 下载阶段起始原始百分比 */
+  dMin?: number;
+  /** 解压阶段起始原始百分比与当时的显示进度 */
+  unzipStartRaw?: number;
+  dispAtUnzip?: number;
 }
 
 const active = new Map<string, Entry>();
@@ -77,25 +85,44 @@ function fmtUnits(unit: string): number {
   return UNIT_BYTES[unit.toLowerCase()] ?? 1;
 }
 
-/** 解析 sdkmanager 进度行：百分比、阶段；无字节量（sdkmanager 不输出大小） */
+/** 解析 sdkmanager 进度行：阶段化显示进度（准备 0-5 / 下载 5-95 / 解压 95-100）。
+ *  sdkmanager 的原始百分比覆盖"取仓库+下载+解压"全程：下载仅占约 10-33%，
+ *  解压在结尾 1 秒冲到 100%，直接展示会"卡住然后跳变"。此处按阶段重映射，
+ *  下载段用渐进映射（渐近 95，不预知解压起点也平滑无跳变）。 */
 function feedLine(entry: Entry, line: string): void {
   const pct = line.match(/(\d{1,3})\s*%/);
-  if (pct) entry.percent = Math.min(100, parseInt(pct[1]!, 10));
+  if (pct) entry.rawPct = Math.min(100, parseInt(pct[1]!, 10));
 
-  // 阶段：sdkmanager 的百分比覆盖"取仓库+下载+解压"全程，
-  // 下载只占其中一段，解压在结尾飞速完成——阶段标签让跳变有语义
   if (/Unzipping/i.test(line)) entry.phase = 'unzip';
   else if (/Downloading/i.test(line)) entry.phase = 'download';
   else if (/Loading|Fetch|Computing/i.test(line)) entry.phase = 'prepare';
 
-  // 形如 "12.3 MiB / 80 MiB"（文件任务才有）
+  // 形如 "12.3 MiB / 80 MiB"（文件任务才有，直接用原始百分比）
   const sizes = line.match(/(\d+(?:\.\d+)?)\s*([KMGT]?i?B|[KMGT]?B)\s*\/\s*(\d+(?:\.\d+)?)\s*([KMGT]?i?B|[KMGT]?B)/i);
   if (sizes) {
     const scale = fmtUnits(sizes[2]!);
     const totalScale = fmtUnits(sizes[4]!);
     entry.downloaded = Math.round(parseFloat(sizes[1]!) * scale);
     entry.total = Math.round(parseFloat(sizes[3]!) * totalScale);
-    if (entry.total > 0 && entry.percent === 0) entry.percent = Math.min(100, Math.round((entry.downloaded / entry.total) * 100));
+    if (entry.total > 0 && entry.rawPct !== undefined) entry.percent = Math.min(100, Math.round((entry.downloaded / entry.total) * 100));
+  } else if (entry.rawPct !== undefined) {
+    const raw = entry.rawPct;
+    if (entry.phase === 'prepare') {
+      entry.percent = Math.min(5, Math.round(raw * 0.5));
+    } else if (entry.phase === 'download') {
+      if (entry.dMin === undefined || raw < entry.dMin) entry.dMin = raw;
+      const x = Math.max(0, raw - entry.dMin);
+      const slack = 8; // 原始百分点余量：条渐进逼近 95，速度随下载推进放缓
+      entry.percent = Math.min(95, Math.round(5 + (90 * x) / (x + slack)));
+    } else if (entry.phase === 'unzip') {
+      if (entry.unzipStartRaw === undefined) {
+        entry.unzipStartRaw = raw;
+        entry.dispAtUnzip = Math.max(5, entry.percent);
+      }
+      const span = Math.max(1, 100 - entry.unzipStartRaw);
+      const base = entry.dispAtUnzip ?? 95;
+      entry.percent = Math.min(100, Math.round(base + ((100 - base) * (raw - entry.unzipStartRaw)) / span));
+    }
   }
 
   // sdkmanager 自报速度 "20 MiB/s"
@@ -104,7 +131,7 @@ function feedLine(entry: Entry, line: string): void {
     if (speed && entry.speedBps === 0) entry.speedBps = toBytes(speed[1]!, speed[2]!);
   }
 
-  // 字节任务记字节；百分比任务把百分点当样本（供速度/ETA 估算）
+  // 字节任务记字节；百分比任务把显示进度当样本（供 ETA 估算）
   if (entry.downloaded > 0) {
     entry.samples.push({ t: Date.now(), bytes: entry.downloaded });
     if (entry.samples.length > 30) entry.samples.shift();
@@ -132,14 +159,18 @@ function recompute(entry: Entry): void {
     }
     return;
   }
-  // 百分比模式
+  // 百分比模式：仅下载阶段外推（准备/解压阶段太快或太慢，估算无意义）
+  if (entry.phase !== 'download') {
+    entry.etaSec = 0;
+    return;
+  }
   const recent = entry.samples.filter((s) => now - s.t <= 15_000);
   const old = recent[0];
   const cur = recent[recent.length - 1];
   if (old && cur && now - old.t >= 3000 && cur.bytes >= old.bytes) {
     const pctPerSec = (cur.bytes - old.bytes) / ((now - old.t) / 1000);
     if (pctPerSec > 0.002) {
-      entry.etaSec = Math.max(0, Math.round((100 - cur.bytes) / pctPerSec));
+      entry.etaSec = Math.max(0, Math.round((95 - cur.bytes) / pctPerSec));
       return;
     }
   }
