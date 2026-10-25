@@ -1,0 +1,69 @@
+:root {
+  --bg: #f6f7f8;
+  --surface: #ffffff;
+  --border: #e5e7eb;
+  --text: #1a1d21;
+  --text-2: #667085;
+  --accent: #1f6feb;
+  --accent-weak: #eaf1fe;
+  --danger: #d43538;
+  --ok: #18864b;
+  --radius: 6px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font: 13px/1.5 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  user-select: none;
+  cursor: default;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+.nav {
+  width: 48px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+}
+
+.nav-logo {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: var(--radius);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 20px 24px;
+}
