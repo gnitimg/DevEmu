@@ -119,10 +119,6 @@ export function EditVmModal({
       }
     >
       <HwFields ram={ram} setRam={setRam} cores={cores} setCores={setCores} storage={storage} setStorage={setStorage} />
-      <div className="form-hint">
-        当前：内存 {current?.ramMb ?? '—'} MB · {current?.cores ?? '—'} 核 · 数据分区{' '}
-        {current?.storageGb ?? '—'} GB。清空某项则保持不变。
-      </div>
       {error && <div className="error-line" style={{ border: 'none', padding: '0 0 0 1px' }}>{error}</div>}
     </Modal>
   );

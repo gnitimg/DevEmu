@@ -380,7 +380,6 @@ function NewVmModal({
           </select>
         </div>
         <div className="form-hint">
-          缺少镜像或组件？{' '}
           <button className="link-btn" onClick={() => setManaging(true)}>
             管理 SDK
           </button>
@@ -392,12 +391,7 @@ function NewVmModal({
         </button>
       </div>
       {advanced && (
-        <>
-          <HwFields ram={ram} setRam={setRam} cores={cores} setCores={setCores} storage={storage} setStorage={setStorage} />
-          <div className="form-hint" style={{ marginBottom: 10 }}>
-            留空使用推荐配置：内存 {RECOMMEND_HW.ramMb} MB · {RECOMMEND_HW.cores} 核 · 数据分区 {RECOMMEND_HW.storageGb} GB。
-          </div>
-        </>
+        <HwFields ram={ram} setRam={setRam} cores={cores} setCores={setCores} storage={storage} setStorage={setStorage} />
       )}
       {error && <div className="error-line" style={{ border: 'none', padding: '0 0 0 1px' }}>{error}</div>}
     </Modal>

@@ -116,7 +116,6 @@ export function App() {
       </header>
       <div className="body">
         <aside className={`sidebar${sideOpen ? '' : ' collapsed'}`}>
-          <div className="side-label">工作目录</div>
           <SideItem
             icon={
               <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 2h4.5A1.5 1.5 0 0 1 14 6.5v6A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-8Z" />

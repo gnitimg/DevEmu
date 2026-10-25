@@ -114,7 +114,6 @@ export function SdkManager({ onClose, onChanged }: { onClose: () => void; onChan
         ))}
       </div>
       {busyPkg && progress && <div className="sdk-progress mono">{progress}</div>}
-      <div className="form-hint">已安装列表读本地；可安装需联网。下载线路可在设置页测速选择。</div>
     </Modal>
   );
 }

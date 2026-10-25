@@ -144,7 +144,6 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                     浏览
                   </button>
                 </div>
-                <div className="form-hint">修改后新数据写到新位置，已有项目需要自行迁移目录。</div>
               </div>
             </>
           )}
@@ -202,9 +201,6 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                 <button className="btn" onClick={() => setDownloadsOpen(true)}>
                   下载管理
                 </button>
-                <span className="form-hint" style={{ marginTop: 0 }}>
-                  安装/卸载组件；查看下载进度、速度与剩余时间
-                </span>
               </div>
             </>
           )}
@@ -234,7 +230,6 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                     inputMode="numeric"
                   />
                 </div>
-                <div className="form-hint">启用后启动的虚拟机网络走本机代理，对应用内联网生效。</div>
               </div>
               <div className="form-row">
                 <label>SDK 下载线路</label>
@@ -252,7 +247,6 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                     </span>
                   )}
                 </div>
-                <div className="form-hint">测速 Google SDK 仓库的直连与代理线路，自动选延迟低、丢包低的用于 SDK 下载。</div>
               </div>
             </>
           )}
@@ -285,9 +279,6 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                     </>
                   )}
                 </div>
-                <div className="form-hint">
-                  限制后 SDK 下载经本地整形代理按配额转发字节，对每个下载任务生效。
-                </div>
               </div>
               <div className="form-row">
                 <label>并行下载数</label>
@@ -301,7 +292,6 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                   <option value="3">3</option>
                   <option value="4">4</option>
                 </select>
-                <div className="form-hint">超出并行数的任务排队，完成一个自动开始下一个。</div>
               </div>
             </>
           )}
@@ -314,7 +304,6 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                 <option value="angle_indirect">ANGLE / Direct3D（较快，个别驱动会黑屏）</option>
                 <option value="host">宿主 GPU（最快，需独立显卡，易崩溃）</option>
               </select>
-              <div className="form-hint">窗口黑屏时切回软件渲染；修改对下次启动生效。</div>
             </div>
           )}
 
