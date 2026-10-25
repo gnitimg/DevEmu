@@ -297,6 +297,19 @@ function EditVmModal({
   );
 }
 
+function deviceTypeOf(def: { id: string; name: string }): string {
+  const s = `${def.id} ${def.name}`.toLowerCase();
+  if (/wear|watch/.test(s)) return '手表';
+  if (/tablet|\btab\b/.test(s)) return '平板';
+  if (/tv/.test(s)) return '电视';
+  if (/desktop|2-in-1|foldable/.test(s)) return '桌面 / 折叠屏';
+  if (/auto|car|ddi/.test(s)) return '车载';
+  if (/phone|pixel|motorola|nexus/.test(s)) return '手机';
+  return '其他';
+}
+
+const TYPE_ORDER = ['手机', '平板', '手表', '电视', '桌面 / 折叠屏', '车载', '其他'];
+
 function NewVmModal({
   scope,
   env,
@@ -311,7 +324,9 @@ function NewVmModal({
   const [name, setName] = useState('');
   const [defs, setDefs] = useState<DeviceDef[] | null>(null);
   const [defsError, setDefsError] = useState(false);
+  const [deviceType, setDeviceType] = useState('');
   const [defId, setDefId] = useState('');
+  const [osSeries, setOsSeries] = useState('');
   const [imagePkg, setImagePkg] = useState('');
   const [managing, setManaging] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -324,23 +339,38 @@ function NewVmModal({
   const loadDefs = useCallback(() => {
     setDefsError(false);
     api.deviceDefs().then((r) => {
-      if (r.ok && r.data.ok && r.data.defs) {
-        setDefs(r.data.defs);
-        // 推荐较新的 Pixel 机型，避免按字母序选到 pixel_2
-        const preferred =
-          r.data.defs.find((d) => /^pixel_(9|8|7)/.test(d.id)) ??
-          r.data.defs.find((d) => /^pixel_/.test(d.id)) ??
-          r.data.defs[0];
-        setDefId(preferred ? preferred.id : '');
-      } else {
-        setDefsError(true);
-      }
+      if (r.ok && r.data.ok && r.data.defs) setDefs(r.data.defs);
+      else setDefsError(true);
     });
   }, []);
 
   useEffect(loadDefs, [loadDefs]);
 
   const installed = env?.images ?? [];
+
+  // 系统级联：左侧按大版本分组，右侧是该版本下的具体镜像
+  const osGroups = new Map<string, typeof installed>();
+  for (const img of installed) {
+    const label = osFromImagePkg(img.pkg);
+    const list = osGroups.get(label) ?? [];
+    list.push(img);
+    osGroups.set(label, list);
+  }
+  const osSeriesOptions = [...osGroups.entries()]
+    .map(([label, imgs]) => ({ label, maxApi: Math.max(...imgs.map((i) => i.api)) }))
+    .sort((a, b) => b.maxApi - a.maxApi);
+  const osImageOptions = osSeries ? (osGroups.get(osSeries) ?? []) : [];
+
+  // 型号级联：左侧设备类型，右侧该类型的具体机型
+  const defTypeMap = new Map<string, DeviceDef[]>();
+  for (const d of defs ?? []) {
+    const t = deviceTypeOf(d);
+    const list = defTypeMap.get(t) ?? [];
+    list.push(d);
+    defTypeMap.set(t, list);
+  }
+  const typeOptions = TYPE_ORDER.filter((t) => defTypeMap.has(t));
+  const defOptions = deviceType ? (defTypeMap.get(deviceType) ?? []) : [];
 
   async function create() {
     if (!name.trim() || !imagePkg) return;
@@ -386,32 +416,35 @@ function NewVmModal({
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 pixel6_test" autoFocus />
       </div>
       <div className="form-row">
-        <label>系统</label>
-        <select value={imagePkg} onChange={(e) => setImagePkg(e.target.value)}>
-          <option value="">选择已安装的镜像</option>
-          {installed.map((img) => (
-            <option key={img.pkg} value={img.pkg}>
-              {osFromImagePkg(img.pkg)}（API {img.api}）· {img.tag} · {img.abi}
-            </option>
-          ))}
-        </select>
-        <div className="form-hint">
-          缺少镜像或组件？{' '}
-          <button className="link-btn" onClick={() => setManaging(true)}>
-            管理 SDK
-          </button>
-        </div>
-      </div>
-      <div className="form-row">
         <label>型号</label>
-        <select value={defId} onChange={(e) => setDefId(e.target.value)} disabled={defsError}>
-          {defs === null && !defsError ? <option value="">读取中…</option> : null}
-          {defs?.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
+        <div className="cascade-row">
+          <select
+            value={deviceType}
+            onChange={(e) => {
+              setDeviceType(e.target.value);
+              setDefId('');
+            }}
+          >
+            <option value="">设备类型</option>
+            {typeOptions.map((t) => (
+              <option key={t} value={t}>
+                {t}（{defTypeMap.get(t)!.length}）
+              </option>
+            ))}
+          </select>
+          <select
+            value={defId}
+            onChange={(e) => setDefId(e.target.value)}
+            disabled={!deviceType || defsError}
+          >
+            <option value="">{deviceType ? '选择机型' : '先选设备类型'}</option>
+            {defOptions.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </div>
         {defsError && (
           <div className="form-hint">
             机型列表读取失败{' '}
@@ -420,6 +453,43 @@ function NewVmModal({
             </button>
           </div>
         )}
+      </div>
+      <div className="form-row">
+        <label>系统</label>
+        <div className="cascade-row">
+          <select
+            value={osSeries}
+            onChange={(e) => {
+              setOsSeries(e.target.value);
+              setImagePkg('');
+            }}
+          >
+            <option value="">大版本</option>
+            {osSeriesOptions.map((o) => (
+              <option key={o.label} value={o.label}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={imagePkg}
+            onChange={(e) => setImagePkg(e.target.value)}
+            disabled={!osSeries}
+          >
+            <option value="">{osSeries ? '选择镜像' : '先选大版本'}</option>
+            {osImageOptions.map((img) => (
+              <option key={img.pkg} value={img.pkg}>
+                {img.tag} · {img.abi} · API {img.api}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="form-hint">
+          缺少镜像或组件？{' '}
+          <button className="link-btn" onClick={() => setManaging(true)}>
+            管理 SDK
+          </button>
+        </div>
       </div>
       <div className="form-row">
         <button className="link-btn" onClick={() => setAdvanced((v) => !v)}>

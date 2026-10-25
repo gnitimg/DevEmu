@@ -832,6 +832,23 @@ table.tbl {
   border-top: 1px solid var(--border);
 }
 
+/* ---------- 级联双下拉 ---------- */
+
+.cascade-row {
+  display: flex;
+  gap: 8px;
+}
+
+.cascade-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.cascade-row select:disabled {
+  color: var(--text-3);
+  background: var(--bg);
+}
+
 /* ---------- 虚拟机硬件配置 ---------- */
 
 .hw-grid {
