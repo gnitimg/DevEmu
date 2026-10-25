@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, onSdkProgress, type SdkPkg } from '../api.ts';
-import { Modal } from './Modal.tsx';
 
-export function SdkManager({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+/** SDK 组件管理（内联于设置 SDK 分区）：已安装本地秒读，可安装联网懒加载 */
+export function SdkPackages({ onChanged }: { onChanged: () => void }) {
   const [tab, setTab] = useState<'installed' | 'available'>('installed');
   const [installed, setInstalled] = useState<SdkPkg[] | null>(null);
   const [available, setAvailable] = useState<SdkPkg[] | null>(null);
@@ -47,7 +47,7 @@ export function SdkManager({ onClose, onChanged }: { onClose: () => void; onChan
       return;
     }
     reloadInstalled();
-    setAvailable(null); // 重装列表可能变化，下次进页签重新拉
+    setAvailable(null);
     onChanged();
   }
 
@@ -56,15 +56,7 @@ export function SdkManager({ onClose, onChanged }: { onClose: () => void; onChan
   const shown = q ? list.filter((e) => e.pkg.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q)) : list;
 
   return (
-    <Modal
-      title="管理 SDK"
-      onClose={onClose}
-      footer={
-        <button className="btn" onClick={onClose}>
-          关闭
-        </button>
-      }
-    >
+    <div>
       <div className="sdk-tabs">
         <div className={`sdk-tab${tab === 'installed' ? ' on' : ''}`} onClick={() => setTab('installed')}>
           已安装 {installed ? `(${installed.length})` : ''}
@@ -114,6 +106,6 @@ export function SdkManager({ onClose, onChanged }: { onClose: () => void; onChan
         ))}
       </div>
       {busyPkg && progress && <div className="sdk-progress mono">{progress}</div>}
-    </Modal>
+    </div>
   );
 }

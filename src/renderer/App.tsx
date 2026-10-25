@@ -4,10 +4,11 @@ import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
 import { DeviceDetail } from './pages/DeviceDetail.tsx';
+import { Downloads } from './pages/Downloads.tsx';
 import { Settings } from './pages/Settings.tsx';
 import type { AvdInfo, ProjectMeta } from '../core/types.ts';
 
-type Page = 'projects' | 'devices' | 'device-detail' | 'settings';
+type Page = 'projects' | 'devices' | 'device-detail' | 'downloads' | 'settings';
 
 export interface EnvStatus {
   settings: {
@@ -37,6 +38,17 @@ export function App() {
   const [sideOpen, setSideOpen] = useState(true);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [devicesOpen, setDevicesOpen] = useState(true);
+  const [settingsSection, setSettingsSection] = useState('storage');
+
+  const goto = (p: Page) => {
+    setPage(p);
+    if (p === 'projects') setProjectId(null);
+  };
+
+  const openSdkManage = () => {
+    setSettingsSection('sdk');
+    goto('settings');
+  };
 
   const refreshEnv = useCallback(() => {
     api.envStatus().then((r) => {
@@ -78,11 +90,6 @@ export function App() {
     const timer = setInterval(refresh, 4000);
     return () => clearInterval(timer);
   }, []);
-
-  const goto = (p: Page) => {
-    setPage(p);
-    if (p === 'projects') setProjectId(null);
-  };
 
   return (
     <div className="shell">
@@ -190,6 +197,23 @@ export function App() {
             ))}
             {sharedAvds.length === 0 && <div className="side-child side-child-empty">暂无设备</div>}
           </SideItem>
+          <div className="nav-flex" />
+          <SideItem
+            icon={
+              <>
+                <path d="M8 2.5v7" />
+                <path d="M5 7l3 3 3-3" />
+                <path d="M3 11.5v1A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-1" />
+              </>
+            }
+            label="下载管理"
+            active={page === 'downloads'}
+            sideOpen={sideOpen}
+            onToggle={() => {
+              if (!sideOpen) setSideOpen(true);
+              goto('downloads');
+            }}
+          />
           <SideItem
             icon={
               <>
@@ -218,11 +242,11 @@ export function App() {
                 emus={emus}
                 refreshEmus={refreshEmus}
                 env={env}
-                refreshEnv={refreshEnv}
+                onOpenSdkManage={openSdkManage}
               />
             ))}
           {page === 'devices' && (
-            <DevicePool emus={emus} refreshEmus={refreshEmus} env={env} refreshEnv={refreshEnv} />
+            <DevicePool emus={emus} refreshEmus={refreshEmus} env={env} onOpenSdkManage={openSdkManage} />
           )}
           {page === 'device-detail' && deviceName !== null && (
             <DeviceDetail
@@ -235,7 +259,10 @@ export function App() {
               }}
             />
           )}
-          {page === 'settings' && <Settings env={env} refreshEnv={refreshEnv} />}
+          {page === 'downloads' && <Downloads />}
+          {page === 'settings' && (
+            <Settings env={env} refreshEnv={refreshEnv} section={settingsSection} onSection={setSettingsSection} />
+          )}
         </main>
       </div>
     </div>

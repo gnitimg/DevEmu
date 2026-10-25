@@ -17,12 +17,12 @@ export function DevicePool({
   emus,
   refreshEmus,
   env,
-  refreshEnv,
+  onOpenSdkManage,
 }: {
   emus: EmuDevice[];
   refreshEmus: () => void;
   env: EnvStatus | null;
-  refreshEnv: () => void;
+  onOpenSdkManage?: () => void;
 }) {
   const scope: Scope = { kind: 'shared' };
   const [runsKey, setRunsKey] = useState(0);
@@ -40,7 +40,7 @@ export function DevicePool({
       <div key={system} className="sys-page">
         {system === 'android' ? (
           <>
-            <VmPanel scope={scope} emus={emus} refreshEmus={refreshEmus} env={env} refreshEnv={refreshEnv} />
+            <VmPanel scope={scope} emus={emus} refreshEmus={refreshEmus} env={env} onOpenSdkManage={onOpenSdkManage} />
             <ApkPanel scope={scope} emus={emus} onRecorded={() => setRunsKey((k) => k + 1)} />
             <RunsPanel scope={scope} refreshKey={runsKey} />
           </>

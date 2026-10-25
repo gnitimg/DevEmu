@@ -1119,6 +1119,37 @@ table.tbl {
   white-space: nowrap;
 }
 
+/* ---------- 设置行（左标签右控件） ---------- */
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-row-label {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  flex: none;
+}
+
+.settings-row .path-row {
+  flex: 1;
+  max-width: 460px;
+}
+
+.settings-row select {
+  flex: none;
+}
+
 /* ---------- 自适应分段切换器 ---------- */
 
 .seg-track {

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, osFromImagePkg, prettyModel, type EmuDevice, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
-import { SdkManager } from './SdkManager.tsx';
 import { EditVmModal, HwFields, parseHwFields, RECOMMEND_HW } from './VmEdit.tsx';
 import type { EnvStatus } from '../App.tsx';
 import type { AvdInfo, DeviceDef } from '../../core/types.ts';
@@ -11,13 +10,13 @@ export function VmPanel({
   emus,
   refreshEmus,
   env,
-  refreshEnv,
+  onOpenSdkManage,
 }: {
   scope: Scope;
   emus: EmuDevice[];
   refreshEmus: () => void;
   env: EnvStatus | null;
-  refreshEnv: () => void;
+  onOpenSdkManage?: () => void;
 }) {
   const [avds, setAvds] = useState<AvdInfo[] | null>(null);
   const [error, setError] = useState('');
@@ -181,7 +180,7 @@ export function VmPanel({
         <NewVmModal
           scope={scope}
           env={env}
-          refreshEnv={refreshEnv}
+          onOpenSdkManage={onOpenSdkManage}
           onDone={() => {
             setCreating(false);
             reload();
@@ -208,12 +207,12 @@ const TYPE_ORDER = ['手机', '平板', '手表', '电视', '桌面 / 折叠屏'
 function NewVmModal({
   scope,
   env,
-  refreshEnv,
+  onOpenSdkManage,
   onDone,
 }: {
   scope: Scope;
   env: EnvStatus | null;
-  refreshEnv: () => void;
+  onOpenSdkManage?: () => void;
   onDone: () => void;
 }) {
   const [name, setName] = useState('');
@@ -223,7 +222,6 @@ function NewVmModal({
   const [defId, setDefId] = useState('');
   const [osSeries, setOsSeries] = useState('');
   const [imagePkg, setImagePkg] = useState('');
-  const [managing, setManaging] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [advanced, setAdvanced] = useState(false);
@@ -278,17 +276,6 @@ function NewVmModal({
       return;
     }
     onDone();
-  }
-
-  if (managing) {
-    return (
-      <SdkManager
-        onClose={() => setManaging(false)}
-        onChanged={() => {
-          refreshEnv();
-        }}
-      />
-    );
   }
 
   return (
@@ -380,7 +367,7 @@ function NewVmModal({
           </select>
         </div>
         <div className="form-hint">
-          <button className="link-btn" onClick={() => setManaging(true)}>
+          <button className="link-btn" onClick={() => onOpenSdkManage?.()}>
             管理 SDK
           </button>
         </div>
