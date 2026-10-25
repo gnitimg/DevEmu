@@ -3,10 +3,11 @@ import { api, type EmuDevice } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
+import { DeviceDetail } from './pages/DeviceDetail.tsx';
 import { Settings } from './pages/Settings.tsx';
-import type { ProjectMeta } from '../core/types.ts';
+import type { AvdInfo, ProjectMeta } from '../core/types.ts';
 
-type Page = 'projects' | 'devices' | 'settings';
+type Page = 'projects' | 'devices' | 'device-detail' | 'settings';
 
 export interface EnvStatus {
   settings: {
@@ -17,6 +18,8 @@ export interface EnvStatus {
     proxyEnabled?: boolean;
     proxyPort?: number;
     downloadRoute?: string;
+    maxDownloadKbps?: number;
+    parallelDownloads?: number;
   };
   sdk: { root: string } | null;
   java: string | null;
@@ -26,11 +29,14 @@ export interface EnvStatus {
 export function App() {
   const [page, setPage] = useState<Page>('projects');
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [deviceName, setDeviceName] = useState<string | null>(null);
   const [env, setEnv] = useState<EnvStatus | null>(null);
   const [emus, setEmus] = useState<EmuDevice[]>([]);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [sharedAvds, setSharedAvds] = useState<AvdInfo[]>([]);
   const [sideOpen, setSideOpen] = useState(true);
   const [projectsOpen, setProjectsOpen] = useState(true);
+  const [devicesOpen, setDevicesOpen] = useState(true);
 
   const refreshEnv = useCallback(() => {
     api.envStatus().then((r) => {
@@ -56,6 +62,17 @@ export function App() {
     const refresh = () =>
       api.listProjects().then((r) => {
         if (r.ok) setProjects(r.data);
+      });
+    refresh();
+    const timer = setInterval(refresh, 4000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // 侧栏设备池设备列表同步
+  useEffect(() => {
+    const refresh = () =>
+      api.listAvds({ kind: 'shared' }).then((r) => {
+        if (r.ok) setSharedAvds(r.data);
       });
     refresh();
     const timer = setInterval(refresh, 4000);
@@ -143,13 +160,37 @@ export function App() {
               </>
             }
             label="设备池"
-            active={page === 'devices'}
+            active={page === 'devices' || page === 'device-detail'}
+            expanded={devicesOpen}
+            hasChildren
             sideOpen={sideOpen}
             onToggle={() => {
-              if (!sideOpen) setSideOpen(true);
-              goto('devices');
+              if (!sideOpen) {
+                setSideOpen(true);
+                setDevicesOpen(true);
+                setPage('devices');
+              } else {
+                setDevicesOpen((v) => !v);
+                setPage('devices');
+                setDeviceName(null);
+              }
             }}
-          />
+          >
+            {sharedAvds.map((a) => (
+              <button
+                key={a.name}
+                className={`side-child${page === 'device-detail' && deviceName === a.name ? ' active' : ''}`}
+                onClick={() => {
+                  setPage('device-detail');
+                  setDeviceName(a.name);
+                }}
+                title={a.name}
+              >
+                {a.name}
+              </button>
+            ))}
+            {sharedAvds.length === 0 && <div className="side-child side-child-empty">暂无设备</div>}
+          </SideItem>
           <SideItem
             icon={
               <>
@@ -183,6 +224,17 @@ export function App() {
             ))}
           {page === 'devices' && (
             <DevicePool emus={emus} refreshEmus={refreshEmus} env={env} refreshEnv={refreshEnv} />
+          )}
+          {page === 'device-detail' && deviceName !== null && (
+            <DeviceDetail
+              avdName={deviceName}
+              emus={emus}
+              refreshEmus={refreshEmus}
+              onBack={() => {
+                setPage('devices');
+                setDeviceName(null);
+              }}
+            />
           )}
           {page === 'settings' && <Settings env={env} refreshEnv={refreshEnv} />}
         </main>

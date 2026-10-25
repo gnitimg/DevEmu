@@ -45,7 +45,7 @@ export function onSdkProgress(cb: (line: string) => void): () => void {
 export type DownloadItem = {
   pkg: string;
   desc: string;
-  state: 'downloading' | 'done' | 'failed' | 'cancelled';
+  state: 'queued' | 'downloading' | 'done' | 'failed' | 'cancelled';
   percent: number;
   downloaded: number;
   total: number;

@@ -111,12 +111,16 @@ export function registerIpc(): void {
       proxyEnabled?: boolean;
       proxyPort?: number;
       downloadRoute?: string;
+      maxDownloadKbps?: number;
+      parallelDownloads?: number;
     };
     if (!s.dataRoot || typeof s.dataRoot !== 'string') return fail('数据根不能为空');
     const gpu = s.gpuMode && ['angle_indirect', 'swiftshader_indirect', 'host'].includes(s.gpuMode) ? s.gpuMode : undefined;
     const port = Number(s.proxyPort);
     const proxyPort = Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.round(port) : undefined;
     const route = s.downloadRoute === 'proxy' || s.downloadRoute === 'direct' ? s.downloadRoute : undefined;
+    const kbps = Number(s.maxDownloadKbps);
+    const parallel = Number(s.parallelDownloads);
     saveAppSettings({
       dataRoot: s.dataRoot,
       sdkPath: s.sdkPath,
@@ -125,6 +129,9 @@ export function registerIpc(): void {
       proxyEnabled: s.proxyEnabled === true,
       proxyPort,
       downloadRoute: route,
+      maxDownloadKbps: Number.isFinite(kbps) && kbps >= 0 ? Math.round(kbps) : undefined,
+      parallelDownloads:
+        Number.isFinite(parallel) && parallel >= 1 && parallel <= 4 ? Math.round(parallel) : undefined,
     });
     return ok(loadAppSettings());
   });
@@ -162,8 +169,15 @@ export function registerIpc(): void {
     const { settings, java, sdk } = status();
     if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
     if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
-    // 走下载管理器：解析进度、算速度/ETA、广播快照
-    const r = await startDownload(sdk, java, proxyOf(settings), pkg, pkg, progress);
+    // 限速与并行数来自设置；走整形代理时上游按线路设置串接
+    const kbps = Number(settings.maxDownloadKbps);
+    const dlOpts = {
+      parallel: settings.parallelDownloads,
+      maxBps: Number.isFinite(kbps) && kbps > 0 ? kbps * 1024 : 0,
+      upstreamPort:
+        settings.downloadRoute === 'proxy' && settings.proxyPort ? settings.proxyPort : undefined,
+    };
+    const r = await startDownload(sdk, java, proxyOf(settings), pkg, pkg, progress, dlOpts);
     if (!r.ok) return fail(r.error ?? '安装失败');
     return ok(true);
   });

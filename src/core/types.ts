@@ -12,6 +12,10 @@ export interface Settings {
   proxyPort?: number;
   /** SDK 下载线路：direct 直连 / proxy 走本地代理 */
   downloadRoute?: 'direct' | 'proxy';
+  /** 最高下载速度 KB/s，0 或缺省为无限制 */
+  maxDownloadKbps?: number;
+  /** 并行下载数 1-4 */
+  parallelDownloads?: number;
 }
 
 export interface SdkInfo {

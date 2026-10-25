@@ -213,7 +213,7 @@ textarea:focus {
   border-radius: var(--radius);
   color: #3c424a;
   white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, padding 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar.collapsed .side-item {
@@ -234,29 +234,40 @@ textarea:focus {
   width: 16px;
   height: 16px;
   flex: none;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .side-item-label {
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 0;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 140px;
   opacity: 1;
-  transition: opacity 0.1s;
+  transition: max-width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.12s, margin 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.sidebar.collapsed .side-item-label,
-.sidebar.collapsed .side-chev {
+.sidebar.collapsed .side-item-label {
+  max-width: 0;
   opacity: 0;
-  width: 0;
-  flex: none;
+  margin-right: -9px;
+}
+
+.sidebar.collapsed .side-chev {
+  max-width: 0;
+  opacity: 0;
+  margin-left: -9px;
 }
 
 .side-chev {
   width: 12px;
   height: 12px;
+  flex: none;
   color: var(--text-3);
-  transition: transform 0.15s ease;
+  max-width: 12px;
+  opacity: 1;
+  transition: transform 0.15s ease, max-width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.12s, margin 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .side-chev.open {
@@ -844,6 +855,22 @@ table.tbl {
   border-top: 1px solid var(--border);
 }
 
+/* ---------- 设备详情 ---------- */
+
+.device-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.device-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px 14px;
+}
+
 /* ---------- 下载管理 ---------- */
 
 .dl-section-title {
@@ -1108,7 +1135,45 @@ table.tbl {
   white-space: nowrap;
 }
 
-/* ---------- 系统切换 ---------- */
+/* ---------- 自适应分段切换器 ---------- */
+
+.seg-track {
+  position: relative;
+  display: inline-flex;
+  padding: 3px;
+  background: #eceef1;
+  border-radius: 8px;
+}
+
+.seg-pill {
+  position: absolute;
+  top: 3px;
+  height: calc(100% - 6px);
+  background: var(--surface);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(23, 26, 30, 0.12);
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.15s;
+}
+
+.seg-btn {
+  position: relative;
+  z-index: 1;
+  height: 26px;
+  padding: 0 14px;
+  font-size: 12px;
+  color: var(--text-2);
+  border-radius: 6px;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+
+.seg-btn.on {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---------- 系统切换（兼容旧两段用法） ---------- */
 
 .sys-switch {
   position: relative;

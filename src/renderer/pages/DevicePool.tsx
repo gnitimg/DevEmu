@@ -4,6 +4,7 @@ import type { EnvStatus } from '../App.tsx';
 import { VmPanel } from '../components/VmPanel.tsx';
 import { ApkPanel } from '../components/ApkPanel.tsx';
 import { RunsPanel } from '../components/RunsPanel.tsx';
+import { Segmented } from '../components/Segmented.tsx';
 
 type System = 'android' | 'harmonyos';
 
@@ -26,7 +27,6 @@ export function DevicePool({
   const scope: Scope = { kind: 'shared' };
   const [runsKey, setRunsKey] = useState(0);
   const [system, setSystem] = useState<System>('android');
-  const activeIdx = SYSTEMS.findIndex((s) => s.id === system);
 
   return (
     <div>
@@ -34,20 +34,7 @@ export function DevicePool({
         <h1 className="page-title">设备池</h1>
         <span className="page-sub">公共设备，任意 APK 可安装测试</span>
         <div className="page-actions">
-          <div className="sys-switch" role="tablist">
-            <div className="sys-pill" style={{ transform: `translateX(${activeIdx * 100}%)` }} />
-            {SYSTEMS.map((s) => (
-              <button
-                key={s.id}
-                className={`sys-btn${system === s.id ? ' on' : ''}`}
-                onClick={() => setSystem(s.id)}
-                role="tab"
-                aria-selected={system === s.id}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
+          <Segmented options={SYSTEMS} value={system} onChange={setSystem} />
         </div>
       </div>
       <div key={system} className="sys-page">

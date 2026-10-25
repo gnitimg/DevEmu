@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import { SdkManager } from '../components/SdkManager.tsx';
 import { DownloadsModal } from '../components/DownloadsModal.tsx';
+import { Segmented } from '../components/Segmented.tsx';
 import type { EnvStatus } from '../App.tsx';
 
-type Section = 'storage' | 'sdk' | 'network' | 'emulator';
+type Section = 'storage' | 'sdk' | 'network' | 'download' | 'emulator';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'storage', label: '存储' },
   { id: 'sdk', label: 'SDK' },
   { id: 'network', label: '网络与代理' },
+  { id: 'download', label: '下载与限速' },
   { id: 'emulator', label: '模拟器' },
 ];
 
@@ -21,6 +23,9 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
   const [gpuMode, setGpuMode] = useState('');
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [proxyPort, setProxyPort] = useState('7890');
+  const [unlimited, setUnlimited] = useState(true);
+  const [maxKbps, setMaxKbps] = useState('2048');
+  const [parallel, setParallel] = useState('2');
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<
     { routes: { name: string; ok: boolean; latencyMs: number; loss: number }[]; chosen?: string } | null
@@ -41,6 +46,10 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
       setGpuMode(env.settings.gpuMode ?? 'swiftshader_indirect');
       setProxyEnabled(env.settings.proxyEnabled === true);
       setProxyPort(env.settings.proxyPort ? String(env.settings.proxyPort) : '7890');
+      const kb = env.settings.maxDownloadKbps;
+      setUnlimited(!kb || kb <= 0);
+      setMaxKbps(kb && kb > 0 ? String(kb) : '2048');
+      setParallel(env.settings.parallelDownloads ? String(env.settings.parallelDownloads) : '2');
     }
   }, [env]);
 
@@ -58,6 +67,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
     const timer = setTimeout(async () => {
       setError('');
       const port = Number(proxyPort);
+      const kb = unlimited ? 0 : Number(maxKbps);
       const r = await api.saveSettings({
         dataRoot: dataRoot.trim(),
         sdkPath: sdkPath.trim() || undefined,
@@ -65,6 +75,8 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
         gpuMode: gpuMode || undefined,
         proxyEnabled,
         proxyPort: Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined,
+        maxDownloadKbps: Number.isFinite(kb) && kb >= 0 ? Math.round(kb) : 0,
+        parallelDownloads: Number(parallel) || 2,
       });
       if (!r.ok) setError(r.error);
       else {
@@ -73,7 +85,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [dataRoot, sdkPath, javaPath, gpuMode, proxyEnabled, proxyPort, refreshEnv]);
+  }, [dataRoot, sdkPath, javaPath, gpuMode, proxyEnabled, proxyPort, unlimited, maxKbps, parallel, refreshEnv]);
 
   const markDirty = (setter: (v: string) => void) => (v: string) => {
     dirty.current = true;
@@ -117,14 +129,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
         <h1 className="page-title">设置</h1>
         <span className={`save-hint${hintOn ? ' show' : ''}`}>已保存</span>
         <div className="page-actions">
-          <div className="sys-switch seg-4">
-            <div className="sys-pill" style={{ transform: `translateX(${SECTIONS.findIndex((s) => s.id === section) * 100}%)` }} />
-            {SECTIONS.map((s) => (
-              <button key={s.id} className={`sys-btn${section === s.id ? ' on' : ''}`} onClick={() => setSection(s.id)}>
-                {s.label}
-              </button>
-            ))}
-          </div>
+          <Segmented options={SECTIONS} value={section} onChange={setSection} />
         </div>
       </div>
       <div key={section} className="sys-page">
@@ -248,6 +253,55 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                   )}
                 </div>
                 <div className="form-hint">测速 Google SDK 仓库的直连与代理线路，自动选延迟低、丢包低的用于 SDK 下载。</div>
+              </div>
+            </>
+          )}
+
+          {section === 'download' && (
+            <>
+              <div className="form-row">
+                <label>最高下载速度</label>
+                <div className="proxy-row">
+                  <label className="switch-wrap">
+                    <input
+                      type="checkbox"
+                      checked={unlimited}
+                      onChange={(e) => {
+                        dirty.current = true;
+                        setUnlimited(e.target.checked);
+                      }}
+                    />
+                    无限制
+                  </label>
+                  {!unlimited && (
+                    <>
+                      <input
+                        className="proxy-port"
+                        value={maxKbps}
+                        onChange={(e) => markDirty(setMaxKbps)(e.target.value.replace(/[^\d]/g, ''))}
+                        inputMode="numeric"
+                      />
+                      <span className="proxy-addr">KB/s</span>
+                    </>
+                  )}
+                </div>
+                <div className="form-hint">
+                  限制后 SDK 下载经本地整形代理按配额转发字节，对每个下载任务生效。
+                </div>
+              </div>
+              <div className="form-row">
+                <label>并行下载数</label>
+                <select
+                  value={parallel}
+                  onChange={(e) => markDirty(setParallel)(e.target.value)}
+                  style={{ width: 160 }}
+                >
+                  <option value="1">1（逐个下载）</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                </select>
+                <div className="form-hint">超出并行数的任务排队，完成一个自动开始下一个。</div>
               </div>
             </>
           )}

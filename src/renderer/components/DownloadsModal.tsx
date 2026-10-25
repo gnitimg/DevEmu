@@ -51,6 +51,9 @@ export function DownloadsModal({ onClose }: { onClose: () => void }) {
         <div key={d.pkg + d.startedAt} className="dl-item">
           <div className="dl-head">
             <span className="dl-name mono">{d.pkg}</span>
+            <span className={`chip ${d.state === 'queued' ? '' : ''}`}>
+              {d.state === 'queued' ? '排队中' : ''}
+            </span>
             <button
               className="btn btn-sm btn-danger"
               disabled={cancelling !== ''}
@@ -65,13 +68,19 @@ export function DownloadsModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="dl-bar">
             <div className="dl-fill" style={{ width: `${d.percent}%` }} />
-            <span className="dl-speed">{d.speedBps > 0 ? fmtSpeed(d.speedBps) : '连接中…'}</span>
+            <span className="dl-speed">
+              {d.state === 'queued' ? '等待并行槽位' : d.speedBps > 0 ? fmtSpeed(d.speedBps) : '连接中…'}
+            </span>
           </div>
           <div className="dl-meta">
             <span>
               {d.total > 0 ? `${fmtBytes(d.downloaded)} / ${fmtBytes(d.total)}` : `${d.percent}%`}
             </span>
-            <span>剩余 {d.total > 0 && d.speedBps > 0 ? fmtEta(d.etaSec) : '计算中…'}</span>
+            <span>
+              {d.state === 'queued'
+                ? '—'
+                : `剩余 ${d.total > 0 && d.speedBps > 0 ? fmtEta(d.etaSec) : '计算中…'}`}
+            </span>
           </div>
         </div>
       ))}

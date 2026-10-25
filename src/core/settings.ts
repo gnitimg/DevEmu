@@ -38,6 +38,8 @@ export function loadSettings(dataRoot: string): Settings {
       proxyEnabled: parsed.proxyEnabled,
       proxyPort: parsed.proxyPort,
       downloadRoute: parsed.downloadRoute,
+      maxDownloadKbps: parsed.maxDownloadKbps,
+      parallelDownloads: parsed.parallelDownloads,
     };
   } catch {
     return { dataRoot };
