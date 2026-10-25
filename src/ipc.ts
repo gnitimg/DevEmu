@@ -1,7 +1,8 @@
-import { ipcMain, dialog, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, ipcMain, dialog, type IpcMainInvokeEvent } from 'electron';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
 import { probeRoutes, type RouteProbe } from './core/net.ts';
+import { startDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
@@ -21,6 +22,14 @@ function fail(error: string) {
 }
 
 type ProgressFn = (line: string) => void;
+
+// 下载快照变化时广播到所有窗口（1 秒节流由 core 负责）
+onDownloadsChanged(() => {
+  const snap = listDownloads();
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.webContents.isDestroyed()) w.webContents.send('downloads:changed', snap);
+  }
+});
 
 function handle(channel: string, fn: (...args: never[]) => unknown): void {
   ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
@@ -150,13 +159,17 @@ export function registerIpc(): void {
 
   const PKG_RE = /^[\w.-]+(;[\w.-]+)*$/;
   handle('sdk:install', async (pkg: string, progress?: ProgressFn) => {
-    const { settings, java } = status();
+    const { settings, java, sdk } = status();
     if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
-    const res = await sdkRun(settings, java, [pkg], progress);
-    if (!res) return fail('SDK 缺少 cmdline-tools');
-    if (res.code !== 0) return fail('安装失败：' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
+    if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
+    // 走下载管理器：解析进度、算速度/ETA、广播快照
+    const r = await startDownload(sdk, java, proxyOf(settings), pkg, pkg, progress);
+    if (!r.ok) return fail(r.error ?? '安装失败');
     return ok(true);
   });
+
+  handle('downloads:list', () => ok(listDownloads()));
+  handle('downloads:cancel', (pkg: string) => ok(cancelDownload(pkg)));
 
   handle('sdk:uninstall', async (pkg: string, progress?: ProgressFn) => {
     const { settings, java } = status();

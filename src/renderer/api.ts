@@ -42,6 +42,27 @@ export function onSdkProgress(cb: (line: string) => void): () => void {
   return fn ? fn(cb) : () => undefined;
 }
 
+export type DownloadItem = {
+  pkg: string;
+  desc: string;
+  state: 'downloading' | 'done' | 'failed' | 'cancelled';
+  percent: number;
+  downloaded: number;
+  total: number;
+  speedBps: number;
+  etaSec: number;
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
+};
+
+export function onDownloadsChanged(cb: (snap: { active: DownloadItem[]; finished: DownloadItem[] }) => void): () => void {
+  const api2 = (window as unknown as { devemu: { onDownloadsChanged?: (cb: (snap: unknown) => void) => () => void } }).devemu;
+  return api2?.onDownloadsChanged
+    ? api2.onDownloadsChanged((snap) => cb(snap as { active: DownloadItem[]; finished: DownloadItem[] }))
+    : () => undefined;
+}
+
 export const api = {
   envStatus: () =>
     call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; images: SystemImage[] }>('envStatus'),
@@ -51,6 +72,8 @@ export const api = {
   sdkAvailable: () => call<SdkPkg[]>('sdkAvailable'),
   sdkInstall: (pkg: string) => call<boolean>('sdkInstall', pkg),
   sdkUninstall: (pkg: string) => call<boolean>('sdkUninstall', pkg),
+  downloadsList: () => call<{ active: DownloadItem[]; finished: DownloadItem[] }>('downloadsList'),
+  downloadsCancel: (pkg: string) => call<boolean>('downloadsCancel', pkg),
   listProjects: () => call<ProjectMeta[]>('listProjects'),
   createProject: (name: string, note?: string) => call<ProjectMeta>('createProject', name, note),
   updateProject: (id: string, patch: { name?: string; note?: string }) => call<ProjectMeta | null>('updateProject', id, patch),

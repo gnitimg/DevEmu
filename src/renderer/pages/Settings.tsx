@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import { SdkManager } from '../components/SdkManager.tsx';
+import { DownloadsModal } from '../components/DownloadsModal.tsx';
 import type { EnvStatus } from '../App.tsx';
 
 type Section = 'storage' | 'sdk' | 'network' | 'emulator';
@@ -28,6 +29,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
   const [hintOn, setHintOn] = useState(false);
   const [error, setError] = useState('');
   const [managing, setManaging] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const dirty = useRef(false);
 
   useEffect(() => {
@@ -192,8 +194,11 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
                 <button className="btn" onClick={() => setManaging(true)} disabled={!!env && !env.sdk}>
                   管理 SDK
                 </button>
+                <button className="btn" onClick={() => setDownloadsOpen(true)}>
+                  下载管理
+                </button>
                 <span className="form-hint" style={{ marginTop: 0 }}>
-                  安装、卸载平台工具与系统镜像等组件
+                  安装/卸载组件；查看下载进度、速度与剩余时间
                 </span>
               </div>
             </>
@@ -263,6 +268,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
         </div>
       </div>
       {managing && <SdkManager onClose={() => setManaging(false)} onChanged={() => refreshEnv()} />}
+      {downloadsOpen && <DownloadsModal onClose={() => setDownloadsOpen(false)} />}
     </div>
   );
 }

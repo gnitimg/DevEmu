@@ -12,6 +12,13 @@ contextBridge.exposeInMainWorld('devemu', {
   sdkAvailable: invoke('sdk:available'),
   sdkInstall: invoke('sdk:install'),
   sdkUninstall: invoke('sdk:uninstall'),
+  downloadsList: invoke('downloads:list'),
+  downloadsCancel: invoke('downloads:cancel'),
+  onDownloadsChanged: (cb: (snap: unknown) => void) => {
+    const listener = (_e: unknown, snap: unknown) => cb(snap);
+    ipcRenderer.on('downloads:changed', listener);
+    return () => ipcRenderer.removeListener('downloads:changed', listener);
+  },
   onSdkProgress: (cb: (line: string) => void) => {
     const listener = (_e: unknown, line: string) => cb(line);
     ipcRenderer.on('sdk:progress', listener);
