@@ -1,6 +1,7 @@
 :root {
   --bg: #f6f7f8;
   --surface: #ffffff;
+  --side-bg: #fbfbfc;
   --border: #e4e7ea;
   --border-strong: #cdd2d8;
   --text: #1a1d21;
@@ -8,13 +9,15 @@
   --text-3: #9aa1ab;
   --accent: #1f6feb;
   --accent-hover: #1a5fd0;
-  --accent-weak: #eef4fe;
+  --accent-weak: #eaf1fe;
   --danger: #c93a3d;
   --danger-weak: #fbeeee;
   --ok: #178a4c;
   --ok-weak: #e9f6ef;
   --radius: 6px;
   --mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  --side-w: 232px;
+  --side-w-collapsed: 48px;
 }
 
 * {
@@ -69,67 +72,244 @@ textarea:focus {
   box-shadow: 0 0 0 2px var(--accent-weak);
 }
 
-/* ---------- 布局 ---------- */
+/* ---------- 外壳：额头 + 左右结构 ---------- */
 
-.app {
+.shell {
   display: flex;
+  flex-direction: column;
   height: 100%;
 }
 
-.nav {
-  width: 48px;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
+.topbar {
+  height: 44px;
+  flex: none;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  padding: 8px 0;
-  gap: 2px;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
-.nav-flex {
+.topbar-flex {
   flex: 1;
 }
 
-.nav-logo {
-  width: 30px;
-  height: 30px;
-  margin-bottom: 10px;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  transition: background 0.12s;
+}
+
+.brand:hover {
+  background: #f0f2f4;
+}
+
+.brand-logo {
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.5px;
   color: #fff;
   background: var(--text);
-  border-radius: var(--radius);
+  border-radius: 5px;
 }
 
-.nav-btn {
-  width: 34px;
-  height: 34px;
+.brand-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.brand-chev {
+  width: 13px;
+  height: 13px;
+  color: var(--text-3);
+  transition: transform 0.2s ease;
+}
+
+.brand-chev.flip {
+  transform: rotate(180deg);
+}
+
+.sdk-chip {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: var(--radius);
+  gap: 6px;
+  font-size: 11.5px;
   color: var(--text-2);
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--side-bg);
   transition: background 0.12s, color 0.12s;
 }
 
-.nav-btn:hover {
-  background: var(--bg);
-  color: var(--text);
-}
-
-.nav-btn.active {
+.sdk-chip:hover {
   background: var(--accent-weak);
   color: var(--accent);
 }
 
-.nav-btn svg {
-  width: 17px;
-  height: 17px;
+.sdk-chip.err {
+  color: var(--danger);
+  border-color: #ecc8c9;
+}
+
+.sdk-chip.err:hover {
+  background: var(--danger-weak);
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ---------- 侧栏（可伸缩） ---------- */
+
+.sidebar {
+  width: var(--side-w);
+  flex: none;
+  background: var(--side-bg);
+  border-right: 1px solid var(--border);
+  padding: 8px;
+  overflow: hidden;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar.collapsed {
+  width: var(--side-w-collapsed);
+}
+
+.side-label {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  padding: 6px 10px 6px;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 0.12s;
+}
+
+.sidebar.collapsed .side-label {
+  opacity: 0;
+  height: 0;
+  padding: 0 10px;
+}
+
+.side-item {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  color: #3c424a;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sidebar.collapsed .side-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.side-item:hover {
+  background: #eceef1;
+}
+
+.side-item.active {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.side-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.side-item-label {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 1;
+  transition: opacity 0.1s;
+}
+
+.sidebar.collapsed .side-item-label,
+.sidebar.collapsed .side-chev {
+  opacity: 0;
+  width: 0;
+  flex: none;
+}
+
+.side-chev {
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+
+.side-chev.open {
+  transform: rotate(90deg);
+}
+
+.side-children {
+  overflow: hidden;
+  max-height: 600px;
+  transition: max-height 0.2s ease, opacity 0.15s;
+  opacity: 1;
+}
+
+.side-children.hidden {
+  max-height: 0;
+  opacity: 0;
+}
+
+.side-child {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 36px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  color: #4a5058;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s, color 0.12s;
+}
+
+.side-child:hover {
+  background: #eceef1;
+}
+
+.side-child.active {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.side-child-empty {
+  color: var(--text-3);
+  font-size: 12px;
+  padding: 0 10px 0 36px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar.collapsed .side-children {
+  display: none;
 }
 
 .content {
@@ -408,17 +588,6 @@ table.tbl {
   to {
     transform: rotate(360deg);
   }
-}
-
-.banner-error {
-  margin-bottom: 14px;
-  padding: 8px 12px;
-  border: 1px solid #ecc8c9;
-  background: var(--danger-weak);
-  color: var(--danger);
-  border-radius: var(--radius);
-  font-size: 12.5px;
-  cursor: pointer;
 }
 
 /* ---------- 项目卡片 ---------- */

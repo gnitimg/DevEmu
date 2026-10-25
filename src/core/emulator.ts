@@ -3,6 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
+import { repositionEmulatorWindow } from './win.ts';
 import type { Scope, SdkInfo } from './types.ts';
 
 export interface RunningEmu {
@@ -111,6 +112,13 @@ export function launchEmulator(
       if (!settled) {
         settled = true;
         running.set(`${avdName}@${sKey}`, entry);
+        if (process.platform === 'win32') {
+          // 级联偏移避免多开重叠；基准 y 保证在屏幕可见区内
+          const n = running.size;
+          const x = 96 + ((n - 1) % 6) * 48;
+          const y = 96 + ((n - 1) % 6) * 36;
+          void repositionEmulatorWindow(avdName, x, y).catch(() => undefined);
+        }
         resolve(entry);
       }
     }, 3000);
