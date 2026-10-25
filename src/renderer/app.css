@@ -977,9 +977,8 @@ table.tbl {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 左右边距与侧栏条目一致（10px），保证两边缘对称 */
-  padding: 8px 10px;
-  margin-top: 6px;
+  /* 左右与底部边距一致（10px），顶距收窄使整体略微上移 */
+  padding: 4px 10px 10px;
 }
 
 .side-dl {
