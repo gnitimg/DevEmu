@@ -18,6 +18,8 @@ export interface DownloadItem {
   speedBps: number;
   /** 秒；0 表示未知 */
   etaSec: number;
+  /** sdkmanager 任务阶段：prepare 准备 / download 下载 / unzip 解压安装 */
+  phase?: 'prepare' | 'download' | 'unzip';
   startedAt: number;
   finishedAt?: number;
   error?: string;
@@ -75,12 +77,18 @@ function fmtUnits(unit: string): number {
   return UNIT_BYTES[unit.toLowerCase()] ?? 1;
 }
 
-/** 解析 sdkmanager 进度行：百分比、已下/总大小、速度 */
+/** 解析 sdkmanager 进度行：百分比、阶段；无字节量（sdkmanager 不输出大小） */
 function feedLine(entry: Entry, line: string): void {
   const pct = line.match(/(\d{1,3})\s*%/);
   if (pct) entry.percent = Math.min(100, parseInt(pct[1]!, 10));
 
-  // 形如 "12.3 MiB / 80 MiB"（分隔符与单位写法多变）
+  // 阶段：sdkmanager 的百分比覆盖"取仓库+下载+解压"全程，
+  // 下载只占其中一段，解压在结尾飞速完成——阶段标签让跳变有语义
+  if (/Unzipping/i.test(line)) entry.phase = 'unzip';
+  else if (/Downloading/i.test(line)) entry.phase = 'download';
+  else if (/Loading|Fetch|Computing/i.test(line)) entry.phase = 'prepare';
+
+  // 形如 "12.3 MiB / 80 MiB"（文件任务才有）
   const sizes = line.match(/(\d+(?:\.\d+)?)\s*([KMGT]?i?B|[KMGT]?B)\s*\/\s*(\d+(?:\.\d+)?)\s*([KMGT]?i?B|[KMGT]?B)/i);
   if (sizes) {
     const scale = fmtUnits(sizes[2]!);
@@ -96,26 +104,46 @@ function feedLine(entry: Entry, line: string): void {
     if (speed && entry.speedBps === 0) entry.speedBps = toBytes(speed[1]!, speed[2]!);
   }
 
+  // 字节任务记字节；百分比任务把百分点当样本（供速度/ETA 估算）
   if (entry.downloaded > 0) {
     entry.samples.push({ t: Date.now(), bytes: entry.downloaded });
+    if (entry.samples.length > 30) entry.samples.shift();
+  } else if (entry.percent > 0) {
+    entry.samples.push({ t: Date.now(), bytes: entry.percent });
     if (entry.samples.length > 30) entry.samples.shift();
   }
 }
 
-/** 速度取最近 1 秒窗口的字节差；ETA = 剩余大小 / 速度 */
+/** 速度取最近 1 秒窗口的字节差；ETA = 剩余大小 / 速度。
+ *  sdkmanager 任务无字节量：用近 15 秒的百分比速度估算 ETA */
 function recompute(entry: Entry): void {
   const now = Date.now();
-  const recent = entry.samples.filter((s) => now - s.t <= 1000);
+  if (entry.total > 0) {
+    const recent = entry.samples.filter((s) => now - s.t <= 1000);
+    const old = recent[0];
+    const cur = entry.samples[entry.samples.length - 1];
+    if (old && cur && now - old.t >= 400) {
+      entry.speedBps = Math.max(0, Math.round(((cur.bytes - old.bytes) * 1000) / (cur.t - old.t)));
+    }
+    if (entry.total > 0 && entry.speedBps > 0) {
+      entry.etaSec = Math.max(0, Math.round((entry.total - entry.downloaded) / entry.speedBps));
+    } else {
+      entry.etaSec = 0;
+    }
+    return;
+  }
+  // 百分比模式
+  const recent = entry.samples.filter((s) => now - s.t <= 15_000);
   const old = recent[0];
-  const cur = entry.samples[entry.samples.length - 1];
-  if (old && cur && now - old.t >= 400) {
-    entry.speedBps = Math.max(0, Math.round(((cur.bytes - old.bytes) * 1000) / (cur.t - old.t)));
+  const cur = recent[recent.length - 1];
+  if (old && cur && now - old.t >= 3000 && cur.bytes >= old.bytes) {
+    const pctPerSec = (cur.bytes - old.bytes) / ((now - old.t) / 1000);
+    if (pctPerSec > 0.002) {
+      entry.etaSec = Math.max(0, Math.round((100 - cur.bytes) / pctPerSec));
+      return;
+    }
   }
-  if (entry.total > 0 && entry.speedBps > 0) {
-    entry.etaSec = Math.max(0, Math.round((entry.total - entry.downloaded) / entry.speedBps));
-  } else {
-    entry.etaSec = 0;
-  }
+  entry.etaSec = 0;
 }
 
 function ensureTicker(): void {
@@ -150,6 +178,7 @@ function snapshot(entry: Entry): DownloadItem {
     total: entry.total,
     speedBps: entry.speedBps,
     etaSec: entry.etaSec,
+    phase: entry.phase,
     startedAt: entry.startedAt,
     finishedAt: entry.finishedAt,
     error: entry.error,

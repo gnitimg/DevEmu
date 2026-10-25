@@ -61,6 +61,7 @@ export type DownloadItem = {
   total: number;
   speedBps: number;
   etaSec: number;
+  phase?: 'prepare' | 'download' | 'unzip';
   startedAt: number;
   finishedAt?: number;
   error?: string;
