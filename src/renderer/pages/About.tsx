@@ -1,14 +1,15 @@
 import logoUrl from '../../../assets/icon.png';
 import { api } from '../api.ts';
+import type { EnvStatus } from '../App.tsx';
 
 /** 关于页：logo、使用说明、使用条款、开源协议、开发者、版本更新 */
-export function About() {
+export function About({ env }: { env: EnvStatus | null }) {
   return (
     <div className="about">
       <div className="about-hero">
         <img className="about-logo" src={logoUrl} alt="DevEmu" draggable={false} />
         <div className="about-name">DevEmu</div>
-        <div className="about-ver mono">v{__APP_VERSION__}</div>
+        <div className="about-ver mono">v{env?.version ?? ''}</div>
       </div>
       <div className="section">
         <div className="section-head">

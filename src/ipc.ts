@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, dialog, shell, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, ipcMain, dialog, shell, app, type IpcMainInvokeEvent } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
@@ -153,7 +153,7 @@ export function registerIpc(): void {
     const sdk = detectSdk(settings.sdkPath);
     const java = detectJava(settings.javaPath);
     const harmony = detectHarmony(settings.harmonySdkPath);
-    return ok({ settings, sdk, java, harmony, images: sdk ? listInstalledImages(sdk.root) : [] });
+    return ok({ settings, sdk, java, harmony, version: app.getVersion(), images: sdk ? listInstalledImages(sdk.root) : [] });
   });
 
   handle('harmony:targets', async () => {

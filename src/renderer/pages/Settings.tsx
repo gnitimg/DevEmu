@@ -281,7 +281,7 @@ export function Settings({
           </div>
         )}
 
-        {section === 'about' && <About />}
+        {section === 'about' && <About env={env} />}
 
         {error && <div className="error-line" style={{ marginTop: 12 }}>{error}</div>}
       </div>

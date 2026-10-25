@@ -96,7 +96,7 @@ export const api = {
   winClose: () => call<boolean>('winClose'),
   winIsMaximized: () => call<boolean>('winIsMaximized'),
   envStatus: () =>
-    call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; harmony: HarmonyInfo | null; images: SystemImage[] }>('envStatus'),
+    call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; harmony: HarmonyInfo | null; version: string; images: SystemImage[] }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
   probeRoutes: () => call<{ routes: { name: string; ok: boolean; latencyMs: number; loss: number }[]; chosen?: string }>('probeRoutes'),
   harmonyTargets: () => call<string[]>('harmonyTargets'),

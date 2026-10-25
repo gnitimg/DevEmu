@@ -17,6 +17,7 @@ export interface EnvStatus {
   sdk: { root: string } | null;
   java: string | null;
   harmony: HarmonyInfo | null;
+  version: string;
   images: { pkg: string; api: number; tag: string; abi: string }[];
 }
 
