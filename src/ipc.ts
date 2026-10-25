@@ -1,6 +1,7 @@
-import { ipcMain, dialog } from 'electron';
+import { ipcMain, dialog, type IpcMainInvokeEvent } from 'electron';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
-import { detectSdk, detectJava, listInstalledImages, runSdkmanager, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
+import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
+import { probeRoutes, type RouteProbe } from './core/net.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
@@ -9,6 +10,7 @@ import { importApk, listApps, removeApp, apkFilePath } from './core/apk.ts';
 import { createProject, listProjects, updateProject, deleteProject } from './core/projects.ts';
 import { recordRun, listRuns } from './core/runs.ts';
 import { scopeDirs, scopeKey } from './core/env.ts';
+import { killEmulatorProcess } from './core/win.ts';
 import type { Scope } from './core/types.ts';
 
 function ok<T>(data: T) {
@@ -18,10 +20,15 @@ function fail(error: string) {
   return { ok: false as const, error };
 }
 
+type ProgressFn = (line: string) => void;
+
 function handle(channel: string, fn: (...args: never[]) => unknown): void {
-  ipcMain.handle(channel, async (_event, ...args) => {
+  ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+    const progress: ProgressFn = (line) => {
+      if (!event.sender.isDestroyed()) event.sender.send('sdk:progress', line);
+    };
     try {
-      return await (fn as (...a: unknown[]) => unknown)(...args);
+      return await (fn as (...a: unknown[]) => unknown)(...args, progress);
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
@@ -43,6 +50,26 @@ function parseScope(raw: unknown): Scope | null {
 function status() {
   const settings = loadAppSettings();
   return { settings, sdk: detectSdk(settings.sdkPath), java: detectJava(settings.javaPath) };
+}
+
+function adbAlias(sdk: NonNullable<ReturnType<typeof detectSdk>>): string {
+  return sdk.adb;
+}
+
+function proxyOf(settings: { downloadRoute?: 'direct' | 'proxy'; proxyPort?: number }): { port: number } | undefined {
+  return settings.downloadRoute === 'proxy' && settings.proxyPort ? { port: settings.proxyPort } : undefined;
+}
+
+/** SDK 包操作共用的 sdkmanager 调用（应用下载线路设置） */
+function sdkRun(
+  settings: ReturnType<typeof status>['settings'],
+  java: string | null,
+  args: string[],
+  progress?: ProgressFn,
+) {
+  const sdk = detectSdk(settings.sdkPath);
+  if (!sdk?.sdkmanager) return null;
+  return runSdkmanager(sdk, args, { javaPath: java, proxy: proxyOf(settings), onLine: progress });
 }
 
 /** 前端传来的硬件配置做数字与范围校验 */
@@ -67,42 +94,75 @@ export function registerIpc(): void {
   });
 
   handle('settings:save', (raw: unknown) => {
-    const s = raw as { dataRoot?: string; sdkPath?: string; javaPath?: string; gpuMode?: string };
+    const s = raw as {
+      dataRoot?: string;
+      sdkPath?: string;
+      javaPath?: string;
+      gpuMode?: string;
+      proxyEnabled?: boolean;
+      proxyPort?: number;
+      downloadRoute?: string;
+    };
     if (!s.dataRoot || typeof s.dataRoot !== 'string') return fail('数据根不能为空');
     const gpu = s.gpuMode && ['angle_indirect', 'swiftshader_indirect', 'host'].includes(s.gpuMode) ? s.gpuMode : undefined;
-    saveAppSettings({ dataRoot: s.dataRoot, sdkPath: s.sdkPath, javaPath: s.javaPath, gpuMode: gpu });
+    const port = Number(s.proxyPort);
+    const proxyPort = Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.round(port) : undefined;
+    const route = s.downloadRoute === 'proxy' || s.downloadRoute === 'direct' ? s.downloadRoute : undefined;
+    saveAppSettings({
+      dataRoot: s.dataRoot,
+      sdkPath: s.sdkPath,
+      javaPath: s.javaPath,
+      gpuMode: gpu,
+      proxyEnabled: s.proxyEnabled === true,
+      proxyPort,
+      downloadRoute: route,
+    });
     return ok(loadAppSettings());
   });
 
-  handle('sdk:packages', async () => {
-    const { sdk, java } = status();
-    if (!sdk?.sdkmanager) {
-      return fail('SDK 缺少 cmdline-tools，无法管理组件。可在 Android Studio 的 SDK Manager 中安装');
+  handle('settings:probe', async () => {
+    const { settings } = status();
+    const results: RouteProbe[] = await probeRoutes(settings.proxyEnabled ? settings.proxyPort : undefined);
+    // 自动选择：延迟低者胜，全失败保持直连
+    const usable = results.filter((r) => r.latencyMs >= 0);
+    if (usable.length > 0) {
+      const best = usable.reduce((a, b) => (a.latencyMs <= b.latencyMs ? a : b));
+      saveAppSettings({ ...loadAppSettings(), downloadRoute: best.name === '代理' ? 'proxy' : 'direct' });
     }
-    const res = await runSdkmanager(sdk, ['--list'], { javaPath: java });
+    return ok({ routes: results, chosen: loadAppSettings().downloadRoute });
+  });
+
+  handle('sdk:installed', async () => {
+    const { sdk, java, settings } = status();
+    if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools，无法管理组件');
+    const list = await listInstalledPkgs(sdk, { javaPath: java });
+    void settings;
+    return ok(list.filter((e) => SDK_PKG_GROUPS.test(e.pkg)));
+  });
+
+  handle('sdk:available', async (_raw: unknown, progress?: ProgressFn) => {
+    const { settings, java } = status();
+    const res = await sdkRun(settings, java, ['--list'], progress);
+    if (!res) return fail('SDK 缺少 cmdline-tools');
     if (res.code !== 0) return fail('sdkmanager 执行失败：' + (res.stderr || res.stdout).slice(0, 300));
-    const sections = parseSdkmanagerSections(res.stdout);
-    return ok({
-      installed: sections.installed.filter((e) => SDK_PKG_GROUPS.test(e.pkg)),
-      available: sections.available.filter((e) => SDK_PKG_GROUPS.test(e.pkg)),
-    });
+    return ok(parseSdkmanagerSections(res.stdout).available.filter((e) => SDK_PKG_GROUPS.test(e.pkg)));
   });
 
   const PKG_RE = /^[\w.-]+(;[\w.-]+)*$/;
-  handle('sdk:install', async (pkg: string) => {
-    const { sdk, java } = status();
-    if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
+  handle('sdk:install', async (pkg: string, progress?: ProgressFn) => {
+    const { settings, java } = status();
     if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
-    const res = await runSdkmanager(sdk, [pkg], { javaPath: java });
+    const res = await sdkRun(settings, java, [pkg], progress);
+    if (!res) return fail('SDK 缺少 cmdline-tools');
     if (res.code !== 0) return fail('安装失败：' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
     return ok(true);
   });
 
-  handle('sdk:uninstall', async (pkg: string) => {
-    const { sdk, java } = status();
-    if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
+  handle('sdk:uninstall', async (pkg: string, progress?: ProgressFn) => {
+    const { settings, java } = status();
     if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
-    const res = await runSdkmanager(sdk, ['--uninstall', pkg], { javaPath: java });
+    const res = await sdkRun(settings, java, ['--uninstall', pkg], progress);
+    if (!res) return fail('SDK 缺少 cmdline-tools');
     if (res.code !== 0) return fail('卸载失败：' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
     return ok(true);
   });
@@ -158,17 +218,39 @@ export function registerIpc(): void {
     const { sdk, settings } = status();
     if (!scope || !sdk) return fail('未检测到 Android SDK');
     const gpu = settings.gpuMode ?? (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
-    const entry = await launchEmulator(sdk, settings.dataRoot, scope, avdName, { gpu });
+    const httpProxy =
+      settings.proxyEnabled && settings.proxyPort ? `http://127.0.0.1:${settings.proxyPort}` : undefined;
+    const entry = await launchEmulator(sdk, settings.dataRoot, scope, avdName, { gpu, httpProxy });
     return ok({ avdName: entry.avdName, port: entry.port, serial: entry.serial });
   });
   handle('emu:stop', async (rawScope: unknown, avdName: string) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
-    const entry = findRunning(scopeKey(scope), avdName);
-    if (!entry) return fail('该虚拟机未在运行');
     const { sdk } = status();
     if (!sdk) return fail('未检测到 Android SDK');
-    await stopEmulator(sdk, entry);
+    const entry = findRunning(scopeKey(scope), avdName);
+    if (entry) {
+      await stopEmulator(sdk, entry);
+      return ok(true);
+    }
+    // 注册表丢失（应用重启过）：按 adb 设备兜底，先优雅后强杀
+    const devices = await adbDevices(sdk.adb);
+    const matches: string[] = [];
+    for (const d of devices) {
+      if (!d.serial.startsWith('emulator-') || d.state !== 'device') continue;
+      if ((await avdNameOf(sdk.adb, d.serial)) === avdName) matches.push(d.serial);
+    }
+    if (matches.length === 0) return fail('该虚拟机未在运行');
+    for (const serial of matches) {
+      await runCmd(adbAlias(sdk), ['-s', serial, 'emu', 'kill'], { timeoutMs: 8000 }).catch(() => undefined);    }
+    await new Promise((r) => setTimeout(r, 3000));
+    const after = await adbDevices(sdk.adb);
+    let still = false;
+    for (const d of after) {
+      if (!d.serial.startsWith('emulator-') || d.state !== 'device') continue;
+      if ((await avdNameOf(sdk.adb, d.serial)) === avdName) still = true;
+    }
+    if (still) await killEmulatorProcess(avdName);
     return ok(true);
   });
   handle('emu:list', async () => {

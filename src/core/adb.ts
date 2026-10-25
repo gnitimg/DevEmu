@@ -25,12 +25,15 @@ export async function adbDevices(adb: string): Promise<DeviceInfo[]> {
   return parseDevices(res.stdout);
 }
 
-/** 通过模拟器控制台取 AVD 名 */
+/** 通过模拟器控制台取 AVD 名（console 输出行尾混有 \r，需逐行 trim） */
 export async function avdNameOf(adb: string, serial: string): Promise<string | undefined> {
   const res = await run(adb, ['-s', serial, 'emu', 'avd', 'name'], { timeoutMs: 8_000 });
   if (res.code !== 0) return undefined;
-  const first = res.stdout.trim().split(/\r?\n/)[0];
-  return first && !first.startsWith('OK') && !first.startsWith('ko') ? first : undefined;
+  const name = res.stdout
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l && !/^ok$/i.test(l) && !/^ko/i.test(l));
+  return name || undefined;
 }
 
 /** 常见安装失败转中文 */

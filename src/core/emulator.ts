@@ -50,6 +50,8 @@ export async function pickPort(): Promise<number> {
 export interface LaunchOptions {
   gpu?: string;
   noSnapshotLoad?: boolean;
+  /** 设备网络代理，如 http://127.0.0.1:7890 */
+  httpProxy?: string;
 }
 
 /** 启动模拟器；3 秒内退出视为启动失败并翻译错误 */
@@ -82,6 +84,7 @@ function startOnPort(
   const args = ['-avd', avdName, '-port', String(port), '-no-boot-anim', '-netdelay', 'none', '-netspeed', 'full'];
   const gpu = opts.gpu ?? (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
   if (gpu) args.push('-gpu', gpu);
+  if (opts.httpProxy) args.push('-http-proxy', opts.httpProxy);
   if (opts.noSnapshotLoad) args.push('-no-snapshot-load');
   const child = spawn(sdk.emulator, args, {
     env: { ...process.env, ...scopeEnv(dirs) },
@@ -136,17 +139,29 @@ function startOnPort(
   });
 }
 
+/** 关闭（强制）：2.5 秒优雅期后强杀进程树 */
 export async function stopEmulator(sdk: SdkInfo, entry: RunningEmu): Promise<boolean> {
   try {
-    await run(sdk.adb, ['-s', entry.serial, 'emu', 'kill'], { timeoutMs: 10_000 });
+    await run(sdk.adb, ['-s', entry.serial, 'emu', 'kill'], { timeoutMs: 8000 });
   } catch {
     // adb 不通就直接杀进程
   }
+  await new Promise((r) => setTimeout(r, 2500));
+  if (!running.has(`${entry.avdName}@${entry.scopeKey}`)) return true;
+  if (entry.pid !== undefined) {
+    if (process.platform === 'win32') {
+      await run('taskkill.exe', ['/PID', String(entry.pid), '/T', '/F'], { timeoutMs: 15_000 }).catch(() => undefined);
+    } else {
+      entry.child.kill('SIGKILL');
+    }
+  } else {
+    entry.child.kill('SIGKILL');
+  }
+  // 等注册表清掉（exit 事件），最多 10 秒
   for (let i = 0; i < 20; i++) {
     if (!running.has(`${entry.avdName}@${entry.scopeKey}`)) return true;
     await new Promise((r) => setTimeout(r, 500));
   }
-  entry.child.kill();
   return true;
 }
 

@@ -154,7 +154,7 @@ export function cmdlineTool(
 export function runSdkmanager(
   sdk: { sdkmanager?: string; root: string },
   args: string[],
-  opts: { javaPath?: string | null; onLine?: (line: string) => void } = {},
+  opts: { javaPath?: string | null; proxy?: { port: number }; onLine?: (line: string) => void } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   if (!sdk.sdkmanager) return Promise.resolve({ code: 1, stdout: '', stderr: 'SDK 缺少 cmdline-tools' });
   const tool = cmdlineTool(
@@ -164,7 +164,23 @@ export function runSdkmanager(
     'com.android.sdklib.tool.sdkmanager.SdkManagerCli',
   );
   // 直调 java 无法像 .bat 那样从自身位置推断 SDK 根，必须显式指定
-  return run(tool.exe, [...tool.prefix, `--sdk_root=${sdk.root}`, ...args], {
+  const proxyArgs = opts.proxy
+    ? ['--proxy_type', 'http', '--proxy_host', '127.0.0.1', '--proxy_port', String(opts.proxy.port)]
+    : [];
+  return run(tool.exe, [...tool.prefix, `--sdk_root=${sdk.root}`, ...proxyArgs, ...args], {
     onLine: opts.onLine ? (l) => opts.onLine!(l) : undefined,
   });
+}
+
+/** 已安装组件：--list_installed 只读本地，无网络请求 */
+export async function listInstalledPkgs(
+  sdk: { sdkmanager?: string; root: string },
+  opts: { javaPath?: string | null } = {},
+): Promise<SdkmanagerEntry[]> {
+  const res = await runSdkmanager(sdk, ['--list_installed'], { javaPath: opts.javaPath });
+  if (res.code !== 0) return [];
+  const start = res.stdout.indexOf('Installed packages:');
+  const end = res.stdout.indexOf('Available Packages:');
+  const section = start === -1 ? '' : res.stdout.slice(start, end === -1 ? undefined : end);
+  return parseSection(section);
 }

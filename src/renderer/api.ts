@@ -36,11 +36,19 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<R<T>> {
   return (await raw[channel](...args)) as R<T>;
 }
 
+export function onSdkProgress(cb: (line: string) => void): () => void {
+  const fn = (window as unknown as { devemu: { onSdkProgress?: (cb: (line: string) => void) => () => void } }).devemu
+    .onSdkProgress;
+  return fn ? fn(cb) : () => undefined;
+}
+
 export const api = {
   envStatus: () =>
     call<{ settings: Settings; sdk: SdkInfo | null; java: string | null; images: SystemImage[] }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
-  sdkPackages: () => call<{ installed: SdkPkg[]; available: SdkPkg[] }>('sdkPackages'),
+  probeRoutes: () => call<{ routes: { name: string; ok: boolean; latencyMs: number; loss: number }[]; chosen?: string }>('probeRoutes'),
+  sdkInstalled: () => call<SdkPkg[]>('sdkInstalled'),
+  sdkAvailable: () => call<SdkPkg[]>('sdkAvailable'),
   sdkInstall: (pkg: string) => call<boolean>('sdkInstall', pkg),
   sdkUninstall: (pkg: string) => call<boolean>('sdkUninstall', pkg),
   listProjects: () => call<ProjectMeta[]>('listProjects'),

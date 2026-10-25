@@ -7,9 +7,16 @@ function invoke(channel: string): (...args: unknown[]) => Promise<unknown> {
 contextBridge.exposeInMainWorld('devemu', {
   envStatus: invoke('env:status'),
   saveSettings: invoke('settings:save'),
-  sdkPackages: invoke('sdk:packages'),
+  probeRoutes: invoke('settings:probe'),
+  sdkInstalled: invoke('sdk:installed'),
+  sdkAvailable: invoke('sdk:available'),
   sdkInstall: invoke('sdk:install'),
   sdkUninstall: invoke('sdk:uninstall'),
+  onSdkProgress: (cb: (line: string) => void) => {
+    const listener = (_e: unknown, line: string) => cb(line);
+    ipcRenderer.on('sdk:progress', listener);
+    return () => ipcRenderer.removeListener('sdk:progress', listener);
+  },
   listProjects: invoke('project:list'),
   createProject: invoke('project:create'),
   updateProject: invoke('project:update'),

@@ -1,5 +1,15 @@
 import { run } from './exec.ts';
 
+/** 按 AVD 名强杀 qemu 进程树（注册表丢失时的兜底关闭） */
+export async function killEmulatorProcess(avdName: string): Promise<void> {
+  const script = [
+    "$ErrorActionPreference='SilentlyContinue'",
+    `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
+    'if ($proc) { & taskkill.exe /PID $proc.ProcessId /T /F | Out-Null; Write-Output KILLED } else { Write-Output NONE }',
+  ].join('\n');
+  await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], { timeoutMs: 30_000 });
+}
+
 /**
  * Windows：模拟器（Qt）会恢复上次窗口位置，可能落在屏幕顶部之外。
  * 启动后按 AVD 名找到 qemu 窗口并移到可见区域；Qt 在窗口完全显示后可能再恢复
@@ -14,8 +24,14 @@ export function repositionEmulatorWindow(avdName: string, x: number, y: number):
     '$w = Get-Process -Id $proc.ProcessId',
     'if (-not $w) { exit 1 }',
     'if ($w.MainWindowHandle -eq 0) { exit 1 }',
-    "Add-Type -Namespace DevEmuWin -Name U -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);'",
-    `[DevEmuWin.U]::SetWindowPos($w.MainWindowHandle, [IntPtr]::Zero, ${String(x)}, ${String(y)}, 0, 0, 5) | Out-Null`,
+    '$h = $w.MainWindowHandle',
+    "Add-Type -Namespace DevEmuWin -Name U -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags); [DllImport(\"user32.dll\")] public static extern int GetWindowLong(IntPtr h, int i); [DllImport(\"user32.dll\")] public static extern int SetWindowLong(IntPtr h, int i, int v);'",
+    `[DevEmuWin.U]::SetWindowPos($h, [IntPtr]::Zero, ${String(x)}, ${String(y)}, 0, 0, 5) | Out-Null`,
+    // 去掉 WS_THICKFRAME|WS_MAXIMIZEBOX：只允许移动，不允许拉伸
+    '$s = [DevEmuWin.U]::GetWindowLong($h, -16)',
+    '$s = ($s -band (-bnot 0x00040000)) -band (-bnot 0x00010000)',
+    '[DevEmuWin.U]::SetWindowLong($h, -16, $s) | Out-Null',
+    '[DevEmuWin.U]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, 0, 0, 39) | Out-Null',
     'exit 0',
   ].join('\n');
 

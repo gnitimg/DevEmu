@@ -112,8 +112,8 @@ export function VmPanel({
                   <td>
                     <div className="row-actions">
                       {run ? (
-                        <button className="btn btn-sm" disabled={busyName === avd.name} onClick={() => stop(avd.name)}>
-                          停止
+                        <button className="btn btn-sm btn-danger" disabled={busyName === avd.name} onClick={() => stop(avd.name)}>
+                          {busyName === avd.name ? '关闭中' : '关闭'}
                         </button>
                       ) : (
                         <>
@@ -310,6 +310,7 @@ function NewVmModal({
 }) {
   const [name, setName] = useState('');
   const [defs, setDefs] = useState<DeviceDef[] | null>(null);
+  const [defsError, setDefsError] = useState(false);
   const [defId, setDefId] = useState('');
   const [imagePkg, setImagePkg] = useState('');
   const [managing, setManaging] = useState(false);
@@ -320,7 +321,8 @@ function NewVmModal({
   const [cores, setCores] = useState('');
   const [storage, setStorage] = useState('');
 
-  useEffect(() => {
+  const loadDefs = useCallback(() => {
+    setDefsError(false);
     api.deviceDefs().then((r) => {
       if (r.ok && r.data.ok && r.data.defs) {
         setDefs(r.data.defs);
@@ -330,9 +332,13 @@ function NewVmModal({
           r.data.defs.find((d) => /^pixel_/.test(d.id)) ??
           r.data.defs[0];
         setDefId(preferred ? preferred.id : '');
+      } else {
+        setDefsError(true);
       }
     });
   }, []);
+
+  useEffect(loadDefs, [loadDefs]);
 
   const installed = env?.images ?? [];
 
@@ -398,14 +404,22 @@ function NewVmModal({
       </div>
       <div className="form-row">
         <label>型号</label>
-        <select value={defId} onChange={(e) => setDefId(e.target.value)}>
-          {defs === null ? <option value="">读取中</option> : null}
+        <select value={defId} onChange={(e) => setDefId(e.target.value)} disabled={defsError}>
+          {defs === null && !defsError ? <option value="">读取中…</option> : null}
           {defs?.map((d) => (
             <option key={d.id} value={d.id}>
               {d.name}
             </option>
           ))}
         </select>
+        {defsError && (
+          <div className="form-hint">
+            机型列表读取失败{' '}
+            <button className="link-btn" onClick={loadDefs}>
+              重试
+            </button>
+          </div>
+        )}
       </div>
       <div className="form-row">
         <button className="link-btn" onClick={() => setAdvanced((v) => !v)}>

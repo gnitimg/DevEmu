@@ -5,8 +5,13 @@ export interface Settings {
   dataRoot: string;
   sdkPath?: string;
   javaPath?: string;
-  /** 模拟器图形后端：angle_indirect（默认）/ swiftshader_indirect / host */
+  /** 模拟器图形后端：angle_indirect / swiftshader_indirect / host */
   gpuMode?: string;
+  /** 设备网络代理 */
+  proxyEnabled?: boolean;
+  proxyPort?: number;
+  /** SDK 下载线路：direct 直连 / proxy 走本地代理 */
+  downloadRoute?: 'direct' | 'proxy';
 }
 
 export interface SdkInfo {

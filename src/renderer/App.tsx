@@ -9,7 +9,15 @@ import type { ProjectMeta } from '../core/types.ts';
 type Page = 'projects' | 'devices' | 'settings';
 
 export interface EnvStatus {
-  settings: { dataRoot: string; sdkPath?: string; javaPath?: string; gpuMode?: string };
+  settings: {
+    dataRoot: string;
+    sdkPath?: string;
+    javaPath?: string;
+    gpuMode?: string;
+    proxyEnabled?: boolean;
+    proxyPort?: number;
+    downloadRoute?: string;
+  };
   sdk: { root: string } | null;
   java: string | null;
   images: { pkg: string; api: number; tag: string; abi: string }[];

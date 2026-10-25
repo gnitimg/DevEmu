@@ -840,6 +840,102 @@ table.tbl {
   gap: 0 12px;
 }
 
+/* ---------- 代理与测速 ---------- */
+
+.proxy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.switch-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text);
+  margin: 0;
+}
+
+.switch-wrap input {
+  margin: 0;
+}
+
+.proxy-addr {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.proxy-port {
+  width: 80px;
+}
+
+.probe-result {
+  display: flex;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.probe-result .probe-on {
+  color: var(--ok);
+  font-weight: 500;
+}
+
+.sdk-progress {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 安装到设备弹窗 ---------- */
+
+.install-apk-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.install-apk-name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.device-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.device-option:hover {
+  background: var(--bg);
+}
+
+.device-option.on {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+
+.device-option-name {
+  font-weight: 500;
+  flex: 1;
+  text-align: left;
+}
+
 /* ---------- SDK 管理 ---------- */
 
 .sdk-tabs {
