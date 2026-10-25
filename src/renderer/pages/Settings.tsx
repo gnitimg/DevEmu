@@ -7,6 +7,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
   const [dataRoot, setDataRoot] = useState('');
   const [sdkPath, setSdkPath] = useState('');
   const [javaPath, setJavaPath] = useState('');
+  const [gpuMode, setGpuMode] = useState('');
   const [savedAt, setSavedAt] = useState(0);
   const [hintOn, setHintOn] = useState(false);
   const [error, setError] = useState('');
@@ -26,6 +27,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
       setDataRoot(env.settings.dataRoot);
       setSdkPath(env.settings.sdkPath ?? '');
       setJavaPath(env.settings.javaPath ?? '');
+      setGpuMode(env.settings.gpuMode ?? 'swiftshader_indirect');
     }
   }, [env]);
 
@@ -38,6 +40,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
         dataRoot: dataRoot.trim(),
         sdkPath: sdkPath.trim() || undefined,
         javaPath: javaPath.trim() || undefined,
+        gpuMode: gpuMode || undefined,
       });
       if (!r.ok) setError(r.error);
       else {
@@ -46,14 +49,12 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [dataRoot, sdkPath, javaPath, refreshEnv]);
+  }, [dataRoot, sdkPath, javaPath, gpuMode, refreshEnv]);
 
   const markDirty = (setter: (v: string) => void) => (v: string) => {
     dirty.current = true;
     setter(v);
-  };
-
-  async function browse(field: 'dataRoot' | 'sdkPath' | 'javaPath', title: string) {
+  };  async function browse(field: 'dataRoot' | 'sdkPath' | 'javaPath', title: string) {
     const r = await api.openDirDialog(title);
     if (r.ok && r.data) {
       dirty.current = true;
@@ -99,6 +100,15 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
           </div>
         </div>
         {error && <div className="error-line" style={{ border: 'none', padding: '0 0 6px 1px' }}>{error}</div>}
+        <div className="form-row" style={{ marginTop: 6 }}>
+          <label>模拟器图形后端</label>
+          <select value={gpuMode} onChange={(e) => markDirty(setGpuMode)(e.target.value)}>
+            <option value="swiftshader_indirect">软件渲染（兼容性最好，推荐）</option>
+            <option value="angle_indirect">ANGLE / Direct3D（较快，个别驱动会黑屏）</option>
+            <option value="host">宿主 GPU（最快，需独立显卡，易崩溃）</option>
+          </select>
+          <div className="form-hint">窗口黑屏时切回软件渲染；修改对下次启动生效。</div>
+        </div>
         {env && (
           <div style={{ marginTop: 20 }}>
             <div className="status-line">

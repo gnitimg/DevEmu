@@ -1,7 +1,7 @@
 import { ipcMain, dialog } from 'electron';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
-import { listAvds, createAvd, deleteAvd, listDeviceDefs } from './core/avd.ts';
+import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
 import { run as runCmd } from './core/exec.ts';
@@ -45,6 +45,19 @@ function status() {
   return { settings, sdk: detectSdk(settings.sdkPath), java: detectJava(settings.javaPath) };
 }
 
+/** 前端传来的硬件配置做数字与范围校验 */
+function parseHardware(raw: unknown): AvdHardware {
+  const hw: AvdHardware = {};
+  const o = (raw ?? {}) as { ramMb?: unknown; cores?: unknown; storageGb?: unknown };
+  const ram = Number(o.ramMb);
+  if (Number.isFinite(ram) && ram >= 512 && ram <= 32768) hw.ramMb = Math.round(ram);
+  const cores = Number(o.cores);
+  if (Number.isFinite(cores) && cores >= 1 && cores <= 16) hw.cores = Math.round(cores);
+  const disk = Number(o.storageGb);
+  if (Number.isFinite(disk) && disk >= 1 && disk <= 256) hw.storageGb = Math.round(disk);
+  return hw;
+}
+
 export function registerIpc(): void {
   handle('env:status', () => {
     const settings = loadAppSettings();
@@ -54,9 +67,10 @@ export function registerIpc(): void {
   });
 
   handle('settings:save', (raw: unknown) => {
-    const s = raw as { dataRoot?: string; sdkPath?: string; javaPath?: string };
+    const s = raw as { dataRoot?: string; sdkPath?: string; javaPath?: string; gpuMode?: string };
     if (!s.dataRoot || typeof s.dataRoot !== 'string') return fail('数据根不能为空');
-    saveAppSettings({ dataRoot: s.dataRoot, sdkPath: s.sdkPath, javaPath: s.javaPath });
+    const gpu = s.gpuMode && ['angle_indirect', 'swiftshader_indirect', 'host'].includes(s.gpuMode) ? s.gpuMode : undefined;
+    saveAppSettings({ dataRoot: s.dataRoot, sdkPath: s.sdkPath, javaPath: s.javaPath, gpuMode: gpu });
     return ok(loadAppSettings());
   });
 
@@ -108,13 +122,24 @@ export function registerIpc(): void {
     if (!scope) return fail('非法的作用域');
     return ok(listAvds(loadAppSettings().dataRoot, scope));
   });
-  handle('avd:create', async (rawScope: unknown, name: string, imagePkg: string, deviceDefId: string) => {
+  handle('avd:create', async (rawScope: unknown, name: string, imagePkg: string, deviceDefId: string, hw?: unknown) => {
     const scope = parseScope(rawScope);
     const { sdk, java, settings } = status();
     if (!scope) return fail('非法的作用域');
     if (!sdk) return fail('未检测到 Android SDK，请到设置页配置');
     if (!/^[\w.-]{1,50}$/.test(name)) return fail('虚拟机名称仅限字母、数字、下划线、点、短横线');
-    return ok(await createAvd(sdk, settings.dataRoot, scope, name, imagePkg, deviceDefId, java));
+    const hardware = parseHardware(hw);
+    return ok(await createAvd(sdk, settings.dataRoot, scope, name, imagePkg, deviceDefId, java, hardware));
+  });
+  handle('avd:hardware', (rawScope: unknown, name: string) => {
+    const scope = parseScope(rawScope);
+    if (!scope) return fail('非法的作用域');
+    return ok(getAvdHardware(loadAppSettings().dataRoot, scope, name));
+  });
+  handle('avd:setHardware', (rawScope: unknown, name: string, hw: unknown) => {
+    const scope = parseScope(rawScope);
+    if (!scope) return fail('非法的作用域');
+    return ok(updateAvdHardware(loadAppSettings().dataRoot, scope, name, parseHardware(hw)));
   });
   handle('avd:delete', async (rawScope: unknown, name: string) => {
     const scope = parseScope(rawScope);
@@ -132,7 +157,8 @@ export function registerIpc(): void {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
     if (!scope || !sdk) return fail('未检测到 Android SDK');
-    const entry = await launchEmulator(sdk, settings.dataRoot, scope, avdName);
+    const gpu = settings.gpuMode ?? (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
+    const entry = await launchEmulator(sdk, settings.dataRoot, scope, avdName, { gpu });
     return ok({ avdName: entry.avdName, port: entry.port, serial: entry.serial });
   });
   handle('emu:stop', async (rawScope: unknown, avdName: string) => {

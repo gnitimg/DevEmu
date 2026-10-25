@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('devemu', {
   listAvds: invoke('avd:list'),
   createAvd: invoke('avd:create'),
   deleteAvd: invoke('avd:delete'),
+  avdHardware: invoke('avd:hardware'),
+  setAvdHardware: invoke('avd:setHardware'),
   deviceDefs: invoke('avd:deviceDefs'),
   launchEmu: invoke('emu:launch'),
   stopEmu: invoke('emu:stop'),

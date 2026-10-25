@@ -48,8 +48,18 @@ export const api = {
   updateProject: (id: string, patch: { name?: string; note?: string }) => call<ProjectMeta | null>('updateProject', id, patch),
   deleteProject: (id: string) => call<boolean>('deleteProject', id),
   listAvds: (scope: Scope) => call<AvdInfo[]>('listAvds', scope),
-  createAvd: (scope: Scope, name: string, imagePkg: string, deviceDefId: string) => call<OpResult>('createAvd', scope, name, imagePkg, deviceDefId),
+  createAvd: (
+    scope: Scope,
+    name: string,
+    imagePkg: string,
+    deviceDefId: string,
+    hw?: { ramMb?: number; cores?: number; storageGb?: number },
+  ) => call<OpResult>('createAvd', scope, name, imagePkg, deviceDefId, hw),
   deleteAvd: (scope: Scope, name: string) => call<OpResult>('deleteAvd', scope, name),
+  avdHardware: (scope: Scope, name: string) =>
+    call<{ ramMb?: number; cores?: number; storageGb?: number } | null>('avdHardware', scope, name),
+  setAvdHardware: (scope: Scope, name: string, hw: { ramMb?: number; cores?: number; storageGb?: number }) =>
+    call<OpResult>('setAvdHardware', scope, name, hw),
   deviceDefs: () => call<{ ok: boolean; defs?: DeviceDef[]; error?: string }>('deviceDefs'),
   launchEmu: (scope: Scope, avdName: string) => call<{ avdName: string; port: number; serial: string }>('launchEmu', scope, avdName),
   stopEmu: (scope: Scope, avdName: string) => call<boolean>('stopEmu', scope, avdName),

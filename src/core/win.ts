@@ -2,27 +2,41 @@ import { run } from './exec.ts';
 
 /**
  * Windows：模拟器（Qt）会恢复上次窗口位置，可能落在屏幕顶部之外。
- * 启动后按 AVD 名找到 qemu 窗口并移到可见区域。
+ * 启动后按 AVD 名找到 qemu 窗口并移到可见区域；Qt 在窗口完全显示后可能再恢复
+ * 一次几何，故首次移动后周期性重申，共持续约两分钟。
  */
 export function repositionEmulatorWindow(avdName: string, x: number, y: number): Promise<void> {
   // avdName 限定为 [\w.-]，可直接嵌入 WQL/正则
-  const script = [
+  const moveOnce = [
     "$ErrorActionPreference='SilentlyContinue'",
     `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
-    'if (-not $proc) { exit 0 }',
+    'if (-not $proc) { exit 1 }',
     '$w = Get-Process -Id $proc.ProcessId',
-    'if (-not $w) { exit 0 }',
-    'for ($i = 0; $i -lt 80; $i++) { if ($w.MainWindowHandle -ne 0) { break }; Start-Sleep -Milliseconds 500; $w.Refresh() }',
-    'if ($w.MainWindowHandle -eq 0) { exit 0 }',
+    'if (-not $w) { exit 1 }',
+    'if ($w.MainWindowHandle -eq 0) { exit 1 }',
     "Add-Type -Namespace DevEmuWin -Name U -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);'",
-    '[DevEmuWin.U]::SetWindowPos($w.MainWindowHandle, [IntPtr]::Zero, ' +
-      String(x) +
-      ', ' +
-      String(y) +
-      ', 0, 0, 5) | Out-Null',
+    `[DevEmuWin.U]::SetWindowPos($w.MainWindowHandle, [IntPtr]::Zero, ${String(x)}, ${String(y)}, 0, 0, 5) | Out-Null`,
+    'exit 0',
   ].join('\n');
 
-  return run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
-    timeoutMs: 60_000,
-  }).then(() => undefined);
+  const attempt = (tries: number, delayMs: number): Promise<void> =>
+    run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', moveOnce], {
+      timeoutMs: 30_000,
+    }).then((res) => {
+      // exit 1 = 窗口还没出现或进程没了：有重试就继续等，否则结束
+      if (res.code === 0 || tries <= 1) return undefined;
+      return new Promise((r) => setTimeout(r, delayMs)).then(() => attempt(tries - 1, delayMs));
+    });
+
+  // 找到窗口前最多等 2 分钟；成功后再低频重申 12 次（约 2 分钟），对抗 Qt 的几何恢复
+  return attempt(24, 5000).then(() => {
+    let reassert = 12;
+    const tick = (): Promise<void> =>
+      reassert-- <= 0
+        ? Promise.resolve()
+        : new Promise((r) => setTimeout(r, 10_000))
+            .then(() => attempt(1, 0))
+            .then(tick);
+    return tick();
+  });
 }

@@ -30,7 +30,7 @@ export function loadSettings(dataRoot: string): Settings {
     const raw = fs.readFileSync(settingsPath(dataRoot), 'utf8');
     const parsed = JSON.parse(raw) as Partial<Settings>;
     if (typeof parsed.dataRoot !== 'string' || !parsed.dataRoot) throw new Error('bad');
-    return { dataRoot: parsed.dataRoot, sdkPath: parsed.sdkPath, javaPath: parsed.javaPath };
+    return { dataRoot: parsed.dataRoot, sdkPath: parsed.sdkPath, javaPath: parsed.javaPath, gpuMode: parsed.gpuMode };
   } catch {
     return { dataRoot };
   }

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import net from 'node:net';
 import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
@@ -26,11 +27,24 @@ export function findRunning(scopeKey: string, avdName: string): RunningEmu | und
   return running.get(`${avdName}@${scopeKey}`);
 }
 
-function pickPort(): number {
+function portFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => srv.close(() => resolve(true)));
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+/** 5554 起偶数端口；既看内部注册表，也探测系统实际占用（外部进程启动的模拟器不算在册） */
+export async function pickPort(): Promise<number> {
   const used = new Set([...running.values()].map((e) => e.port));
   let port = 5554;
-  while (used.has(port) || port > 5700) port += 2;
-  return port;
+  while (port <= 5700) {
+    if (!used.has(port) && (await portFree(port))) return port;
+    port += 2;
+  }
+  throw new Error('没有可用的模拟器端口（5554-5700）');
 }
 
 export interface LaunchOptions {
@@ -51,25 +65,22 @@ export function launchEmulator(
   if (running.has(`${avdName}@${sKey}`)) {
     return Promise.reject(new Error('该虚拟机已在运行'));
   }
-  const port = pickPort();
-  // 对标 Android Studio 的启动参数：多核 + 足量内存 + 跳过开机动画 + 全速网络 + 快照快速启动
-  const args = [
-    '-avd',
-    avdName,
-    '-port',
-    String(port),
-    '-no-boot-anim',
-    '-cores',
-    '4',
-    '-memory',
-    '3072',
-    '-netdelay',
-    'none',
-    '-netspeed',
-    'full',
-  ];
-  // Windows 上 host GPU（gfxstream）易触发图形编码断言导致系统服务崩溃，angle_indirect 是稳定选择
-  const gpu = opts.gpu ?? (process.platform === 'win32' ? 'angle_indirect' : undefined);
+  return pickPort().then((port) => startOnPort(sdk, dirs, scope, sKey, avdName, port, opts));
+}
+
+function startOnPort(
+  sdk: SdkInfo,
+  dirs: ReturnType<typeof scopeDirs>,
+  scope: Scope,
+  sKey: string,
+  avdName: string,
+  port: number,
+  opts: LaunchOptions,
+): Promise<RunningEmu> {
+  void scope;
+  // 运行期提速参数；硬件（内存/核数）以各虚拟机 config.ini 为准，不再命令行覆盖
+  const args = ['-avd', avdName, '-port', String(port), '-no-boot-anim', '-netdelay', 'none', '-netspeed', 'full'];
+  const gpu = opts.gpu ?? (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
   if (gpu) args.push('-gpu', gpu);
   if (opts.noSnapshotLoad) args.push('-no-snapshot-load');
   const child = spawn(sdk.emulator, args, {

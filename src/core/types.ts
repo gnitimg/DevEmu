@@ -5,6 +5,8 @@ export interface Settings {
   dataRoot: string;
   sdkPath?: string;
   javaPath?: string;
+  /** 模拟器图形后端：angle_indirect（默认）/ swiftshader_indirect / host */
+  gpuMode?: string;
 }
 
 export interface SdkInfo {

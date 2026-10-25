@@ -832,6 +832,14 @@ table.tbl {
   border-top: 1px solid var(--border);
 }
 
+/* ---------- 虚拟机硬件配置 ---------- */
+
+.hw-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 12px;
+}
+
 /* ---------- SDK 管理 ---------- */
 
 .sdk-tabs {
