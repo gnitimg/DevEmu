@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { registerIpc } from './ipc.ts';
@@ -6,6 +6,9 @@ import { registerIpc } from './ipc.ts';
 if (started) {
   app.quit();
 }
+
+// 桌面工具不需要 Electron 默认菜单栏
+Menu.setApplicationMenu(null);
 
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
