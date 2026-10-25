@@ -3,7 +3,7 @@ import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
 import { probeRoutes, type RouteProbe } from './core/net.ts';
 import { startDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
-import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, type AvdHardware } from './core/avd.ts';
+import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
 import { run as runCmd } from './core/exec.ts';
@@ -227,6 +227,12 @@ export function registerIpc(): void {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
     return ok(updateAvdHardware(loadAppSettings().dataRoot, scope, name, parseHardware(hw)));
+  });
+  handle('avd:rename', (rawScope: unknown, oldName: string, newName: string) => {
+    const scope = parseScope(rawScope);
+    if (!scope) return fail('非法的作用域');
+    if (findRunning(scopeKey(scope), oldName)) return fail('请先关闭虚拟机再重命名');
+    return ok(renameAvd(loadAppSettings().dataRoot, scope, oldName, newName));
   });
   handle('avd:delete', async (rawScope: unknown, name: string) => {
     const scope = parseScope(rawScope);

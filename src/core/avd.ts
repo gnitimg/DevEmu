@@ -220,6 +220,36 @@ export function updateAvdHardware(
   return { ok: true };
 }
 
+/** 重命名虚拟机：重命名 .ini 与 .avd 目录并改写内部路径（须在停止状态） */
+export function renameAvd(
+  dataRoot: string,
+  scope: Scope,
+  oldName: string,
+  newName: string,
+): { ok: boolean; error?: string } {
+  if (!/^[\w.-]{1,50}$/.test(newName)) return { ok: false, error: '名称仅限字母、数字、下划线、点、短横线' };
+  if (oldName === newName) return { ok: true };
+  const dirs = scopeDirs(dataRoot, scope);
+  const oldIni = path.join(dirs.avdHome, `${oldName}.ini`);
+  const oldDir = path.join(dirs.avdHome, `${oldName}.avd`);
+  if (!fs.existsSync(oldIni)) return { ok: false, error: '虚拟机不存在' };
+  if (fs.existsSync(path.join(dirs.avdHome, `${newName}.ini`))) {
+    return { ok: false, error: '已存在同名虚拟机' };
+  }
+  try {
+    fs.renameSync(oldDir, path.join(dirs.avdHome, `${newName}.avd`));
+    fs.writeFileSync(
+      path.join(dirs.avdHome, `${newName}.ini`),
+      `avd.ini.encoding=UTF-8\r\npath=${path.join(dirs.avdHome, `${newName}.avd`)}\r\npath.rel=avd\\${newName}.avd\r\n`,
+      'utf8',
+    );
+    fs.rmSync(oldIni);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: `重命名失败：${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 /** 读取虚拟机当前硬件配置 */
 export function getAvdHardware(
   dataRoot: string,

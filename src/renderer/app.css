@@ -176,11 +176,25 @@ textarea:focus {
 .sidebar {
   width: var(--side-w);
   flex: none;
+  display: flex;
+  flex-direction: column;
   background: var(--side-bg);
   border-right: 1px solid var(--border);
-  padding: 8px;
   overflow: hidden;
   transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 导航区独立滚动，底部按钮钉在侧栏最下方不随内容移动 */
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 8px 0;
+}
+
+.side-scroll::-webkit-scrollbar {
+  width: 6px;
 }
 
 .sidebar.collapsed {
@@ -869,6 +883,14 @@ table.tbl {
 
 .device-detail-grid .section .tbl {
   flex: 1;
+}
+
+/* 空态时同样撑满，保持与左侧卡片等高 */
+.device-detail-grid .section > .empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ---------- 下载管理 ---------- */

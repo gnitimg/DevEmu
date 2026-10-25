@@ -11,6 +11,7 @@ export function DeviceDetail({
   refreshEmus,
   onBack,
   backLabel,
+  onRenamed,
 }: {
   avdName: string;
   scope: Scope;
@@ -18,6 +19,7 @@ export function DeviceDetail({
   refreshEmus: () => void;
   onBack: () => void;
   backLabel?: string;
+  onRenamed?: (name: string) => void;
 }) {
   const [avd, setAvd] = useState<AvdInfo | null>(null);
   const [hw, setHw] = useState<{ ramMb?: number; cores?: number; storageGb?: number } | null>(null);
@@ -27,6 +29,7 @@ export function DeviceDetail({
   const [error, setError] = useState('');
   const [runsKey, setRunsKey] = useState(0);
   const [editing, setEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
   const [ram, setRam] = useState('');
   const [cores, setCores] = useState('');
   const [storage, setStorage] = useState('');
@@ -94,6 +97,7 @@ export function DeviceDetail({
   }
 
   function startEdit() {
+    setNameDraft(avdName);
     setRam(hw?.ramMb ? String(hw.ramMb) : '');
     setCores(hw?.cores ? String(hw.cores) : '');
     setStorage(hw?.storageGb ? String(Math.round(hw.storageGb)) : '');
@@ -103,7 +107,27 @@ export function DeviceDetail({
   async function saveEdit() {
     setSaving(true);
     setError('');
-    const r = await api.setAvdHardware(scope, avdName, {
+    const trimmed = nameDraft.trim();
+    if (trimmed !== avdName) {
+      if (!trimmed) {
+        setError('名称不能为空');
+        setSaving(false);
+        return;
+      }
+      if (run) {
+        setError('请先关闭虚拟机再重命名');
+        setSaving(false);
+        return;
+      }
+      const rr = await api.renameAvd(scope, avdName, trimmed);
+      if (!rr.ok || !rr.data.ok) {
+        setError(rr.ok ? rr.data.error ?? '重命名失败' : rr.error);
+        setSaving(false);
+        return;
+      }
+      onRenamed?.(trimmed);
+    }
+    const r = await api.setAvdHardware(scope, trimmed, {
       ramMb: ram ? Number(ram) : undefined,
       cores: cores ? Number(cores) : undefined,
       storageGb: storage ? Number(storage) : undefined,
@@ -191,7 +215,18 @@ export function DeviceDetail({
             <tbody>
               <tr>
                 <th style={{ width: 110 }}>设备名称</th>
-                <td className="mono">{avdName}</td>
+                <td>
+                  {editing ? (
+                    <input
+                      className="cell-input"
+                      style={{ width: 180 }}
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value.replace(/[^\w.-]/g, ''))}
+                    />
+                  ) : (
+                    <span className="mono">{avdName}</span>
+                  )}
+                </td>
               </tr>
               <tr>
                 <th>状态</th>

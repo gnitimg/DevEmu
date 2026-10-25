@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('devemu', {
   deleteAvd: invoke('avd:delete'),
   avdHardware: invoke('avd:hardware'),
   setAvdHardware: invoke('avd:setHardware'),
+  renameAvd: invoke('avd:rename'),
   deviceDefs: invoke('avd:deviceDefs'),
   launchEmu: invoke('emu:launch'),
   stopEmu: invoke('emu:stop'),

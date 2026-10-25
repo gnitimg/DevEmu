@@ -131,6 +131,7 @@ export function App() {
       </header>
       <div className="body">
         <aside className={`sidebar${sideOpen ? '' : ' collapsed'}`}>
+          <div className="side-scroll">
           <SideItem
             icon={
               <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 2h4.5A1.5 1.5 0 0 1 14 6.5v6A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-8Z" />
@@ -202,7 +203,7 @@ export function App() {
             ))}
             {sharedAvds.length === 0 && <div className="side-child side-child-empty">暂无设备</div>}
           </SideItem>
-          <div className="nav-flex" />
+          </div>
           <div className="side-footer">
             <button
               className={`side-dl${page === 'downloads' ? ' on' : ''}`}
@@ -259,6 +260,7 @@ export function App() {
               emus={emus}
               refreshEmus={refreshEmus}
               backLabel={deviceScope === 'shared' ? '返回设备池' : `返回 ${deviceScope}`}
+              onRenamed={(n) => setDeviceName(n)}
               onBack={() => {
                 setPage(deviceScope === 'shared' ? 'devices' : 'projects');
                 if (deviceScope !== 'shared') setProjectId(deviceScope);

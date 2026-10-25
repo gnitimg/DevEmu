@@ -91,6 +91,7 @@ export const api = {
     call<{ ramMb?: number; cores?: number; storageGb?: number } | null>('avdHardware', scope, name),
   setAvdHardware: (scope: Scope, name: string, hw: { ramMb?: number; cores?: number; storageGb?: number }) =>
     call<OpResult>('setAvdHardware', scope, name, hw),
+  renameAvd: (scope: Scope, oldName: string, newName: string) => call<OpResult>('renameAvd', scope, oldName, newName),
   deviceDefs: () => call<{ ok: boolean; defs?: DeviceDef[]; error?: string }>('deviceDefs'),
   launchEmu: (scope: Scope, avdName: string) => call<{ avdName: string; port: number; serial: string }>('launchEmu', scope, avdName),
   stopEmu: (scope: Scope, avdName: string) => call<boolean>('stopEmu', scope, avdName),
