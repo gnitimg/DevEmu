@@ -933,6 +933,45 @@ table.tbl {
   font-family: var(--mono);
 }
 
+/* ---------- 侧栏底部图标组（左下角横排） ---------- */
+
+.side-footer {
+  display: flex;
+  gap: 2px;
+  padding: 6px 4px 2px;
+  margin-top: 6px;
+}
+
+.side-foot-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  color: var(--text-2);
+  transition: background 0.12s, color 0.12s;
+}
+
+.side-foot-btn:hover {
+  background: #eceef1;
+  color: var(--text);
+}
+
+.side-foot-btn.on {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.side-foot-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.sidebar.collapsed .side-footer {
+  justify-content: center;
+}
+
 /* ---------- 级联双下拉 ---------- */
 
 .cascade-row {
