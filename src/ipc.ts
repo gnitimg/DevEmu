@@ -1,8 +1,10 @@
-import { BrowserWindow, ipcMain, dialog, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, ipcMain, dialog, shell, type IpcMainInvokeEvent } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
 import { probeRoutes, type RouteProbe } from './core/net.ts';
-import { detectHarmony, harmonyTargets } from './core/harmony.ts';
+import { detectHarmony, harmonyTargets, listHarmonyComponents } from './core/harmony.ts';
 import { startDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
@@ -162,6 +164,26 @@ export function registerIpc(): void {
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
+  });
+
+  // 仅允许删除当前扫描到的组件目录，防止任意路径删除
+  handle('harmony:uninstall', (dir: unknown) => {
+    if (typeof dir !== 'string' || !dir) return fail('参数错误');
+    const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
+    if (!harmony) return fail('未检测到 HarmonyOS SDK');
+    const resolved = path.resolve(dir);
+    // hdc 位于 <set>/openharmony/toolchains/hdc.exe，回退三层得到 SDK 集
+    const setDir = path.dirname(path.dirname(path.dirname(harmony.hdc)));
+    const scanned = listHarmonyComponents(setDir);
+    if (!scanned.some((c) => path.resolve(c.dir) === resolved)) return fail('该目录不是已安装的组件');
+    fs.rmSync(resolved, { recursive: true, force: true });
+    return ok(true);
+  });
+
+  handle('open:url', (url: unknown) => {
+    if (typeof url !== 'string' || !/^https:\/\/[\w.-]+/i.test(url)) return fail('仅支持 https 链接');
+    void shell.openExternal(url);
+    return ok(true);
   });
 
   handle('settings:save', (raw: unknown) => {

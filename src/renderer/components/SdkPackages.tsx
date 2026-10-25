@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, onSdkProgress, type HarmonyInfo, type SdkPkg } from '../api.ts';
+import { api, onSdkProgress, type HarmonyComponent, type SdkPkg } from '../api.ts';
 import { Segmented } from './Segmented.tsx';
 import type { EnvStatus } from '../App.tsx';
 
 type System = 'android' | 'harmonyos';
 
-/** SDK 组件管理（内联于设置 SDK 分区）：右上角 Android/HarmonyOS 切换 */
+/** SDK 组件管理（内联于设置 SDK 分区）：右上角 Android/HarmonyOS 切换，两侧结构一致 */
 export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChanged: () => void }) {
   const [system, setSystem] = useState<System>('android');
   const [tab, setTab] = useState<'installed' | 'available'>('installed');
@@ -17,13 +17,7 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
   const [busyPkg, setBusyPkg] = useState('');
   const [progress, setProgress] = useState('');
 
-  // HarmonyOS 侧
-  const [targets, setTargets] = useState<string[] | null>(null);
-  const [targetsBusy, setTargetsBusy] = useState(false);
-  const [targetsError, setTargetsError] = useState('');
-
-  const harmony: HarmonyInfo | null = env?.harmony ?? null;
-  const harmonyPath = env?.settings.harmonySdkPath ?? harmony?.sdkRoot ?? '';
+  const harmonyComponents: HarmonyComponent[] = env?.harmony?.components ?? [];
 
   const reloadInstalled = useCallback(() => {
     api.sdkInstalled().then((r) => {
@@ -64,108 +58,80 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
     onChanged();
   }
 
-  async function browseHarmony() {
-    const d = await api.openDirDialog('选择 HarmonyOS SDK 目录');
-    if (d.ok && d.data && env) {
-      const r = await api.saveSettings({ ...env.settings, harmonySdkPath: d.data });
-      if (r.ok) onChanged();
-      else setTargetsError(r.error);
+  async function uninstallHarmony(c: HarmonyComponent) {
+    setBusyPkg(c.dir);
+    setError('');
+    const r = await api.harmonyUninstall(c.dir);
+    setBusyPkg('');
+    if (!r.ok) {
+      setError(r.error);
+      return;
     }
+    onChanged();
   }
 
-  async function refreshTargets() {
-    if (!harmony) return;
-    setTargetsBusy(true);
-    setTargetsError('');
-    const r = await api.harmonyTargets();
-    setTargetsBusy(false);
-    if (r.ok) {
-      setTargets(r.data);
-    } else {
-      setTargets(null);
-      setTargetsError(r.error);
-    }
-  }
+  const sysSwitch = (
+    <div style={{ marginLeft: 'auto' }}>
+      <Segmented
+        options={[
+          { id: 'android', label: 'Android' },
+          { id: 'harmonyos', label: 'HarmonyOS' },
+        ]}
+        value={system}
+        onChange={setSystem}
+      />
+    </div>
+  );
 
-  const list = (tab === 'installed' ? installed : available) ?? [];
   const q = query.trim().toLowerCase();
-  const shown = q ? list.filter((e) => e.pkg.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q)) : list;
+  const harmonyShown = q
+    ? harmonyComponents.filter((c) => c.name.toLowerCase().includes(q) || (c.version ?? '').toLowerCase().includes(q))
+    : harmonyComponents;
 
   if (system === 'harmonyos') {
     return (
       <div>
         <div className="sdk-tabs">
-          <div className="sdk-tab on">HarmonyOS SDK</div>
-          <div style={{ marginLeft: 'auto' }}>
-            <Segmented
-              options={[
-                { id: 'android', label: 'Android' },
-                { id: 'harmonyos', label: 'HarmonyOS' },
-              ]}
-              value={system}
-              onChange={setSystem}
-            />
+          <div className={`sdk-tab${tab === 'installed' ? ' on' : ''}`} onClick={() => setTab('installed')}>
+            已安装 {env?.harmony ? `(${harmonyComponents.length})` : ''}
           </div>
-        </div>
-        <div className="settings-row" style={{ borderBottom: '1px solid var(--border)' }}>
-          <span className="settings-row-label">SDK 路径</span>
-          <div className="path-row">
-            <input value={harmonyPath} readOnly spellCheck={false} title={harmonyPath} placeholder="未检测到" />
-            <button className="btn" onClick={browseHarmony}>
-              浏览
-            </button>
+          <div className={`sdk-tab${tab === 'available' ? ' on' : ''}`} onClick={() => setTab('available')}>
+            可安装
           </div>
+          {sysSwitch}
         </div>
-        {!harmony ? (
-          <div className="empty">未检测到 HarmonyOS SDK</div>
-        ) : (
-          <>
-            <div className="settings-row" style={{ borderBottom: '1px solid var(--border)' }}>
-              <span className="settings-row-label">hdc</span>
-              <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={harmony.hdc}>
-                {harmony.hdc}
-                {harmony.apiVersion ? ` · ${harmony.apiVersion}` : ''}
-              </span>
-            </div>
-            <div className="settings-row" style={{ borderBottom: '1px solid var(--border)' }}>
-              <span className="settings-row-label">设备</span>
-              <div className="path-row" style={{ flex: 1 }}>
-                {targetsBusy ? (
-                  <span className="empty" style={{ padding: 0 }}>
-                    <span className="spinner" />
-                  </span>
-                ) : targets && targets.length > 0 ? (
-                  targets.map((t) => (
-                    <span key={t} className="chip ok mono">
-                      {t}
-                    </span>
-                  ))
-                ) : (
-                  <span style={{ fontSize: 12, color: targetsError ? 'var(--danger)' : 'var(--text-3)' }}>
-                    {targetsError || (targets ? '无在线设备' : '未查询')}
-                  </span>
-                )}
-                <button className="btn" onClick={refreshTargets} disabled={targetsBusy}>
-                  刷新
+        <input
+          className="sdk-search"
+          placeholder="搜索组件或版本"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          spellCheck={false}
+        />
+        <div className="sdk-list">
+          {!env?.harmony && <div className="empty">未检测到 HarmonyOS SDK</div>}
+          {env?.harmony && tab === 'installed' && harmonyComponents.length === 0 && <div className="empty">没有检测到组件</div>}
+          {env?.harmony && tab === 'available' && <div className="empty">HarmonyOS SDK 组件经 DevEco Studio 下载</div>}
+          {env?.harmony &&
+            tab === 'installed' &&
+            harmonyShown.map((c) => (
+              <div key={c.dir} className="img-row" title={c.dir}>
+                <div className="sdk-pkg">
+                  <span className="mono">{c.name}</span>
+                  <span className="sdk-desc">{c.version ?? c.dir}</span>
+                </div>
+                <button className="btn btn-sm btn-danger" disabled={busyPkg !== ''} onClick={() => uninstallHarmony(c)}>
+                  {busyPkg === c.dir ? '卸载中' : '卸载'}
                 </button>
               </div>
-            </div>
-            <div className="sdk-list" style={{ marginTop: 10 }}>
-              {harmony.components.map((c) => (
-                <div key={c.dir} className="img-row" title={c.dir}>
-                  <div className="sdk-pkg">
-                    <span className="mono">{c.name}</span>
-                    <span className="sdk-desc">{c.version ?? c.dir}</span>
-                  </div>
-                </div>
-              ))}
-              {harmony.components.length === 0 && <div className="empty">没有检测到组件</div>}
-            </div>
-          </>
-        )}
+            ))}
+          {error && <div className="error-line" style={{ border: 'none' }}>{error}</div>}
+        </div>
       </div>
     );
   }
+
+  const list = (tab === 'installed' ? installed : available) ?? [];
+  const shown = q ? list.filter((e) => e.pkg.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q)) : list;
 
   return (
     <div>
@@ -176,16 +142,7 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
         <div className={`sdk-tab${tab === 'available' ? ' on' : ''}`} onClick={() => setTab('available')}>
           可安装 {available ? `(${available.length})` : ''}
         </div>
-        <div style={{ marginLeft: 'auto' }}>
-          <Segmented
-            options={[
-              { id: 'android', label: 'Android' },
-              { id: 'harmonyos', label: 'HarmonyOS' },
-            ]}
-            value={system}
-            onChange={setSystem}
-          />
-        </div>
+        {sysSwitch}
       </div>
       <input
         className="sdk-search"

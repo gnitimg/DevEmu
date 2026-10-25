@@ -1,5 +1,7 @@
 import type { ApkMeta, AvdInfo, DeviceDef, HarmonyComponent, ProjectMeta, RunRecord, Settings, SdkInfo, SystemImage } from '../core/types.ts';
 
+export type { HarmonyComponent };
+
 export type Scope = { kind: 'project'; projectId: string } | { kind: 'shared' };
 export type R<T> = { ok: true; data: T } | { ok: false; error: string };
 export type EmuDevice = { serial: string; state: string; avdName?: string };
@@ -98,6 +100,8 @@ export const api = {
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
   probeRoutes: () => call<{ routes: { name: string; ok: boolean; latencyMs: number; loss: number }[]; chosen?: string }>('probeRoutes'),
   harmonyTargets: () => call<string[]>('harmonyTargets'),
+  harmonyUninstall: (dir: string) => call<boolean>('harmonyUninstall', dir),
+  openUrl: (url: string) => call<boolean>('openUrl', url),
   sdkInstalled: () => call<SdkPkg[]>('sdkInstalled'),
   sdkAvailable: () => call<SdkPkg[]>('sdkAvailable'),
   sdkInstall: (pkg: string) => call<boolean>('sdkInstall', pkg),

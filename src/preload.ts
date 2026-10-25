@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('devemu', {
   saveSettings: invoke('settings:save'),
   probeRoutes: invoke('settings:probe'),
   harmonyTargets: invoke('harmony:targets'),
+  harmonyUninstall: invoke('harmony:uninstall'),
+  openUrl: invoke('open:url'),
   sdkInstalled: invoke('sdk:installed'),
   sdkAvailable: invoke('sdk:available'),
   sdkInstall: invoke('sdk:install'),

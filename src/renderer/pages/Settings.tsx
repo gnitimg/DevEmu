@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import { SdkPackages } from '../components/SdkPackages.tsx';
 import { Segmented } from '../components/Segmented.tsx';
+import { About } from './About.tsx';
 import type { EnvStatus } from '../App.tsx';
 
-export type Section = 'storage' | 'sdk' | 'network' | 'download' | 'emulator';
+export type Section = 'storage' | 'sdk' | 'network' | 'download' | 'emulator' | 'about';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'storage', label: '存储' },
@@ -12,6 +13,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'network', label: '网络与代理' },
   { id: 'download', label: '下载与限速' },
   { id: 'emulator', label: '模拟器' },
+  { id: 'about', label: '关于' },
 ];
 
 const SPEED_OPTIONS: { kbps: number; label: string }[] = [
@@ -38,6 +40,7 @@ export function Settings({
 }) {
   const [dataRoot, setDataRoot] = useState('');
   const [sdkPath, setSdkPath] = useState('');
+  const [harmonyPath, setHarmonyPath] = useState('');
   const [javaPath, setJavaPath] = useState('');
   const [gpuMode, setGpuMode] = useState('');
   const [proxyEnabled, setProxyEnabled] = useState(false);
@@ -61,6 +64,7 @@ export function Settings({
       syncedOnce.current = true;
       setDataRoot(env.settings.dataRoot);
       setSdkPath(env.settings.sdkPath ?? env.sdk?.root ?? '');
+      setHarmonyPath(env.settings.harmonySdkPath ?? env.harmony?.sdkRoot ?? '');
       setJavaPath(env.settings.javaPath ?? env.java ?? '');
       setGpuMode(env.settings.gpuMode ?? 'swiftshader_indirect');
       setProxyEnabled(env.settings.proxyEnabled === true);
@@ -87,6 +91,7 @@ export function Settings({
         dataRoot: dataRoot.trim(),
         sdkPath: sdkPath.trim() || undefined,
         javaPath: javaPath.trim() || undefined,
+        harmonySdkPath: harmonyPath.trim() || undefined,
         gpuMode: gpuMode || undefined,
         proxyEnabled,
         proxyPort: Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined,
@@ -100,14 +105,15 @@ export function Settings({
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [dataRoot, sdkPath, javaPath, gpuMode, proxyEnabled, proxyPort, maxKbps, parallel, refreshEnv]);
+  }, [dataRoot, sdkPath, harmonyPath, javaPath, gpuMode, proxyEnabled, proxyPort, maxKbps, parallel, refreshEnv]);
 
-  async function browse(field: 'dataRoot' | 'sdkPath' | 'javaPath', title: string) {
+  async function browse(field: 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath', title: string) {
     const r = await api.openDirDialog(title);
     if (r.ok && r.data) {
       dirty.current = true;
       if (field === 'dataRoot') setDataRoot(r.data);
       else if (field === 'sdkPath') setSdkPath(r.data);
+      else if (field === 'harmonyPath') setHarmonyPath(r.data);
       else setJavaPath(r.data);
     }
   }
@@ -158,6 +164,15 @@ export function Settings({
                 <div className="path-row">
                   <input value={sdkPath} readOnly spellCheck={false} title={sdkPath} />
                   <button className="btn" onClick={() => browse('sdkPath', '选择 Android SDK 目录')}>
+                    浏览
+                  </button>
+                </div>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-label">HarmonyOS SDK 路径</span>
+                <div className="path-row">
+                  <input value={harmonyPath} readOnly spellCheck={false} title={harmonyPath} placeholder="未检测到" />
+                  <button className="btn" onClick={() => browse('harmonyPath', '选择 HarmonyOS SDK 目录')}>
                     浏览
                   </button>
                 </div>
@@ -265,6 +280,8 @@ export function Settings({
             </div>
           </div>
         )}
+
+        {section === 'about' && <About />}
 
         {error && <div className="error-line" style={{ marginTop: 12 }}>{error}</div>}
       </div>

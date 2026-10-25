@@ -1402,6 +1402,68 @@ table.tbl {
   }
 }
 
+/* ---------- 关于页 ---------- */
+
+.about {
+  max-width: 640px;
+}
+
+.about-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 26px 0 22px;
+}
+
+.about-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  user-select: none;
+}
+
+.about-name {
+  margin-top: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.about-ver {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.about-list {
+  margin: 0;
+  padding: 12px 18px 12px 34px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.about-list li {
+  margin: 5px 0;
+  line-height: 1.5;
+}
+
+.about-body {
+  padding: 12px 18px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.about-body p {
+  margin: 5px 0;
+}
+
+.about-repo {
+  margin-left: 10px;
+}
+
+.about-log {
+  margin-left: 10px;
+}
+
 /* ---------- 滚动条 ---------- */
 
 ::-webkit-scrollbar {
