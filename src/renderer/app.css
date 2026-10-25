@@ -812,6 +812,18 @@ table.tbl {
   min-width: 0;
 }
 
+.path-row input[readonly] {
+  color: var(--text-2);
+  background: var(--side-bg);
+  cursor: default;
+}
+
+.path-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 14px;
+}
+
 .save-hint {
   font-size: 12px;
   color: var(--ok);

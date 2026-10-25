@@ -33,8 +33,9 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
   useEffect(() => {
     if (env) {
       setDataRoot(env.settings.dataRoot);
-      setSdkPath(env.settings.sdkPath ?? '');
-      setJavaPath(env.settings.javaPath ?? '');
+      // 检测到的路径直接回填，只读展示；修改只能通过「浏览」
+      setSdkPath(env.settings.sdkPath ?? env.sdk?.root ?? '');
+      setJavaPath(env.settings.javaPath ?? env.java ?? '');
       setGpuMode(env.settings.gpuMode ?? 'swiftshader_indirect');
       setProxyEnabled(env.settings.proxyEnabled === true);
       setProxyPort(env.settings.proxyPort ? String(env.settings.proxyPort) : '7890');
@@ -96,6 +97,18 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
     setProbing(false);
   }
 
+  const [removingPkg, setRemovingPkg] = useState('');
+
+  async function removeImage(pkg: string) {
+    if (!window.confirm(`删除镜像 ${pkg}？`)) return;
+    setRemovingPkg(pkg);
+    setError('');
+    const r = await api.sdkUninstall(pkg);
+    if (!r.ok) setError(r.error);
+    refreshEnv();
+    setRemovingPkg('');
+  }
+
   return (
     <div>
       <div className="page-head">
@@ -119,7 +132,7 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
               <div className="form-row">
                 <label>数据根目录（项目、设备与记录存放位置）</label>
                 <div className="path-row">
-                  <input value={dataRoot} onChange={(e) => markDirty(setDataRoot)(e.target.value)} spellCheck={false} />
+                  <input value={dataRoot} readOnly spellCheck={false} title={dataRoot} />
                   <button className="btn" onClick={() => browse('dataRoot', '选择数据根目录')}>
                     浏览
                   </button>
@@ -131,41 +144,47 @@ export function Settings({ env, refreshEnv }: { env: EnvStatus | null; refreshEn
 
           {section === 'sdk' && (
             <>
-              <div className="form-row">
-                <label>Android SDK 路径（留空则自动检测）</label>
-                <div className="path-row">
-                  <input value={sdkPath} onChange={(e) => markDirty(setSdkPath)(e.target.value)} spellCheck={false} />
-                  <button className="btn" onClick={() => browse('sdkPath', '选择 Android SDK 目录')}>
-                    浏览
-                  </button>
+              <div className="path-grid">
+                <div className="form-row">
+                  <label>Android SDK 路径</label>
+                  <div className="path-row">
+                    <input value={sdkPath} readOnly spellCheck={false} title={sdkPath} />
+                    <button className="btn" onClick={() => browse('sdkPath', '选择 Android SDK 目录')}>
+                      浏览
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="form-row">
-                <label>Java 路径（留空则自动检测）</label>
-                <div className="path-row">
-                  <input value={javaPath} onChange={(e) => markDirty(setJavaPath)(e.target.value)} spellCheck={false} />
-                  <button className="btn" onClick={() => browse('javaPath', '选择 Java bin 目录或 jbr 目录')}>
-                    浏览
-                  </button>
+                <div className="form-row">
+                  <label>Java 路径</label>
+                  <div className="path-row">
+                    <input value={javaPath} readOnly spellCheck={false} title={javaPath} />
+                    <button className="btn" onClick={() => browse('javaPath', '选择 Java bin 目录或 jbr 目录')}>
+                      浏览
+                    </button>
+                  </div>
                 </div>
               </div>
               {env && (
-                <div style={{ marginTop: 14 }}>
-                  <div className="status-line">
-                    <span className="k">SDK</span>
-                    {env.sdk ? (
-                      <span style={{ color: 'var(--ok)' }}>已检测到 · {env.sdk.root}</span>
-                    ) : (
-                      <span style={{ color: 'var(--danger)' }}>未检测到</span>
-                    )}
-                  </div>
-                  <div className="status-line">
-                    <span className="k">Java</span>
-                    <span style={{ color: env.java ? 'var(--ok)' : 'var(--danger)' }}>{env.java ?? '未检测到'}</span>
-                  </div>
-                  <div className="status-line">
-                    <span className="k">已装镜像</span>
-                    <span>{env.images.length} 个</span>
+                <div className="form-row">
+                  <label>已装镜像（{env.images.length} 个）</label>
+                  <div className="sdk-list" style={{ maxHeight: 240 }}>
+                    {env.images.length === 0 && <div className="empty">暂无镜像，通过下方管理 SDK 安装</div>}
+                    {env.images.map((img) => (
+                      <div key={img.pkg} className="img-row">
+                        <div className="sdk-pkg">
+                          <span className="mono">
+                            Android（API {img.api}）· {img.tag} · {img.abi}
+                          </span>
+                        </div>
+                        <button
+                          className="btn btn-sm btn-danger"
+                          disabled={removingPkg !== ''}
+                          onClick={() => removeImage(img.pkg)}
+                        >
+                          {removingPkg === img.pkg ? '删除中' : '删除'}
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
