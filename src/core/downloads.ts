@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { cmdlineTool } from './sdk.ts';
+import { downloadToFile } from './net.ts';
 import { ShapingProxy } from './throttle.ts';
 import type { SdkInfo } from './types.ts';
 
@@ -34,6 +38,8 @@ interface Entry extends DownloadItem {
   samples: { t: number; bytes: number }[];
   cancelRequested?: boolean;
   onStart?: () => void;
+  /** 文件任务的 sock 中断（pkg 任务为空） */
+  abort?: () => void;
 }
 
 const active = new Map<string, Entry>();
@@ -156,10 +162,18 @@ export function cancelDownload(pkg: string): boolean {
     finish(entry);
     return true;
   }
-  const entry = active.get(pkg);
-  if (!entry || !entry.child) return false;
-  entry.cancelRequested = true;
-  entry.child.kill();
+  // active 的键是 pkg#序号，按 pkg 匹配
+  let hit: Entry | undefined;
+  for (const v of active.values()) {
+    if (v.pkg === pkg) {
+      hit = v;
+      break;
+    }
+  }
+  if (!hit) return false;
+  hit.cancelRequested = true;
+  if (hit.child) hit.child.kill();
+  else hit.abort?.();
   return true;
 }
 
@@ -198,6 +212,113 @@ export function startDownload(
     }
     notify();
   });
+}
+
+/** 环境安装包等直链文件任务：下载（含进度/限速/取消）→ postProcess 解压落位 */
+export interface FileTask {
+  /** 显示与取消用的任务标识 */
+  key: string;
+  desc: string;
+  host: string;
+  path: string;
+  fileName: string;
+  viaProxy: boolean;
+  proxyPort?: number;
+  /** 字节/秒，0 不限速 */
+  maxBps: number;
+  /** 下载完成后调用（解压/搬移）；setPct 汇报 0-100 的收尾进度，展示时映射到 96-99% */
+  postProcess: (filePath: string, setPct: (p: number) => void) => Promise<void>;
+  /** 完成（成功/失败/取消）回调，用于主进程广播 */
+  onDone?: (r: { ok: boolean; cancelled?: boolean; error?: string }) => void;
+}
+
+/** 入队一个文件下载任务，立即返回；进度经 downloads:changed 广播 */
+export function startFileDownload(task: FileTask): void {
+  const key = `${task.key}#${++seq}`;
+  const entry: Entry = {
+    pkg: task.key, desc: task.desc, state: 'queued', percent: 0, downloaded: 0, total: 0, speedBps: 0, etaSec: 0,
+    startedAt: Date.now(), child: null, samples: [],
+  };
+  active.set(key, entry);
+  ensureTicker();
+  notify();
+
+  const startNow = () => {
+    if (entry.state === 'cancelled') return;
+    void fileTaskImpl(entry, task);
+  };
+  entry.onStart = startNow;
+  if (countRunning() < parallelLimit) startNow();
+  else {
+    entry.state = 'queued';
+    queued.push(entry);
+  }
+  notify();
+}
+
+async function fileTaskImpl(entry: Entry, task: FileTask): Promise<void> {
+  const dlDir = path.join(os.tmpdir(), 'devemu-env-dl');
+  const dlPath = path.join(dlDir, `${task.fileName}.part`);
+  entry.state = 'downloading';
+  notify();
+  let cancelled = false;
+  let sockAbort: (() => void) | null = null;
+  entry.abort = () => {
+    cancelled = true;
+    sockAbort?.();
+  };
+  const isCancelled = () => cancelled || entry.cancelRequested === true;
+  try {
+    const r = await downloadToFile({ host: task.host, path: task.path }, dlPath, {
+      viaProxy: task.viaProxy,
+      proxyPort: task.proxyPort,
+      maxBps: task.maxBps,
+      isCancelled,
+      registerAbort: (fn) => {
+        sockAbort = fn;
+      },
+      onProgress: (bytes, total) => {
+        entry.downloaded = bytes;
+        entry.total = total;
+        entry.percent = total > 0 ? Math.min(95, Math.round((bytes / total) * 95)) : Math.min(95, entry.percent + 1);
+        entry.samples.push({ t: Date.now(), bytes });
+        if (entry.samples.length > 30) entry.samples.shift();
+      },
+    });
+    if (isCancelled()) throw new Error('已取消');
+    entry.total = r.total || r.bytes;
+    entry.downloaded = r.bytes;
+    entry.percent = 96;
+    await task.postProcess(dlPath, (p) => {
+      entry.percent = Math.max(96, Math.min(99, Math.round(p)));
+    });
+    entry.percent = 100;
+    entry.state = 'done';
+    finish(entry);
+    task.onDone?.({ ok: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isCancelled() || msg === '已取消') {
+      entry.state = 'cancelled';
+      entry.error = '已取消';
+    } else {
+      entry.state = 'failed';
+      entry.error = msg;
+    }
+    try {
+      fs.rmSync(dlPath, { force: true });
+    } catch {
+      // 清理失败忽略
+    }
+    finish(entry);
+    task.onDone?.({ ok: false, cancelled: entry.state === 'cancelled', error: entry.error });
+  } finally {
+    try {
+      fs.rmSync(dlPath, { force: true });
+    } catch {
+      // 清理失败忽略
+    }
+  }
 }
 
 async function spawnTaskImpl(

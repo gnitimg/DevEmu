@@ -32,7 +32,17 @@ export function Downloads() {
     api.downloadsList().then((r) => {
       if (r.ok) setSnap(r.data);
     });
-    return onDownloadsChanged((s) => setSnap(s));
+    const off = onDownloadsChanged((s) => setSnap(s));
+    // 订阅之外每秒兜底拉取，防错过广播（主进程重启等）
+    const timer = setInterval(() => {
+      api.downloadsList().then((r) => {
+        if (r.ok) setSnap(r.data);
+      });
+    }, 1000);
+    return () => {
+      off();
+      clearInterval(timer);
+    };
   }, []);
 
   return (

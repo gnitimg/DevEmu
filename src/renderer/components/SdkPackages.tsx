@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, onSdkProgress, type HarmonyComponent, type SdkPkg } from '../api.ts';
+import { api, onDownloadsChanged, type DownloadItem, type HarmonyComponent, type SdkPkg } from '../api.ts';
 import { Segmented } from './Segmented.tsx';
+import { flyToDownloads } from './Fly.tsx';
+import { toast } from './Toast.tsx';
 import type { EnvStatus } from '../App.tsx';
 
 type System = 'android' | 'harmonyos';
@@ -15,7 +17,9 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [busyPkg, setBusyPkg] = useState('');
-  const [progress, setProgress] = useState('');
+
+  // 进行中的下载任务（按包名索引），驱动安装按钮状态
+  const [dl, setDl] = useState<Record<string, DownloadItem>>({});
 
   const harmonyComponents: HarmonyComponent[] = env?.harmony?.components ?? [];
 
@@ -40,21 +44,34 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
     });
   }, [tab, available, loading]);
 
-  useEffect(() => onSdkProgress((line) => setProgress(line.trim().slice(0, 90))), []);
+  // 下载快照：多任务互不影响，各按钮只反映自己
+  useEffect(
+    () =>
+      onDownloadsChanged((s) => {
+        const m: Record<string, DownloadItem> = {};
+        for (const d of s.active) m[d.pkg] = d;
+        setDl(m);
+      }),
+    [],
+  );
 
-  async function act(pkg: string, action: 'sdkInstall' | 'sdkUninstall') {
+  function install(pkg: string, rect: DOMRect) {
+    flyToDownloads(rect);
+    void api.sdkInstall(pkg).then((r) => {
+      if (!r.ok) toast(`安装失败：${r.error}`);
+    });
+  }
+
+  async function uninstallAndroid(pkg: string) {
     setBusyPkg(pkg);
     setError('');
-    setProgress('');
-    const r = await api[action](pkg);
+    const r = await api.sdkUninstall(pkg);
     setBusyPkg('');
-    setProgress('');
     if (!r.ok) {
       setError(r.error);
       return;
     }
     reloadInstalled();
-    setAvailable(null);
     onChanged();
   }
 
@@ -88,6 +105,20 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
     ? harmonyComponents.filter((c) => c.name.toLowerCase().includes(q) || (c.version ?? '').toLowerCase().includes(q))
     : harmonyComponents;
 
+  function installBtn(pkg: string) {
+    const st = dl[pkg];
+    const busy = !!st && (st.state === 'downloading' || st.state === 'queued');
+    return (
+      <button
+        className="btn btn-sm btn-primary"
+        disabled={busy}
+        onClick={(ev) => install(pkg, ev.currentTarget.getBoundingClientRect())}
+      >
+        {!st ? '安装' : st.state === 'queued' ? '排队中' : st.total > 0 ? `${st.percent}%` : '安装中'}
+      </button>
+    );
+  }
+
   if (system === 'harmonyos') {
     return (
       <div>
@@ -119,7 +150,7 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
                   <span className="mono">{c.name}</span>
                   <span className="sdk-desc">{c.version ?? c.dir}</span>
                 </div>
-                <button className="btn btn-sm btn-danger" disabled={busyPkg !== ''} onClick={() => uninstallHarmony(c)}>
+                <button className="btn btn-sm btn-danger" disabled={busyPkg === c.dir} onClick={() => uninstallHarmony(c)}>
                   {busyPkg === c.dir ? '卸载中' : '卸载'}
                 </button>
               </div>
@@ -173,18 +204,15 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
               </span>
             </div>
             {tab === 'installed' ? (
-              <button className="btn btn-sm btn-danger" disabled={busyPkg !== ''} onClick={() => act(e.pkg, 'sdkUninstall')}>
+              <button className="btn btn-sm btn-danger" disabled={busyPkg === e.pkg} onClick={() => uninstallAndroid(e.pkg)}>
                 {busyPkg === e.pkg ? '卸载中' : '卸载'}
               </button>
             ) : (
-              <button className="btn btn-sm btn-primary" disabled={busyPkg !== ''} onClick={() => act(e.pkg, 'sdkInstall')}>
-                {busyPkg === e.pkg ? '安装中' : '安装'}
-              </button>
+              installBtn(e.pkg)
             )}
           </div>
         ))}
       </div>
-      {busyPkg && progress && <div className="sdk-progress mono">{progress}</div>}
     </div>
   );
 }

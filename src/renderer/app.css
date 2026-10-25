@@ -1050,6 +1050,149 @@ table.tbl {
   color: var(--text-2);
   transition: background 0.12s, color 0.12s, flex 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 下载进行中：整个胶囊成为总进度条（底为浅蓝，填充为当前蓝） */
+.side-dl-bar {
+  position: absolute;
+  inset: 0;
+  background: #dbe7fc;
+  border-radius: 999px;
+}
+
+.side-dl-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.7s ease;
+}
+
+.side-dl-fill.indet {
+  width: 100%;
+  background: linear-gradient(90deg, #9dbdf5 0%, var(--accent) 50%, #9dbdf5 100%);
+  background-size: 200% 100%;
+  animation: dlIndet 1.2s linear infinite;
+}
+
+@keyframes dlIndet {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.side-dl-running {
+  color: #fff;
+  border-color: transparent;
+}
+
+.side-dl-running svg,
+.side-dl-running .side-dl-label {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 0 3px rgba(23, 26, 30, 0.35);
+}
+
+/* 到达胶囊时的脉冲 */
+.pill-pulse {
+  animation: pillPulse 0.32s ease;
+}
+
+@keyframes pillPulse {
+  40% {
+    transform: scale(1.07);
+  }
+}
+
+/* ---------- 飞入下载胶囊动画 ---------- */
+
+.fly-x {
+  position: fixed;
+  z-index: 300;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: flyX 0.62s cubic-bezier(0.45, 0.05, 0.55, 0.95) 0.24s forwards;
+}
+
+@keyframes flyX {
+  from {
+    margin-left: 0;
+  }
+  to {
+    margin-left: var(--dx);
+  }
+}
+
+.fly-y {
+  animation: flyY 0.62s cubic-bezier(0.45, 0.05, 0.55, 0.95) 0.24s forwards, flyFade 0.18s linear 0.7s forwards;
+}
+
+@keyframes flyY {
+  0% {
+    margin-top: 0;
+  }
+  42% {
+    margin-top: calc(var(--dy) - 46px);
+  }
+  100% {
+    margin-top: var(--dy);
+  }
+}
+
+@keyframes flyFade {
+  to {
+    opacity: 0.15;
+  }
+}
+
+.fly-icon {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  animation: iconShrink 0.62s ease-in 0.24s forwards;
+}
+
+@keyframes iconShrink {
+  to {
+    transform: scale(0.5);
+  }
+}
+
+.fly-box {
+  position: absolute;
+  inset: 0;
+  color: var(--accent);
+  animation: boxInto 0.24s ease-in forwards;
+}
+
+@keyframes boxInto {
+  to {
+    transform: translateY(7px) scale(0.35);
+    opacity: 0;
+  }
+}
+
+.fly-folder {
+  position: absolute;
+  inset: 0;
+  color: #d9930d;
+  transform: scale(0.3);
+  opacity: 0;
+  animation: folderShow 0.2s ease-out 0.14s forwards;
+}
+
+@keyframes folderShow {
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .side-dl:hover {

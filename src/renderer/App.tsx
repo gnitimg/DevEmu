@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onWinMaximized, type EmuDevice, type HarmonyInfo } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -8,6 +8,7 @@ import { DeviceDetail } from './pages/DeviceDetail.tsx';
 import { Downloads } from './pages/Downloads.tsx';
 import { Settings } from './pages/Settings.tsx';
 import { Toaster, toast } from './components/Toast.tsx';
+import { FlyLayer } from './components/Fly.tsx';
 import type { AvdInfo, ProjectMeta, Settings as SettingsData } from '../core/types.ts';
 
 type Page = 'projects' | 'devices' | 'device-detail' | 'downloads' | 'settings';
@@ -36,6 +37,7 @@ export function App() {
   const [devicesOpen, setDevicesOpen] = useState(true);
   const [settingsSection, setSettingsSection] = useState('storage');
   const [maximized, setMaximized] = useState(false);
+  const [dlActive, setDlActive] = useState<DownloadItem[]>([]);
 
   useEffect(() => {
     api.winIsMaximized().then((r) => {
@@ -43,6 +45,18 @@ export function App() {
     });
     return onWinMaximized(setMaximized);
   }, []);
+
+  // 侧栏胶囊总进度：所有进行中任务（含排队）已下载 / 总大小
+  useEffect(
+    () =>
+      onDownloadsChanged((s) => {
+        setDlActive(s.active);
+      }),
+    [],
+  );
+  const dlTotal = dlActive.reduce((a, d) => a + d.total, 0);
+  const dlDone = dlActive.reduce((a, d) => a + d.downloaded, 0);
+  const dlPct = dlTotal > 0 ? Math.min(100, Math.round((dlDone / dlTotal) * 100)) : 0;
 
   // 设备启动完成后的自动补装结果：失败逐个提示，成功汇总一条
   useEffect(
@@ -116,6 +130,7 @@ export function App() {
   return (
     <div className="shell">
       <Toaster />
+      <FlyLayer />
       <header className="topbar">
         <button className="brand" onClick={() => setSideOpen((v) => !v)} title={sideOpen ? '收起侧栏' : '展开侧栏'}>
           <img className="brand-logo" src={logoUrl} alt="DevEmu" draggable={false} />
@@ -235,10 +250,18 @@ export function App() {
           </div>
           <div className="side-footer">
             <button
-              className={`side-dl${page === 'downloads' ? ' on' : ''}`}
+              className={`side-dl${page === 'downloads' ? ' on' : ''}${dlActive.length > 0 ? ' dl-running' : ''}`}
               title="下载管理"
               onClick={() => goto('downloads')}
             >
+              {dlActive.length > 0 && (
+                <span className="side-dl-bar">
+                  <span
+                    className={`side-dl-fill${dlTotal === 0 ? ' indet' : ''}`}
+                    style={dlTotal > 0 ? { width: `${dlPct}%` } : undefined}
+                  />
+                </span>
+              )}
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M8 2.5v7" />
                 <path d="M5 7l3 3 3-3" />

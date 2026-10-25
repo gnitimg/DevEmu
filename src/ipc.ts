@@ -5,8 +5,12 @@ import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
 import { probeSystemRoutes, type RouteProbe } from './core/net.ts';
 import { detectHarmony, harmonyTargets, listHarmonyComponents, hdcInstall, hdcLaunch } from './core/harmony.ts';
+import {
+  checkEnvDir, resolveEnvPlan, installAndroidCmdtools, installJdk, ENV_LABELS, HARMONY_MANUAL_URL,
+  type EnvKind,
+} from './core/envinstall.ts';
 import { importHap } from './core/hap.ts';
-import { startDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
+import { startDownload, startFileDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
@@ -30,10 +34,15 @@ type ProgressFn = (line: string) => void;
 // 下载快照变化时广播到所有窗口（1 秒节流由 core 负责）
 onDownloadsChanged(() => {
   const snap = listDownloads();
-  for (const w of BrowserWindow.getAllWindows()) {
-    if (!w.webContents.isDestroyed()) w.webContents.send('downloads:changed', snap);
-  }
+  broadcast('downloads:changed', snap);
 });
+
+/** 向所有存活窗口广播 */
+function broadcast(channel: string, payload: unknown): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed() && !w.webContents.isDestroyed()) w.webContents.send(channel, payload);
+  }
+}
 
 // 启动后自动补装结果广播
 type AutoInstallResult = { id: string; label: string; ok: boolean; error?: string };
