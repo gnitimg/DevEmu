@@ -1387,6 +1387,11 @@ table.tbl {
   animation: breathe 1s ease-in-out infinite;
 }
 
+.dot.hm {
+  background: #7c4fd0;
+  animation: none;
+}
+
 .sys-page {
   animation: pageIn 0.22s ease;
 }
@@ -1404,12 +1409,7 @@ table.tbl {
 
 /* ---------- 关于页 ---------- */
 
-.about {
-  max-width: 640px;
-}
-
 .about-hero {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1435,10 +1435,21 @@ table.tbl {
   color: var(--text-3);
 }
 
-.about-changelog {
-  position: absolute;
-  right: 0;
-  top: 30px;
+.about-layout {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.about-main {
+  flex: 1;
+  min-width: 380px;
+}
+
+.changelog-panel {
+  width: 320px;
+  flex-shrink: 0;
 }
 
 .about-row {

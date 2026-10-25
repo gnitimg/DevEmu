@@ -80,9 +80,12 @@ export interface DeviceInfo {
 export interface ApkMeta {
   id: string;
   fileName: string;
+  /** 包类型：apk（缺省）/ hap */
+  kind?: 'apk' | 'hap';
   label?: string;
   packageName?: string;
   versionName?: string;
+  /** APK 入口 Activity / HAP 入口 ability */
   activity?: string;
   size: number;
   importedAt: string;

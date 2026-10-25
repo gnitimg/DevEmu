@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { run } from './exec.ts';
+import { stageAsciiPath, unstage } from './staging.ts';
 import type { HarmonyComponent, HarmonyInfo } from './types.ts';
 
 /**
@@ -27,6 +28,55 @@ export function parseHdcTargets(out: string): string[] {
 export async function harmonyTargets(hdc: string): Promise<string[]> {
   const res = await run(hdc, ['list', 'targets'], { timeoutMs: 10_000 });
   return parseHdcTargets(`${res.stdout}\n${res.stderr}`);
+}
+
+/** 常见 hdc 安装错误转中文 */
+export function translateHdcInstallError(out: string): string {
+  const s = out.trim();
+  if (!s) return '安装失败';
+  if (/signature|签名/i.test(s)) return '安装失败：签名校验不通过（需 Release/调试签名证书）';
+  if (/not match|deviceType|device type/i.test(s)) return '安装失败：应用与设备类型不匹配';
+  if (/space|storage/i.test(s)) return '安装失败：设备存储空间不足';
+  if (/exist|already/i.test(s)) return '安装失败：应用已存在（可先卸载后重试）';
+  if (/parse|format|invalid/i.test(s)) return '安装失败：安装包格式无效';
+  if (/permission|权限/i.test(s)) return '安装失败：权限被拒绝';
+  return `安装失败：${s.slice(0, 160)}`;
+}
+
+/** 经 hdc 安装 HAP 到指定设备 */
+export async function hdcInstall(
+  hdc: string,
+  target: string,
+  hapPath: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const staged = await stageAsciiPath(hapPath);
+  try {
+    const res = await run(hdc, ['-t', target, 'install', staged], { timeoutMs: 120_000 });
+    if (res.code !== 0 || /fail|error/i.test(res.stdout + res.stderr)) {
+      return { ok: false, error: translateHdcInstallError(res.stderr || res.stdout) };
+    }
+    return { ok: true };
+  } finally {
+    unstage(staged, hapPath);
+  }
+}
+
+/** 启动 HAP 的入口 ability */
+export async function hdcLaunch(
+  hdc: string,
+  target: string,
+  bundleName: string,
+  ability: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await run(
+    hdc,
+    ['-t', target, 'shell', 'aa', 'start', '-a', ability, '-b', bundleName],
+    { timeoutMs: 30_000 },
+  );
+  if (res.code !== 0) {
+    return { ok: false, error: `启动失败：${(res.stderr || res.stdout).trim().slice(0, 160) || '未知错误'}` };
+  }
+  return { ok: true };
 }
 
 /** 读取组件目录内 uni-package.json 的 version 字段（无则 undefined） */

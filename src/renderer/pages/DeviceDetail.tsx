@@ -155,8 +155,8 @@ export function DeviceDetail({
         return;
       }
       reload();
-      // 设备在运行则直接安装，失败弹右上角提示
-      if (run) {
+      // 设备在运行则直接安装（仅 APK；HAP 需 HarmonyOS 设备，在应用库中安装）
+      if (run && r.data.kind !== 'hap') {
         setInstalling(true);
         const ir = await api.install(scope, r.data.id, run.serial);
         if (!ir.ok || !ir.data.ok) {
@@ -329,19 +329,26 @@ export function DeviceDetail({
                 {apps.map((apk, i) => (
                   <tr key={apk.id}>
                     <td className="num">{i + 1}</td>
-                    <td title={apk.packageName ?? apk.fileName}>{apk.label ?? apk.fileName}</td>
+                    <td title={apk.packageName ?? apk.fileName}>
+                      <span className="chip" style={{ marginRight: 7 }}>
+                        {apk.kind === 'hap' ? 'HAP' : 'APK'}
+                      </span>
+                      {apk.label ?? apk.fileName}
+                    </td>
                     <td className="num">{apk.versionName ?? '—'}</td>
                     <td className="num">{fmtTime(apk.importedAt)}</td>
                     <td>
                       <div className="row-actions">
-                        <button
-                          className="btn btn-sm"
-                          disabled={!run || apkBusy !== ''}
-                          title={run ? '安装到设备（覆盖更新）' : '先启动设备'}
-                          onClick={() => apkAction(apk, 'update')}
-                        >
-                          {apkBusy === apk.id ? '更新中' : '更新'}
-                        </button>
+                        {apk.kind !== 'hap' && (
+                          <button
+                            className="btn btn-sm"
+                            disabled={!run || apkBusy !== ''}
+                            title={run ? '安装到设备（覆盖更新）' : '先启动设备'}
+                            onClick={() => apkAction(apk, 'update')}
+                          >
+                            {apkBusy === apk.id ? '更新中' : '更新'}
+                          </button>
+                        )}
                         <button
                           className="btn btn-sm btn-danger"
                           disabled={apkBusy !== ''}

@@ -90,9 +90,8 @@ export function apkFilePath(appsDir: string, id: string): string {
 
 export function removeApp(appsDir: string, id: string): boolean {
   const metaFile = apkMetaPath(appsDir, id);
-  const apkFile = apkFilePath(appsDir, id);
   let removed = false;
-  for (const f of [metaFile, apkFile]) {
+  for (const f of [metaFile, apkFilePath(appsDir, id), path.join(appsDir, `${id}.hap`)]) {
     try {
       fs.rmSync(f);
       removed = true;

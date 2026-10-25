@@ -4,7 +4,8 @@ import path from 'node:path';
 import { loadAppSettings, saveAppSettings } from './core/settings.ts';
 import { detectSdk, detectJava, listInstalledImages, runSdkmanager, listInstalledPkgs, parseSdkmanagerSections, SDK_PKG_GROUPS } from './core/sdk.ts';
 import { probeSystemRoutes, type RouteProbe } from './core/net.ts';
-import { detectHarmony, harmonyTargets, listHarmonyComponents } from './core/harmony.ts';
+import { detectHarmony, harmonyTargets, listHarmonyComponents, hdcInstall, hdcLaunch } from './core/harmony.ts';
+import { importHap } from './core/hap.ts';
 import { startDownload, listDownloads, cancelDownload, onDownloadsChanged } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
@@ -48,7 +49,7 @@ function autoInstallAfterBoot(scope: Scope, avdName: string, serial: string): vo
     try {
       const { sdk, settings } = status();
       if (!sdk) return;
-      const apps = listApps(scopeDirs(settings.dataRoot, scope).appsDir);
+      const apps = listApps(scopeDirs(settings.dataRoot, scope).appsDir).filter((a) => a.kind !== 'hap');
       if (apps.length === 0) return;
       const booted = await waitBooted(sdk.adb, serial, 300_000);
       if (!booted) return; // 启动超时或中途关闭：静默放弃
@@ -413,8 +414,12 @@ export function registerIpc(): void {
 
   handle('dialog:openApk', async () => {
     const r = await dialog.showOpenDialog({
-      title: '选择 APK',
-      filters: [{ name: 'APK', extensions: ['apk'] }],
+      title: '选择应用包',
+      filters: [
+        { name: '应用包', extensions: ['apk', 'hap'] },
+        { name: 'APK', extensions: ['apk'] },
+        { name: 'HAP', extensions: ['hap'] },
+      ],
       properties: ['openFile'],
     });
     return ok(r.canceled ? null : r.filePaths[0] ?? null);
@@ -433,6 +438,7 @@ export function registerIpc(): void {
     if (!scope) return fail('非法的作用域');
     const { sdk, settings } = status();
     const dirs = scopeDirs(settings.dataRoot, scope);
+    if (/\.hap$/i.test(filePath)) return ok(await importHap(dirs.appsDir, filePath));
     return ok(await importApk(dirs.appsDir, filePath, sdk?.aapt));
   });
   handle('apk:list', (rawScope: unknown) => {
@@ -451,10 +457,16 @@ export function registerIpc(): void {
   handle('test:install', async (rawScope: unknown, apkId: string, serial: string) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('未检测到 Android SDK');
+    if (!scope) return fail('非法的作用域');
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = listApps(dirs.appsDir).find((a) => a.id === apkId);
-    if (!meta) return fail('APK 不存在');
+    if (!meta) return fail('应用不存在');
+    if (meta.kind === 'hap') {
+      const harmony = detectHarmony(settings.harmonySdkPath);
+      if (!harmony) return fail('未检测到 HarmonyOS SDK');
+      return ok(await hdcInstall(harmony.hdc, serial, path.join(dirs.appsDir, `${apkId}.hap`)));
+    }
+    if (!sdk) return fail('未检测到 Android SDK');
     const booted = await waitBooted(sdk.adb, serial, 300_000);
     if (!booted) return fail('设备启动超时（5 分钟），未能完成安装');
     return ok(await installApk(sdk.adb, serial, apkFilePath(dirs.appsDir, apkId)));
@@ -463,10 +475,16 @@ export function registerIpc(): void {
   handle('test:launch', async (rawScope: unknown, apkId: string, serial: string) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('未检测到 Android SDK');
+    if (!scope) return fail('非法的作用域');
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = listApps(dirs.appsDir).find((a) => a.id === apkId);
-    if (!meta?.packageName) return fail('该 APK 缺少包名信息，无法启动');
+    if (!meta?.packageName) return fail('该应用缺少包名信息，无法启动');
+    if (meta.kind === 'hap') {
+      const harmony = detectHarmony(settings.harmonySdkPath);
+      if (!harmony) return fail('未检测到 HarmonyOS SDK');
+      return ok(await hdcLaunch(harmony.hdc, serial, meta.packageName, meta.activity ?? 'EntryAbility'));
+    }
+    if (!sdk) return fail('未检测到 Android SDK');
     return ok(await launchApp(sdk.adb, serial, meta.packageName, meta.activity));
   });
 

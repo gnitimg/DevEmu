@@ -16,7 +16,32 @@ const DOCS: { id: string; title: string; body: string }[] = [
   { id: 'developer', title: '开发者', body: developerMd },
 ];
 
-/** 关于页：文档默认折叠，点击经 md 阅读器弹窗阅读 */
+/** changelog.md 按 `## vX.Y.Z` 标题拆分为各版本段落 */
+function parseChangelog(src: string): { version: string; body: string }[] {
+  const versions: { version: string; body: string }[] = [];
+  let version = '';
+  let lines: string[] = [];
+  const flush = () => {
+    const body = lines.join('\n').trim();
+    if (version && body) versions.push({ version, body });
+  };
+  for (const line of src.split(/\r\n|\r|\n/)) {
+    const h2 = line.match(/^##\s+(.+)$/);
+    if (h2) {
+      flush();
+      version = h2[1]!.trim();
+      lines = [];
+    } else if (version) {
+      lines.push(line);
+    }
+  }
+  flush();
+  return versions;
+}
+
+const CHANGELOGS = parseChangelog(changelogMd);
+
+/** 关于页：文档默认折叠，点击经 md 阅读器弹窗阅读；更新记录常驻右侧，每个版本一张子卡片 */
 export function About({ env }: { env: EnvStatus | null }) {
   const [doc, setDoc] = useState<{ title: string; body: string } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -39,48 +64,71 @@ export function About({ env }: { env: EnvStatus | null }) {
         <img className="about-logo" src={logoUrl} alt="DevEmu" draggable={false} />
         <div className="about-name">DevEmu</div>
         <div className="about-ver mono">v{env?.version ?? ''}</div>
-        <button className="btn about-changelog" onClick={() => setDoc({ title: '更新记录', body: changelogMd })}>
-          更新记录
-        </button>
       </div>
-      <div className="section">
-        {DOCS.map((d) => (
-          <button key={d.id} className="about-row" onClick={() => setDoc(d)}>
-            <span>{d.title}</span>
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 3.5 10.5 8 6 12.5" />
-            </svg>
-          </button>
-        ))}
-      </div>
-      <div className="section">
-        <div className="section-head">
-          <h2 className="section-title">检查更新</h2>
-          <div className="section-actions">
-            <button className="btn" onClick={checkUpdate} disabled={checking}>
-              {checking ? '检查中' : '检查更新'}
-            </button>
+      <div className="about-layout">
+        <div className="about-main">
+          <div className="section">
+            {DOCS.map((d) => (
+              <button key={d.id} className="about-row" onClick={() => setDoc(d)}>
+                <span>{d.title}</span>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 3.5 10.5 8 6 12.5" />
+                </svg>
+              </button>
+            ))}
+          </div>
+          <div className="section">
+            <div className="section-head">
+              <h2 className="section-title">检查更新</h2>
+              <div className="section-actions">
+                <button className="btn" onClick={checkUpdate} disabled={checking}>
+                  {checking ? '检查中' : '检查更新'}
+                </button>
+              </div>
+            </div>
+            {update && (
+              <div className="about-body">
+                {update.upToDate ? (
+                  <p>已是最新版本（v{update.current}）</p>
+                ) : (
+                  <p>
+                    发现新版本 <span className="mono">v{update.latest}</span>（当前 v{update.current}）
+                    <button
+                      className="link-btn"
+                      style={{ marginLeft: 10 }}
+                      onClick={() => void api.openUrl(update.url)}
+                    >
+                      打开下载页
+                    </button>
+                  </p>
+                )}
+              </div>
+            )}
+            {updateError && <div className="error-line">{updateError}</div>}
           </div>
         </div>
-        {update && (
-          <div className="about-body">
-            {update.upToDate ? (
-              <p>已是最新版本（v{update.current}）</p>
-            ) : (
-              <p>
-                发现新版本 <span className="mono">v{update.latest}</span>（当前 v{update.current}）
-                <button
-                  className="link-btn"
-                  style={{ marginLeft: 10 }}
-                  onClick={() => void api.openUrl(update.url)}
-                >
-                  打开下载页
-                </button>
-              </p>
-            )}
+        <div className="section changelog-panel">
+          <div className="section-head">
+            <h2 className="section-title">更新记录</h2>
+            <span className="section-count">{CHANGELOGS.length} 个版本</span>
           </div>
-        )}
-        {updateError && <div className="error-line">{updateError}</div>}
+          {CHANGELOGS.length === 0 ? (
+            <div className="about-body">暂无更新记录</div>
+          ) : (
+            CHANGELOGS.map((c) => (
+              <button
+                key={c.version}
+                className="about-row"
+                onClick={() => setDoc({ title: `更新记录 · ${c.version}`, body: c.body })}
+              >
+                <span className="mono">{c.version}</span>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 3.5 10.5 8 6 12.5" />
+                </svg>
+              </button>
+            ))
+          )}
+        </div>
       </div>
 
       {doc && (

@@ -3,6 +3,8 @@ import { api, type EmuDevice, type Scope } from '../api.ts';
 import { fmtSize } from './Modal.tsx';
 import type { ApkMeta } from '../../core/types.ts';
 
+type Device = { type: 'android' | 'harmonyos'; serial: string; label: string };
+
 export function ApkPanel({
   scope,
   emus,
@@ -16,8 +18,6 @@ export function ApkPanel({
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<ApkMeta | null>(null); // 导入完成待选设备
-
-  const running = emus.filter((e) => e.state === 'device' && e.avdName);
 
   const reload = useCallback(() => {
     api.listApps(scope).then((r) => {
@@ -46,11 +46,11 @@ export function ApkPanel({
   return (
     <div className="section">
       <div className="section-head">
-        <h2 className="section-title">APK 库</h2>
+        <h2 className="section-title">应用库</h2>
         {apps && <span className="section-count">{apps.length}</span>}
         <div className="section-actions">
           <button className="btn" onClick={doImport} disabled={importing}>
-            {importing ? '导入中' : '导入 APK'}
+            {importing ? '导入中' : '导入应用'}
           </button>
         </div>
       </div>
@@ -60,7 +60,7 @@ export function ApkPanel({
         </div>
       ) : apps.length === 0 ? (
         <div className="empty">
-          还没有导入 APK
+          还没有导入应用
           <button className="btn btn-primary" onClick={doImport} disabled={importing}>
             导入
           </button>
@@ -79,7 +79,12 @@ export function ApkPanel({
           <tbody>
             {apps.map((apk) => (
               <tr key={apk.id}>
-                <td title={apk.fileName}>{apk.label ?? apk.fileName}</td>
+                <td title={apk.fileName}>
+                  <span className="chip" style={{ marginRight: 7 }}>
+                    {apk.kind === 'hap' ? 'HAP' : 'APK'}
+                  </span>
+                  {apk.label ?? apk.fileName}
+                </td>
                 <td className="mono" style={{ color: 'var(--text-2)' }}>
                   {apk.packageName ?? '—'}
                 </td>
@@ -105,7 +110,7 @@ export function ApkPanel({
       {pending && (
         <InstallModal
           apk={pending}
-          running={running}
+          emus={emus}
           scope={scope}
           onClose={() => setPending(null)}
           onRecorded={onRecorded}
@@ -117,49 +122,73 @@ export function ApkPanel({
 
 function InstallModal({
   apk,
-  running,
+  emus,
   scope,
   onClose,
   onRecorded,
 }: {
   apk: ApkMeta;
-  running: EmuDevice[];
+  emus: EmuDevice[];
   scope: Scope;
   onClose: () => void;
   onRecorded: () => void;
 }) {
-  const [target, setTarget] = useState(running[0]?.serial ?? '');
+  const [devices, setDevices] = useState<Device[] | null>(null);
+  const [target, setTarget] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  const selected = running.find((e) => e.serial === target);
+  // Android 运行中的虚拟机 + HarmonyOS 在线设备，按包类型过滤
+  useEffect(() => {
+    const android: Device[] = emus
+      .filter((e) => e.state === 'device' && e.avdName)
+      .map((e) => ({ type: 'android' as const, serial: e.serial, label: e.avdName! }));
+    const needHarmony = apk.kind === 'hap' || android.length === 0;
+    if (!needHarmony) {
+      setDevices(android);
+      setTarget(android[0]?.serial ?? '');
+      return;
+    }
+    setDevices(android);
+    setTarget(android[0]?.serial ?? '');
+    void api.harmonyTargets().then((r) => {
+      const harmony: Device[] = (r.ok ? r.data : []).map((t) => ({ type: 'harmonyos' as const, serial: t, label: t }));
+      setDevices((cur) => [...(cur ?? []), ...harmony]);
+    });
+  }, [apk, emus]);
+
+  const usable = (devices ?? []).filter((d) => (apk.kind === 'hap' ? d.type === 'harmonyos' : d.type === 'android'));
+  const selected = usable.find((e) => e.serial === target);
+
+  useEffect(() => {
+    if (!target && usable.length > 0) setTarget(usable[0]!.serial);
+  }, [target, usable]);
 
   async function run(mode: 'install' | 'install-launch') {
-    if (!target) return;
+    if (!selected) return;
     setBusy(mode);
     setError('');
-    const avdName = running.find((e) => e.serial === target)?.avdName ?? '';
-    const installRes = await api.install(scope, apk.id, target);
+    const installRes = await api.install(scope, apk.id, selected.serial);
     if (!installRes.ok || !installRes.data.ok) {
       const msg = installRes.ok ? installRes.data.error ?? '安装失败' : installRes.error;
       setError(`${apk.label ?? apk.fileName}：${msg}`);
-      await api.recordRun(scope, { avdName, serial: target, apkId: apk.id, result: 'install-failed', note: msg });
+      await api.recordRun(scope, { avdName: selected.label, serial: selected.serial, apkId: apk.id, result: 'install-failed', note: msg });
       onRecorded();
       setBusy('');
       return;
     }
     if (mode === 'install-launch') {
-      const launchRes = await api.launch(scope, apk.id, target);
+      const launchRes = await api.launch(scope, apk.id, selected.serial);
       if (!launchRes.ok || !launchRes.data.ok) {
         const msg = launchRes.ok ? launchRes.data.error ?? '启动失败' : launchRes.error;
         setError(`${apk.label ?? apk.fileName}：${msg}`);
-        await api.recordRun(scope, { avdName, serial: target, apkId: apk.id, result: 'launch-failed', note: msg });
+        await api.recordRun(scope, { avdName: selected.label, serial: selected.serial, apkId: apk.id, result: 'launch-failed', note: msg });
         onRecorded();
         setBusy('');
         return;
       }
     }
-    await api.recordRun(scope, { avdName, serial: target, apkId: apk.id, result: 'ok' });
+    await api.recordRun(scope, { avdName: selected.label, serial: selected.serial, apkId: apk.id, result: 'ok' });
     onRecorded();
     setBusy('');
     onClose();
@@ -176,23 +205,31 @@ function InstallModal({
         </div>
         <div className="modal-body">
           <div className="install-apk-line">
+            <span className="chip" style={{ marginRight: 7 }}>{apk.kind === 'hap' ? 'HAP' : 'APK'}</span>
             <span className="install-apk-name">{apk.label ?? apk.fileName}</span>
             <span className="mono" style={{ color: 'var(--text-2)', fontSize: 11.5 }}>
               {apk.packageName ?? ''} {apk.versionName ? `· ${apk.versionName}` : ''}
             </span>
           </div>
-          {running.length === 0 ? (
-            <div className="empty" style={{ padding: '18px 0' }}>先启动一台虚拟机</div>
+          {devices === null ? (
+            <div className="empty" style={{ padding: '18px 0' }}>
+              <span className="spinner" />
+            </div>
+          ) : usable.length === 0 ? (
+            <div className="empty" style={{ padding: '18px 0' }}>
+              {apk.kind === 'hap' ? '没有 HarmonyOS 在线设备' : '先启动一台虚拟机'}
+            </div>
           ) : (
-            running.map((e) => (
+            usable.map((e) => (
               <button
                 key={e.serial}
                 className={`device-option${target === e.serial ? ' on' : ''}`}
                 onClick={() => setTarget(e.serial)}
               >
-                <span className="dot on" />
-                <span className="device-option-name">{e.avdName}</span>
-                <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>
+                <span className={`dot${e.type === 'android' ? ' on' : ' hm'}`} />
+                <span className="device-option-name">{e.label}</span>
+                <span className="chip" style={{ marginRight: 0 }}>{e.type === 'android' ? 'Android' : 'HarmonyOS'}</span>
+                <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11, marginLeft: 7 }}>
                   {e.serial}
                 </span>
               </button>
@@ -204,10 +241,10 @@ function InstallModal({
           <button className="btn" onClick={onClose}>
             取消
           </button>
-          <button className="btn" disabled={!target || busy !== ''} onClick={() => run('install')}>
+          <button className="btn" disabled={!selected || busy !== ''} onClick={() => run('install')}>
             {busy === 'install' ? '安装中' : '仅安装'}
           </button>
-          <button className="btn btn-primary" disabled={!target || busy !== ''} onClick={() => run('install-launch')}>
+          <button className="btn btn-primary" disabled={!selected || busy !== ''} onClick={() => run('install-launch')}>
             {busy === 'install-launch' ? '测试中' : '安装并启动'}
           </button>
         </div>
