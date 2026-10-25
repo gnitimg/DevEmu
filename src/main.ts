@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import { registerIpc } from './ipc.ts';
 
 if (started) {
   app.quit();
@@ -29,6 +30,7 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+  registerIpc();
   createWindow();
 
   app.on('activate', () => {

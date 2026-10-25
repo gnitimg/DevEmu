@@ -29,6 +29,11 @@ export interface AvdInfo {
   imagePkg?: string;
 }
 
+export interface DeviceDef {
+  id: string;
+  name: string;
+}
+
 export interface DeviceInfo {
   serial: string;
   state: string; // device | offline | unauthorized | ...

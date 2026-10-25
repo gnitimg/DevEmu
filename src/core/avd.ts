@@ -2,12 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
-import type { AvdInfo, Scope, SdkInfo } from './types.ts';
-
-export interface DeviceDef {
-  id: string;
-  name: string;
-}
+import type { AvdInfo, DeviceDef, Scope, SdkInfo } from './types.ts';
 
 /** 解析 avdmanager list device 的 id/Name 对 */
 export function parseDeviceList(stdout: string): DeviceDef[] {
