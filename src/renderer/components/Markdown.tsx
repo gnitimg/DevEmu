@@ -10,7 +10,18 @@ function inline(text: string, keyBase: string): ReactNode[] {
   });
 }
 
-/** 轻量 Markdown 渲染：标题 / 列表 / 分隔线 / 段落 / 表格（按行文本呈现） */
+const SEP_CELL = /^:?-+:?$/;
+
+/** 竖线行拆单元格；整行去除首尾竖线后按 | 分列 */
+function cellsOf(row: string): string[] {
+  return row
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim());
+}
+
+/** 轻量 Markdown 渲染：标题 / 列表 / 表格（含分隔行的竖线块）/ 分隔线 / 段落 */
 export function Markdown({ src }: { src: string }) {
   const lines = src.split(/\r\n|\r|\n/);
   const out: ReactNode[] = [];
@@ -24,8 +35,8 @@ export function Markdown({ src }: { src: string }) {
     }
   };
 
-  for (const raw of lines) {
-    const line = raw.trimEnd();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.trimEnd();
     if (!line.trim()) {
       flush();
       continue;
@@ -44,11 +55,33 @@ export function Markdown({ src }: { src: string }) {
     }
     if (line.trim().startsWith('|')) {
       flush();
-      out.push(
-        <p key={`tb${key++}`} className="md-table-line">
-          {inline(line.trim(), `tb${key}`)}
-        </p>,
-      );
+      const rows: string[] = [];
+      while (i < lines.length && lines[i]!.trim().startsWith('|')) {
+        rows.push(lines[i]!.trim());
+        i++;
+      }
+      i--;
+      const cells = rows.map(cellsOf);
+      if (cells.length >= 2 && cells[1]!.length > 0 && cells[1]!.every((c) => SEP_CELL.test(c))) {
+        const [head, , ...body] = cells;
+        out.push(
+          <table key={`tb${key++}`}>
+            <thead>
+              <tr>{head!.map((c, ci) => <th key={ci}>{inline(c, `th${key}-${ci}`)}</th>)}</tr>
+            </thead>
+            <tbody>
+              {body.map((row, ri) => (
+                <tr key={ri}>{row.map((c, ci) => <td key={ci}>{inline(c, `td${key}-${ri}-${ci}`)}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>,
+        );
+      } else {
+        // 不成表格的零散竖线行，维持按行内文本呈现
+        for (const r of rows) {
+          out.push(<p key={`tb${key++}`} className="md-table-line">{inline(r, `tb${key}`)}</p>);
+        }
+      }
       continue;
     }
     const ul = line.match(/^\s*[-*]\s+(.*)$/);

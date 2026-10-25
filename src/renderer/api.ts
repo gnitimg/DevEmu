@@ -4,7 +4,7 @@ export type { HarmonyComponent };
 
 export type Scope = { kind: 'project'; projectId: string } | { kind: 'shared' };
 export type R<T> = { ok: true; data: T } | { ok: false; error: string };
-export type EmuDevice = { serial: string; state: string; avdName?: string };
+export type EmuDevice = { serial: string; state: string; avdName?: string; type?: 'android' | 'harmonyos' };
 export type SdkPkg = { pkg: string; version: string; desc: string };
 export type HarmonyInfo = {
   sdkRoot: string;

@@ -1549,6 +1549,35 @@ table.tbl {
   padding: 0 4px;
 }
 
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: 10px 0;
+}
+
+.md th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  background: #fafbfc;
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+}
+
+.md td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  vertical-align: top;
+}
+
+.md tr:last-child td {
+  border-bottom: none;
+}
+
 .md .md-table-line {
   font-family: var(--mono);
   font-size: 11px;

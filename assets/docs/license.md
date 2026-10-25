@@ -54,4 +54,4 @@ SOFTWARE.
 - **Java 运行环境**——遵循 Oracle OpenJDK（GPLv2 + Classpath Exception）或其发行版许可证
 - **DevEco Studio / HarmonyOS SDK**（含 hdc 等）——遵循华为开发者相关协议
 
-上述组件的权利与义务由其许可协议独立约束，用户使用时须自行阅读并遵守。
+上述组件的权利与义务由其许可协议独立约束，用户使用时须自行阅读并遵守。Android SDK 与华为开发者相关协议的原文另见"Android SDK 条款"与"HarmonyOS SDK 条款"文档。

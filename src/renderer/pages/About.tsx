@@ -3,6 +3,8 @@ import logoUrl from '../../../assets/icon.png';
 import usageMd from '../../../assets/docs/usage.md?raw';
 import termsMd from '../../../assets/docs/terms.md?raw';
 import licenseMd from '../../../assets/docs/license.md?raw';
+import androidSdkTermsMd from '../../../assets/docs/android-sdk-terms.md?raw';
+import harmonyosSdkTermsMd from '../../../assets/docs/harmonyos-sdk-terms.md?raw';
 import developerMd from '../../../assets/docs/developer.md?raw';
 import changelogMd from '../../../assets/docs/changelog.md?raw';
 import { api } from '../api.ts';
@@ -13,6 +15,8 @@ const DOCS: { id: string; title: string; body: string }[] = [
   { id: 'usage', title: '使用说明', body: usageMd },
   { id: 'terms', title: '使用条款', body: termsMd },
   { id: 'license', title: '开源协议', body: licenseMd },
+  { id: 'android-sdk-terms', title: 'Android SDK 条款', body: androidSdkTermsMd },
+  { id: 'harmonyos-sdk-terms', title: 'HarmonyOS SDK 条款', body: harmonyosSdkTermsMd },
   { id: 'developer', title: '开发者', body: developerMd },
 ];
 

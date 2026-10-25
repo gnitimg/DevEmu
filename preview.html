@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>DevEmu Preview</title>
+    <script>
+      // 浏览器预览专用：stub 掉 Electron preload 暴露的 window.devemu
+      window.devemu = new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            if (prop === 'envStatus') {
+              return () =>
+                Promise.resolve({
+                  ok: true,
+                  data: {
+                    settings: {
+                      dataRoot: 'C:\\DevEmu',
+                      gpuMode: 'swiftshader_indirect',
+                      proxyEnabled: false,
+                      proxyPort: 7890,
+                      maxDownloadKbps: 0,
+                      parallelDownloads: 2,
+                      androidDownloadRoute: 'direct',
+                      harmonyDownloadRoute: 'direct',
+                    },
+                    sdk: null,
+                    java: null,
+                    harmony: null,
+                    version: '0.1.0',
+                    images: [],
+                  },
+                });
+            }
+            if (['onSdkProgress', 'onDownloadsChanged', 'onWinMaximized', 'onAutoInstall'].includes(prop)) {
+              return () => () => undefined;
+            }
+            return () => Promise.resolve({ ok: true, data: [] });
+          },
+        },
+      );
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/renderer/index.tsx"></script>
+  </body>
+</html>

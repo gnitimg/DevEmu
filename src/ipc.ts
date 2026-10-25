@@ -401,12 +401,26 @@ export function registerIpc(): void {
   });
   handle('emu:list', async () => {
     const { sdk } = status();
-    if (!sdk) return ok([]);
-    const devices = await adbDevices(sdk.adb);
-    const result = [];
-    for (const d of devices) {
-      if (d.serial.startsWith('emulator-')) {
-        result.push({ ...d, avdName: await avdNameOf(sdk.adb, d.serial) });
+    const result: { serial: string; state: string; avdName?: string; type: 'android' | 'harmonyos' }[] = [];
+    if (sdk) {
+      const devices = await adbDevices(sdk.adb);
+      for (const d of devices) {
+        if (d.serial.startsWith('emulator-')) {
+          result.push({ ...d, avdName: await avdNameOf(sdk.adb, d.serial), type: 'android' });
+        }
+      }
+    }
+    // HarmonyOS 在线设备（hdc）与 adb 设备可并存；查询失败不影响 Android 列表
+    const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
+    if (harmony) {
+      try {
+        for (const t of await harmonyTargets(harmony.hdc)) {
+          if (!result.some((r) => r.serial === t)) {
+            result.push({ serial: t, state: 'device', type: 'harmonyos' });
+          }
+        }
+      } catch {
+        // hdc 服务未起或无设备：忽略
       }
     }
     return ok(result);
