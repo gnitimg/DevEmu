@@ -21,6 +21,7 @@ export function VmPanel({
   const [avds, setAvds] = useState<AvdInfo[] | null>(null);
   const [error, setError] = useState('');
   const [busyName, setBusyName] = useState('');
+  const [starting, setStarting] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -36,11 +37,29 @@ export function VmPanel({
   const runningOf = (name: string): EmuDevice | undefined =>
     emus.find((e) => e.state === 'device' && e.avdName === name);
 
+  // 「启动中」：点击启动后持续到设备真正上线（或超时）
+  useEffect(() => {
+    if (starting.size === 0) return;
+    const online = new Set(emus.filter((e) => e.state === 'device' && e.avdName).map((e) => e.avdName!));
+    const next = new Set([...starting].filter((n) => !online.has(n)));
+    if (next.size !== starting.size) setStarting(next);
+    const timer = setTimeout(() => setStarting(new Set()), 240_000);
+    return () => clearTimeout(timer);
+  }, [emus, starting]);
+
   async function launch(name: string) {
     setBusyName(name);
     setError('');
+    setStarting((s) => new Set(s).add(name));
     const r = await api.launchEmu(scope, name);
-    if (!r.ok) setError(r.error);
+    if (!r.ok) {
+      setError(r.error);
+      setStarting((s) => {
+        const n = new Set(s);
+        n.delete(name);
+        return n;
+      });
+    }
     refreshEmus();
     setBusyName('');
   }
@@ -100,11 +119,12 @@ export function VmPanel({
           <tbody>
             {avds.map((avd) => {
               const run = runningOf(avd.name);
+              const isStarting = starting.has(avd.name);
               return (
                 <tr key={avd.name}>
                   <td>
-                    <span className={`dot${run ? ' on' : ''}`} />
-                    {run ? '运行中' : '已停止'}
+                    <span className={`dot${isStarting ? ' starting' : run ? ' on' : ''}`} />
+                    {isStarting ? '启动中' : run ? '运行中' : '已停止'}
                   </td>
                   <td className="mono">{avd.name}</td>
                   <td>{osFromImagePkg(avd.imagePkg)}</td>
@@ -119,12 +139,12 @@ export function VmPanel({
                         <>
                           <button
                             className="btn btn-sm btn-primary"
-                            disabled={busyName === avd.name}
+                            disabled={busyName === avd.name || isStarting}
                             onClick={() => launch(avd.name)}
                           >
-                            启动
+                            {isStarting ? '启动中' : '启动'}
                           </button>
-                          <button className="btn btn-sm" onClick={() => setEditing(avd.name)}>
+                          <button className="btn btn-sm" disabled={isStarting} onClick={() => setEditing(avd.name)}>
                             配置
                           </button>
                         </>

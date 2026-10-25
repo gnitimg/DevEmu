@@ -1057,6 +1057,19 @@ table.tbl {
   font-weight: 500;
 }
 
+.sys-switch.seg-4 {
+  width: 340px;
+}
+
+.sys-switch.seg-4 .sys-pill {
+  width: calc(25% - 3px);
+}
+
+.dot.starting {
+  background: #d9930d;
+  animation: breathe 1s ease-in-out infinite;
+}
+
 .sys-page {
   animation: pageIn 0.22s ease;
 }
