@@ -28,7 +28,7 @@ function handle(channel: string, fn: (...args: never[]) => unknown): void {
   });
 }
 
-/** ×÷ÓÃÓò²ÎÊıĞ£Ñé£ºprojectId ²»ÔÊĞíÂ·¾¶×Ö·û£¬·ÀÖ¹ÌÓÒİ */
+// ä½œç”¨åŸŸå‚æ•°æ ¡éªŒï¼šprojectId ä¸å…è®¸è·¯å¾„å­—ç¬¦ï¼Œé˜²æ­¢é€ƒé€¸
 function parseScope(raw: unknown): Scope | null {
   if (raw && typeof raw === 'object') {
     const s = raw as { kind?: unknown; projectId?: unknown };
@@ -55,7 +55,7 @@ export function registerIpc(): void {
 
   handle('settings:save', (raw: unknown) => {
     const s = raw as { dataRoot?: string; sdkPath?: string; javaPath?: string };
-    if (!s.dataRoot || typeof s.dataRoot !== 'string') return fail('Êı¾İ¸ù²»ÄÜÎª¿Õ');
+    if (!s.dataRoot || typeof s.dataRoot !== 'string') return fail('æ•°æ®æ ¹ä¸èƒ½ä¸ºç©º');
     saveAppSettings({ dataRoot: s.dataRoot, sdkPath: s.sdkPath, javaPath: s.javaPath });
     return ok(loadAppSettings());
   });
@@ -63,25 +63,25 @@ export function registerIpc(): void {
   handle('sdk:availableImages', async () => {
     const { sdk, java } = status();
     if (!sdk?.sdkmanager) {
-      return fail('SDK È±ÉÙ cmdline-tools£¬ÎŞ·¨ÁĞ³ö¿ÉÏÂÔØ¾µÏñ¡£¿ÉÔÚ Android Studio µÄ SDK Manager ÖĞ°²×°');
+      return fail('SDK ç¼ºå°‘ cmdline-toolsï¼Œæ— æ³•åˆ—å‡ºå¯ä¸‹è½½é•œåƒã€‚å¯åœ¨ Android Studio çš„ SDK Manager ä¸­å®‰è£…');
     }
     const res = await runSdkmanager(sdk, ['--list'], { javaPath: java });
-    if (res.code !== 0) return fail('sdkmanager Ö´ĞĞÊ§°Ü£º' + (res.stderr || res.stdout).slice(0, 300));
+    if (res.code !== 0) return fail('sdkmanager æ‰§è¡Œå¤±è´¥ï¼š' + (res.stderr || res.stdout).slice(0, 300));
     return ok(parseSdkmanagerList(res.stdout).filter((e) => /x86_64|arm64-v8a/.test(e.pkg)));
   });
 
   handle('sdk:downloadImage', async (pkg: string) => {
     const { sdk, java } = status();
-    if (!sdk?.sdkmanager) return fail('SDK È±ÉÙ cmdline-tools');
-    if (typeof pkg !== 'string' || !/^system-images;[\w.-]+$/.test(pkg)) return fail('·Ç·¨µÄ¾µÏñ°üÃû');
+    if (!sdk?.sdkmanager) return fail('SDK ç¼ºå°‘ cmdline-tools');
+    if (typeof pkg !== 'string' || !/^system-images;[\w.-]+$/.test(pkg)) return fail('éæ³•çš„é•œåƒåŒ…å');
     const res = await runSdkmanager(sdk, [pkg], { javaPath: java });
-    if (res.code !== 0) return fail('ÏÂÔØÊ§°Ü£º' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
+    if (res.code !== 0) return fail('ä¸‹è½½å¤±è´¥ï¼š' + (res.stderr || res.stdout).trim().split(/\r?\n/).pop());
     return ok(true);
   });
 
   handle('project:list', () => ok(listProjects(loadAppSettings().dataRoot)));
   handle('project:create', (name: string, note?: string) => {
-    if (!name?.trim()) return fail('ÏîÄ¿Ãû²»ÄÜÎª¿Õ');
+    if (!name?.trim()) return fail('é¡¹ç›®åä¸èƒ½ä¸ºç©º');
     return ok(createProject(loadAppSettings().dataRoot, name, note));
   });
   handle('project:update', (id: string, patch: { name?: string; note?: string }) =>
@@ -91,43 +91,43 @@ export function registerIpc(): void {
 
   handle('avd:list', (rawScope: unknown) => {
     const scope = parseScope(rawScope);
-    if (!scope) return fail('·Ç·¨µÄ×÷ÓÃÓò');
+    if (!scope) return fail('éæ³•çš„ä½œç”¨åŸŸ');
     return ok(listAvds(loadAppSettings().dataRoot, scope));
   });
   handle('avd:create', async (rawScope: unknown, name: string, imagePkg: string, deviceDefId: string) => {
     const scope = parseScope(rawScope);
     const { sdk, java, settings } = status();
-    if (!scope) return fail('·Ç·¨µÄ×÷ÓÃÓò');
-    if (!sdk) return fail('Î´¼ì²âµ½ Android SDK£¬Çëµ½ÉèÖÃÒ³ÅäÖÃ');
-    if (!/^[\w.-]{1,50}$/.test(name)) return fail('ĞéÄâ»úÃû³Æ½öÏŞ×ÖÄ¸¡¢Êı×Ö¡¢ÏÂ»®Ïß¡¢µã¡¢¶ÌºáÏß');
+    if (!scope) return fail('éæ³•çš„ä½œç”¨åŸŸ');
+    if (!sdk) return fail('æœªæ£€æµ‹åˆ° Android SDKï¼Œè¯·åˆ°è®¾ç½®é¡µé…ç½®');
+    if (!/^[\w.-]{1,50}$/.test(name)) return fail('è™šæ‹Ÿæœºåç§°ä»…é™å­—æ¯ã€æ•°å­—ã€ä¸‹åˆ’çº¿ã€ç‚¹ã€çŸ­æ¨ªçº¿');
     return ok(await createAvd(sdk, settings.dataRoot, scope, name, imagePkg, deviceDefId, java));
   });
   handle('avd:delete', async (rawScope: unknown, name: string) => {
     const scope = parseScope(rawScope);
     const { sdk, java, settings } = status();
-    if (!scope || !sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!scope || !sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     return ok(await deleteAvd(sdk, settings.dataRoot, scope, name, java));
   });
   handle('avd:deviceDefs', async () => {
     const { sdk, java } = status();
-    if (!sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     return ok(await listDeviceDefs(sdk, java));
   });
 
   handle('emu:launch', async (rawScope: unknown, avdName: string) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!scope || !sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const entry = await launchEmulator(sdk, settings.dataRoot, scope, avdName);
     return ok({ avdName: entry.avdName, port: entry.port, serial: entry.serial });
   });
   handle('emu:stop', async (rawScope: unknown, avdName: string) => {
     const scope = parseScope(rawScope);
-    if (!scope) return fail('·Ç·¨µÄ×÷ÓÃÓò');
+    if (!scope) return fail('éæ³•çš„ä½œç”¨åŸŸ');
     const entry = findRunning(scopeKey(scope), avdName);
-    if (!entry) return fail('¸ÃĞéÄâ»úÎ´ÔÚÔËĞĞ');
+    if (!entry) return fail('è¯¥è™šæ‹Ÿæœºæœªåœ¨è¿è¡Œ');
     const { sdk } = status();
-    if (!sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     await stopEmulator(sdk, entry);
     return ok(true);
   });
@@ -146,7 +146,7 @@ export function registerIpc(): void {
 
   handle('dialog:openApk', async () => {
     const r = await dialog.showOpenDialog({
-      title: 'Ñ¡Ôñ APK',
+      title: 'é€‰æ‹© APK',
       filters: [{ name: 'APK', extensions: ['apk'] }],
       properties: ['openFile'],
     });
@@ -155,20 +155,20 @@ export function registerIpc(): void {
 
   handle('apk:import', async (rawScope: unknown, filePath: string) => {
     const scope = parseScope(rawScope);
-    if (!scope) return fail('·Ç·¨µÄ×÷ÓÃÓò');
+    if (!scope) return fail('éæ³•çš„ä½œç”¨åŸŸ');
     const { sdk, settings } = status();
     const dirs = scopeDirs(settings.dataRoot, scope);
     return ok(await importApk(dirs.appsDir, filePath, sdk?.aapt));
   });
   handle('apk:list', (rawScope: unknown) => {
     const scope = parseScope(rawScope);
-    if (!scope) return fail('·Ç·¨µÄ×÷ÓÃÓò');
+    if (!scope) return fail('éæ³•çš„ä½œç”¨åŸŸ');
     const dirs = scopeDirs(loadAppSettings().dataRoot, scope);
     return ok(listApps(dirs.appsDir));
   });
   handle('apk:remove', (rawScope: unknown, id: string) => {
     const scope = parseScope(rawScope);
-    if (!scope) return fail('·Ç·¨µÄ×÷ÓÃÓò');
+    if (!scope) return fail('éæ³•çš„ä½œç”¨åŸŸ');
     const dirs = scopeDirs(loadAppSettings().dataRoot, scope);
     return ok(removeApp(dirs.appsDir, id));
   });
@@ -176,35 +176,35 @@ export function registerIpc(): void {
   handle('test:install', async (rawScope: unknown, apkId: string, serial: string) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!scope || !sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = listApps(dirs.appsDir).find((a) => a.id === apkId);
-    if (!meta) return fail('APK ²»´æÔÚ');
+    if (!meta) return fail('APK ä¸å­˜åœ¨');
     const booted = await waitBooted(sdk.adb, serial, 300_000);
-    if (!booted) return fail('Éè±¸Æô¶¯³¬Ê±£¨5 ·ÖÖÓ£©£¬Î´ÄÜÍê³É°²×°');
+    if (!booted) return fail('è®¾å¤‡å¯åŠ¨è¶…æ—¶ï¼ˆ5 åˆ†é’Ÿï¼‰ï¼Œæœªèƒ½å®Œæˆå®‰è£…');
     return ok(await installApk(sdk.adb, serial, apkFilePath(dirs.appsDir, apkId)));
   });
 
   handle('test:launch', async (rawScope: unknown, apkId: string, serial: string) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!scope || !sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = listApps(dirs.appsDir).find((a) => a.id === apkId);
-    if (!meta?.packageName) return fail('¸Ã APK È±ÉÙ°üÃûĞÅÏ¢£¬ÎŞ·¨Æô¶¯');
+    if (!meta?.packageName) return fail('è¯¥ APK ç¼ºå°‘åŒ…åä¿¡æ¯ï¼Œæ— æ³•å¯åŠ¨');
     return ok(await launchApp(sdk.adb, serial, meta.packageName, meta.activity));
   });
 
   handle('test:screenshot', async (serial: string) => {
     const { sdk } = status();
-    if (!sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const buf = await screenshot(sdk.adb, serial);
     return ok(buf.toString('base64'));
   });
 
   handle('test:logcat', async (serial: string) => {
     const { sdk } = status();
-    if (!sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const res = await runCmd(sdk.adb, ['-s', serial, 'logcat', '-d', '-t', '600'], { timeoutMs: 20_000 });
     return ok(res.stdout);
   });
@@ -212,27 +212,27 @@ export function registerIpc(): void {
   handle('test:clearData', async (rawScope: unknown, apkId: string, serial: string) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!scope || !sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = listApps(dirs.appsDir).find((a) => a.id === apkId);
-    if (!meta?.packageName) return fail('¸Ã APK È±ÉÙ°üÃûĞÅÏ¢');
+    if (!meta?.packageName) return fail('è¯¥ APK ç¼ºå°‘åŒ…åä¿¡æ¯');
     return ok(await clearData(sdk.adb, serial, meta.packageName));
   });
 
   handle('test:uninstall', async (rawScope: unknown, apkId: string, serial: string) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!scope || !sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = listApps(dirs.appsDir).find((a) => a.id === apkId);
-    if (!meta?.packageName) return fail('¸Ã APK È±ÉÙ°üÃûĞÅÏ¢');
+    if (!meta?.packageName) return fail('è¯¥ APK ç¼ºå°‘åŒ…åä¿¡æ¯');
     return ok(await uninstall(sdk.adb, serial, meta.packageName));
   });
 
   handle('run:record', async (rawScope: unknown, payload: unknown) => {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('Î´¼ì²âµ½ Android SDK');
+    if (!scope || !sdk) return fail('æœªæ£€æµ‹åˆ° Android SDK');
     const p = payload as { avdName: string; serial: string; apkId?: string; result: string; note?: string };
     const dirs = scopeDirs(settings.dataRoot, scope);
     const meta = p.apkId ? listApps(dirs.appsDir).find((a) => a.id === p.apkId) : undefined;
@@ -241,13 +241,13 @@ export function registerIpc(): void {
     try {
       shot = await screenshot(sdk.adb, p.serial);
     } catch {
-      // ½ØÍ¼Ê§°Ü²»×èÈû¼ÇÂ¼
+      // æˆªå›¾å¤±è´¥ä¸é˜»å¡è®°å½•
     }
     try {
       const res = await runCmd(sdk.adb, ['-s', p.serial, 'logcat', '-d', '-t', '800'], { timeoutMs: 20_000 });
       log = res.stdout;
     } catch {
-      // Í¬ÉÏ
+      // åŒä¸Š
     }
     const rec = recordRun(
       dirs.runsDir,
@@ -267,7 +267,7 @@ export function registerIpc(): void {
 
   handle('run:list', (rawScope: unknown) => {
     const scope = parseScope(rawScope);
-    if (!scope) return fail('·Ç·¨µÄ×÷ÓÃÓò');
+    if (!scope) return fail('éæ³•çš„ä½œç”¨åŸŸ');
     const dirs = scopeDirs(loadAppSettings().dataRoot, scope);
     return ok(listRuns(dirs.runsDir));
   });
