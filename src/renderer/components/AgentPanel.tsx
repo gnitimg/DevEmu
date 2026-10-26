@@ -2,6 +2,16 @@ import { useEffect, useState } from 'react';
 import { api, type AgentStatus } from '../api.ts';
 import { toast } from './Toast.tsx';
 
+/** 复制图标（与侧栏图标同风格的内联 SVG） */
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+    </svg>
+  );
+}
+
 /** 设置页 → Agent 接入：本机 AI agent（ZCode / Codex 等）经 MCP 控制虚拟设备的开关与接入配置 */
 export function AgentPanel() {
   const [st, setSt] = useState<AgentStatus | null>(null);
@@ -44,8 +54,17 @@ export function AgentPanel() {
   function copySnippet() {
     if (!st) return;
     void navigator.clipboard.writeText(st.snippet);
-    toast('接入配置已复制', 'ok');
+    toast('接入配置已复制（含真实令牌）', 'ok');
   }
+
+  function copyToken() {
+    if (!st) return;
+    void navigator.clipboard.writeText(st.token);
+    toast('令牌已复制', 'ok');
+  }
+
+  // 接入配置里的令牌位置：仅用于模糊展示，真实值仍由复制按钮写入剪贴板
+  const tokenAt = st && st.token ? st.snippet.indexOf(st.token) : -1;
 
   if (!st) return <div className="section" />;
 
@@ -87,7 +106,12 @@ export function AgentPanel() {
         <div className="settings-row">
           <span className="settings-row-label">访问令牌</span>
           <div className="path-row">
-            <input value={st.token} readOnly spellCheck={false} className="mono" title={st.token} />
+            <span className="token-field mono" aria-hidden="true">
+              <span className="token-mask">{st.token || '—'}</span>
+            </span>
+            <button className="icon-btn" title="复制令牌" onClick={copyToken}>
+              <CopyIcon />
+            </button>
             <button className="btn" disabled={busy} onClick={() => void regenerate()}>
               重新生成
             </button>
@@ -106,9 +130,17 @@ export function AgentPanel() {
             在客户端配置文件中加入以下 <code className="mono">mcpServers</code> 片段（需要本机已安装 Node.js）：
           </p>
           <pre className="code-block">
-            {st.snippet}
-            <button className="code-copy" onClick={copySnippet}>
-              复制
+            {tokenAt >= 0 ? (
+              <>
+                {st.snippet.slice(0, tokenAt)}
+                <span className="token-mask">{st.token}</span>
+                {st.snippet.slice(tokenAt + st.token.length)}
+              </>
+            ) : (
+              st.snippet
+            )}
+            <button className="code-copy" title="复制接入配置" onClick={copySnippet}>
+              <CopyIcon />
             </button>
           </pre>
           <p className="page-sub" style={{ marginBottom: 0 }}>

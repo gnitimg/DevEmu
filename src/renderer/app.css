@@ -2067,10 +2067,56 @@ table.tbl {
 
 /* ---------- Agent 接入 ---------- */
 
+/* 令牌遮罩：外框负责外观，内层文字整体模糊（filter 会连边框一起模糊，故分两层） */
+.token-field {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--text-2);
+  background: var(--side-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.token-mask {
+  filter: blur(4px);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.icon-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.icon-btn svg,
+.code-copy svg {
+  width: 14px;
+  height: 14px;
+}
+
 .code-block {
   position: relative;
   margin: 0 0 10px;
-  padding: 12px 76px 12px 14px;
+  padding: 12px 46px 12px 14px;
   background: var(--side-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2086,12 +2132,16 @@ table.tbl {
   position: absolute;
   top: 8px;
   right: 8px;
-  padding: 3px 10px;
-  font-size: 12px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
+  transition: color 0.12s, border-color 0.12s;
 }
 
 .code-copy:hover {
