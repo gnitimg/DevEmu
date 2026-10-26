@@ -15,8 +15,8 @@ const DOCS: { id: string; title: string; body: string }[] = [
   { id: 'usage', title: '使用说明', body: usageMd },
   { id: 'terms', title: '使用条款', body: termsMd },
   { id: 'license', title: '开源协议', body: licenseMd },
-  { id: 'android-sdk-terms', title: 'Android SDK 条款', body: androidSdkTermsMd },
-  { id: 'harmonyos-sdk-terms', title: 'HarmonyOS SDK 条款', body: harmonyosSdkTermsMd },
+  { id: 'android-sdk-terms', title: 'Android Software Development Kit License Agreement', body: androidSdkTermsMd },
+  { id: 'harmonyos-sdk-terms', title: '华为开发者服务协议', body: harmonyosSdkTermsMd },
   { id: 'developer', title: '开发者', body: developerMd },
 ];
 

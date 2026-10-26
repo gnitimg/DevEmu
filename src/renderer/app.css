@@ -1823,6 +1823,12 @@ table.tbl {
   transition: background 0.12s;
 }
 
+.about-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .about-row:last-child {
   border-bottom: none;
 }
