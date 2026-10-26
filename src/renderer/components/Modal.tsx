@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { ReactNode } from 'react';
 
 export function Modal({
@@ -11,6 +12,15 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
 }) {
+  // Esc 关闭弹窗
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">

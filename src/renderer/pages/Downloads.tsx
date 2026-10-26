@@ -27,6 +27,7 @@ function fmtEta(sec: number): string {
 export function Downloads() {
   const [snap, setSnap] = useState<Snap>({ active: [], finished: [] });
   const [cancelling, setCancelling] = useState('');
+  const [removing, setRemoving] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -119,9 +120,22 @@ export function Downloads() {
                 <span className={`dl-name${d.desc && d.desc !== d.pkg ? '' : ' mono'}`}>
                   {d.desc && d.desc !== d.pkg ? d.desc : d.pkg}
                 </span>
-                <span className={`chip ${d.state === 'done' ? 'ok' : d.state === 'failed' ? 'err' : ''}`}>
-                  {d.state === 'done' ? '完成' : d.state === 'failed' ? `失败${d.error ? ` · ${d.error}` : ''}` : '已取消'}
-                </span>
+                {d.state !== 'done' && (
+                  <span className={`chip ${d.state === 'failed' ? 'err' : ''}`}>
+                    {d.state === 'failed' ? `失败${d.error ? ` · ${d.error}` : ''}` : '已取消'}
+                  </span>
+                )}
+                <button
+                  className="btn btn-sm btn-danger dl-del"
+                  disabled={removing !== ''}
+                  onClick={async () => {
+                    setRemoving(`${d.pkg}${d.startedAt}`);
+                    await api.downloadsRemove(d.pkg, d.startedAt);
+                    setRemoving('');
+                  }}
+                >
+                  {removing === `${d.pkg}${d.startedAt}` ? '删除中' : '删除'}
+                </button>
               </div>
               <div className="dl-meta">
                 <span>{d.total > 0 ? fmtBytes(d.total) : ''}</span>

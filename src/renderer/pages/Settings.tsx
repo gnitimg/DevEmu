@@ -5,6 +5,7 @@ import { toast } from '../components/Toast.tsx';
 import { SdkPackages } from '../components/SdkPackages.tsx';
 import { Segmented } from '../components/Segmented.tsx';
 import { RoutePanel } from '../components/RoutePanel.tsx';
+import { Select } from '../components/Select.tsx';
 import { About } from './About.tsx';
 import type { EnvStatus } from '../App.tsx';
 
@@ -288,22 +289,23 @@ export function Settings({
           <div className="section">
             <div className="settings-row">
               <span className="settings-row-label">最高下载速度</span>
-              <select value={String(maxKbps)} onChange={(e) => mark(setMaxKbps)(Number(e.target.value))} style={{ width: 180 }}>
-                {SPEED_OPTIONS.map((o) => (
-                  <option key={o.kbps} value={o.kbps}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+              <div style={{ width: 180 }}>
+                <Select
+                  value={String(maxKbps)}
+                  options={SPEED_OPTIONS.map((o) => ({ value: String(o.kbps), label: o.label }))}
+                  onChange={(v) => mark(setMaxKbps)(Number(v))}
+                />
+              </div>
             </div>
             <div className="settings-row">
               <span className="settings-row-label">并行下载数</span>
-              <select value={parallel} onChange={(e) => mark(setParallel)(e.target.value)} style={{ width: 180 }}>
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-              </select>
+              <div style={{ width: 180 }}>
+                <Select
+                  value={parallel}
+                  options={['1', '2', '3', '4'].map((n) => ({ value: n, label: n }))}
+                  onChange={(v) => mark(setParallel)(v)}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -312,11 +314,17 @@ export function Settings({
           <div className="section">
             <div className="settings-row">
               <span className="settings-row-label">图形后端</span>
-              <select value={gpuMode} onChange={(e) => mark(setGpuMode)(e.target.value)} style={{ width: 200 }}>
-                <option value="swiftshader_indirect">软件渲染</option>
-                <option value="angle_indirect">ANGLE / Direct3D</option>
-                <option value="host">宿主 GPU</option>
-              </select>
+              <div style={{ width: 200 }}>
+                <Select
+                  value={gpuMode}
+                  options={[
+                    { value: 'swiftshader_indirect', label: '软件渲染' },
+                    { value: 'angle_indirect', label: 'ANGLE / Direct3D' },
+                    { value: 'host', label: '宿主 GPU' },
+                  ]}
+                  onChange={(v) => mark(setGpuMode)(v)}
+                />
+              </div>
             </div>
           </div>
         )}

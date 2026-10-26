@@ -10,7 +10,7 @@ import {
   type EnvKind,
 } from './core/envinstall.ts';
 import { importHap } from './core/hap.ts';
-import { startDownload, startFileDownload, listDownloads, cancelDownload, onDownloadsChanged, initDownloadStore } from './core/downloads.ts';
+import { startDownload, startFileDownload, listDownloads, cancelDownload, removeFinished, onDownloadsChanged, initDownloadStore } from './core/downloads.ts';
 import { listAvds, createAvd, deleteAvd, listDeviceDefs, updateAvdHardware, getAvdHardware, renameAvd, type AvdHardware } from './core/avd.ts';
 import { launchEmulator, stopEmulator, findRunning } from './core/emulator.ts';
 import { adbDevices, avdNameOf, installApk, launchApp, screenshot, clearData, uninstall, waitBooted } from './core/adb.ts';
@@ -404,6 +404,7 @@ export function registerIpc(): void {
 
   handle('downloads:list', () => ok(listDownloads()));
   handle('downloads:cancel', (pkg: string) => ok(cancelDownload(pkg)));
+  handle('downloads:remove', (pkg: string, startedAt: number) => ok(removeFinished(pkg, Number(startedAt))));
 
   handle('sdk:uninstall', async (pkg: string, progress?: ProgressFn) => {
     const { settings, java } = status();

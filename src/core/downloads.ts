@@ -223,6 +223,16 @@ export function listDownloads(): { active: DownloadItem[]; finished: DownloadIte
   };
 }
 
+/** 删除一条已下载历史记录 */
+export function removeFinished(pkg: string, startedAt: number): boolean {
+  const i = finished.findIndex((e) => e.pkg === pkg && e.startedAt === startedAt);
+  if (i < 0) return false;
+  finished.splice(i, 1);
+  persistFinished();
+  notify();
+  return true;
+}
+
 export function cancelDownload(pkg: string): boolean {
   // 排队中的任务直接取消
   const qi = queued.findIndex((e) => e.pkg === pkg);

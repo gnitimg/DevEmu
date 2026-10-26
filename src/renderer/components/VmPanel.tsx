@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, osFromImagePkg, prettyModel, type EmuDevice, type Scope } from '../api.ts';
+import { api, osFromImagePkg, prettyModel, tagLabel, type EmuDevice, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
+import { Select } from './Select.tsx';
 import { EditVmModal, HwFields, parseHwFields, RECOMMEND_HW } from './VmEdit.tsx';
 import type { EnvStatus } from '../App.tsx';
 import type { AvdInfo, DeviceDef } from '../../core/types.ts';
@@ -23,9 +24,17 @@ export function VmPanel({
   const [avds, setAvds] = useState<AvdInfo[] | null>(null);
   const [error, setError] = useState('');
   const [busyName, setBusyName] = useState('');
-  const [starting, setStarting] = useState<Set<string>>(new Set());
+  const [starting, setStarting] = useState<Map<string, number>>(new Map());
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [, setTick] = useState(0);
+
+  // 有任务启动中时每秒刷新，让「启动中 45s」的耗时可见，缓解等待焦虑
+  useEffect(() => {
+    if (starting.size === 0) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [starting.size > 0]);
 
   const reload = useCallback(() => {
     api.listAvds(scope).then((r) => {
@@ -43,21 +52,26 @@ export function VmPanel({
   useEffect(() => {
     if (starting.size === 0) return;
     const online = new Set(emus.filter((e) => e.state === 'device' && e.avdName).map((e) => e.avdName!));
-    const next = new Set([...starting].filter((n) => !online.has(n)));
+    const next = new Map([...starting].filter(([n]) => !online.has(n)));
     if (next.size !== starting.size) setStarting(next);
-    const timer = setTimeout(() => setStarting(new Set()), 240_000);
+    const timer = setTimeout(() => setStarting(new Map()), 240_000);
     return () => clearTimeout(timer);
   }, [emus, starting]);
+
+  const elapsedOf = (name: string): number => {
+    const ts = starting.get(name);
+    return ts === undefined ? 0 : Math.floor((Date.now() - ts) / 1000);
+  };
 
   async function launch(name: string) {
     setBusyName(name);
     setError('');
-    setStarting((s) => new Set(s).add(name));
+    setStarting((s) => new Map(s).set(name, Date.now()));
     const r = await api.launchEmu(scope, name);
     if (!r.ok) {
       setError(r.error);
       setStarting((s) => {
-        const n = new Set(s);
+        const n = new Map(s);
         n.delete(name);
         return n;
       });
@@ -125,8 +139,13 @@ export function VmPanel({
               return (
                 <tr key={avd.name}>
                   <td>
-                    <span className={`dot${isStarting ? ' starting' : run ? ' on' : ''}`} />
-                    {isStarting ? '启动中' : run ? '运行中' : '已停止'}
+                    {isStarting ? (
+                      <span className="chip warn">启动中 {elapsedOf(avd.name)}s</span>
+                    ) : run ? (
+                      <span className="chip ok">运行中</span>
+                    ) : (
+                      <span className="chip idle">已停止</span>
+                    )}
                   </td>
                   <td>
                     {onOpenVm ? (
@@ -304,38 +323,28 @@ function NewVmModal({
       }
     >
       <div className="form-row">
-        <label>名称（字母、数字、下划线）</label>
+        <label>名称</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 pixel6_test" autoFocus />
       </div>
       <div className="form-row">
         <label>型号</label>
         <div className="cascade-row">
-          <select
+          <Select
             value={deviceType}
-            onChange={(e) => {
-              setDeviceType(e.target.value);
+            options={typeOptions.map((t) => ({ value: t, label: t, hint: String(defTypeMap.get(t)!.length) }))}
+            onChange={(v) => {
+              setDeviceType(v);
               setDefId('');
             }}
-          >
-            <option value="">设备类型</option>
-            {typeOptions.map((t) => (
-              <option key={t} value={t}>
-                {t}（{defTypeMap.get(t)!.length}）
-              </option>
-            ))}
-          </select>
-          <select
+            placeholder="设备类型"
+          />
+          <Select
             value={defId}
-            onChange={(e) => setDefId(e.target.value)}
+            options={defOptions.map((d) => ({ value: d.id, label: d.name }))}
+            onChange={setDefId}
+            placeholder={deviceType ? '选择机型' : '先选设备类型'}
             disabled={!deviceType || defsError}
-          >
-            <option value="">{deviceType ? '选择机型' : '先选设备类型'}</option>
-            {defOptions.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+          />
         </div>
         {defsError && (
           <div className="form-hint">
@@ -347,49 +356,44 @@ function NewVmModal({
         )}
       </div>
       <div className="form-row">
-        <label>系统</label>
-        <div className="cascade-row">
-          <select
-            value={osSeries}
-            onChange={(e) => {
-              setOsSeries(e.target.value);
-              setImagePkg('');
-            }}
-          >
-            <option value="">大版本</option>
-            {osSeriesOptions.map((o) => (
-              <option key={o.label} value={o.label}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <select
-            value={imagePkg}
-            onChange={(e) => setImagePkg(e.target.value)}
-            disabled={!osSeries}
-          >
-            <option value="">{osSeries ? '选择镜像' : '先选大版本'}</option>
-            {osImageOptions.map((img) => (
-              <option key={img.pkg} value={img.pkg}>
-                {img.tag} · {img.abi} · API {img.api}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="form-hint">
-          <button className="link-btn" onClick={() => onOpenSdkManage?.()}>
+        <label style={{ display: 'flex', alignItems: 'center' }}>
+          <span>系统</span>
+          <button className="link-btn" style={{ marginLeft: 'auto', fontSize: 11.5 }} onClick={() => onOpenSdkManage?.()}>
             管理 SDK
           </button>
+        </label>
+        <div className="cascade-row">
+          <Select
+            value={osSeries}
+            options={osSeriesOptions.map((o) => ({ value: o.label, label: o.label }))}
+            onChange={(v) => {
+              setOsSeries(v);
+              setImagePkg('');
+            }}
+            placeholder="大版本"
+          />
+          <Select
+            value={imagePkg}
+            options={osImageOptions.map((img) => ({ value: img.pkg, label: `${tagLabel(img.tag)} · ${img.abi}`, hint: `API ${img.api}` }))}
+            onChange={setImagePkg}
+            placeholder={osSeries ? '选择镜像' : '先选大版本'}
+            disabled={!osSeries}
+          />
         </div>
       </div>
       <div className="form-row">
-        <button className="link-btn" onClick={() => setAdvanced((v) => !v)}>
-          {advanced ? '收起高级配置' : '高级配置（可选）'}
+        <button className="adv-toggle" onClick={() => setAdvanced((v) => !v)}>
+          高级配置
+          <svg className={`adv-chev${advanced ? ' open' : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 3.5 10.5 8 6 12.5" />
+          </svg>
         </button>
       </div>
-      {advanced && (
-        <HwFields ram={ram} setRam={setRam} cores={cores} setCores={setCores} storage={storage} setStorage={setStorage} />
-      )}
+      <div className={`adv-body${advanced ? '' : ' collapsed'}`}>
+        <div className="adv-inner">
+          <HwFields ram={ram} setRam={setRam} cores={cores} setCores={setCores} storage={storage} setStorage={setStorage} />
+        </div>
+      </div>
       {error && <div className="error-line" style={{ border: 'none', padding: '0 0 0 1px' }}>{error}</div>}
     </Modal>
   );

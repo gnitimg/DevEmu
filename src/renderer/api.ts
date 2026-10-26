@@ -34,6 +34,20 @@ export function prettyModel(deviceName?: string): string {
     .map((w) => (w.length <= 2 && /^\d/.test(w) ? w.toUpperCase() : w[0]!.toUpperCase() + w.slice(1)))
     .join(' ');
 }
+
+/** 系统镜像标签中文化（google_apis 等原始 tag 对普通用户是门槛） */
+export function tagLabel(tag: string): string {
+  const map: Record<string, string> = {
+    google_apis_playstore: '谷歌服务 · Play',
+    google_apis: '谷歌服务',
+    default: '标准版',
+    aosp: 'AOSP',
+    'android-desktop': '桌面',
+    'google-tv': 'Google TV',
+    'android-wear': '穿戴',
+  };
+  return map[tag] ?? tag;
+}
 export type OpResult = { ok: boolean; error?: string };
 
 interface RawApi {
@@ -144,6 +158,7 @@ export const api = {
   sdkUninstall: (pkg: string) => call<boolean>('sdkUninstall', pkg),
   downloadsList: () => call<{ active: DownloadItem[]; finished: DownloadItem[] }>('downloadsList'),
   downloadsCancel: (pkg: string) => call<boolean>('downloadsCancel', pkg),
+  downloadsRemove: (pkg: string, startedAt: number) => call<boolean>('downloadsRemove', pkg, startedAt),
   listProjects: () => call<ProjectMeta[]>('listProjects'),
   createProject: (name: string, note?: string) => call<ProjectMeta>('createProject', name, note),
   updateProject: (id: string, patch: { name?: string; note?: string }) => call<ProjectMeta | null>('updateProject', id, patch),

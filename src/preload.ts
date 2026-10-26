@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('devemu', {
   sdkUninstall: invoke('sdk:uninstall'),
   downloadsList: invoke('downloads:list'),
   downloadsCancel: invoke('downloads:cancel'),
+  downloadsRemove: invoke('downloads:remove'),
   onDownloadsChanged: (cb: (snap: unknown) => void) => {
     const listener = (_e: unknown, snap: unknown) => cb(snap);
     ipcRenderer.on('downloads:changed', listener);

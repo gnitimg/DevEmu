@@ -34,7 +34,7 @@ export function RunsPanel({ scope, refreshKey }: { scope: Scope; refreshKey: num
           <span className="spinner" />
         </div>
       ) : runs.length === 0 ? (
-        <div className="empty">在 APK 库点击「测试」后，结果会记录在这里</div>
+        <div className="empty">暂无记录</div>
       ) : (
         <table className="tbl">
           <thead>

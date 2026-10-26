@@ -25,7 +25,7 @@ export function DeviceDetail({
   const [avd, setAvd] = useState<AvdInfo | null>(null);
   const [hw, setHw] = useState<{ ramMb?: number; cores?: number; storageGb?: number } | null>(null);
   const [apps, setApps] = useState<ApkMeta[] | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [starting, setStarting] = useState<number | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [runsKey, setRunsKey] = useState(0);
@@ -55,22 +55,28 @@ export function DeviceDetail({
   useEffect(reload, [reload]);
 
   const run = emus.find((e) => e.state === 'device' && e.avdName === avdName);
+  const [, setTick] = useState(0);
 
+  // 启动中：每秒刷新让耗时可见；设备上线或超时后清除
   useEffect(() => {
-    if (!starting) return;
-    if (run) setStarting(false);
-    const t = setTimeout(() => setStarting(false), 240_000);
-    return () => clearTimeout(t);
-  }, [run, starting]);
+    if (starting === null) return;
+    if (run) setStarting(null);
+    const timer = setTimeout(() => setStarting(null), 240_000);
+    const tick = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(tick);
+    };
+  }, [run, starting === null]);
 
   async function launch() {
     setBusy('launch');
     setError('');
-    setStarting(true);
+    setStarting(Date.now());
     const r = await api.launchEmu(scope, avdName);
     if (!r.ok) {
       setError(r.error);
-      setStarting(false);
+      setStarting(null);
     }
     refreshEmus();
     setBusy('');
@@ -198,8 +204,8 @@ export function DeviceDetail({
               {busy === 'stop' ? '关闭中' : '关闭'}
             </button>
           ) : (
-            <button className="btn btn-primary" disabled={busy !== '' || starting} onClick={launch}>
-              {starting ? '启动中' : '启动'}
+            <button className="btn btn-primary" disabled={busy !== '' || starting !== null} onClick={launch}>
+              {starting !== null ? `启动中 ${Math.floor((Date.now() - starting) / 1000)}s` : '启动'}
             </button>
           )}
           <button className="btn btn-danger" disabled={busy !== '' || !!run} title={run ? '先关闭再删除' : ''} onClick={remove}>
@@ -248,8 +254,13 @@ export function DeviceDetail({
               <tr>
                 <th>状态</th>
                 <td>
-                  <span className={`dot${starting ? ' starting' : run ? ' on' : ''}`} />
-                  {starting ? '启动中' : run ? '运行中' : '已停止'}
+                  {starting ? (
+                    <span className="chip warn">启动中</span>
+                  ) : run ? (
+                    <span className="chip ok">运行中</span>
+                  ) : (
+                    <span className="chip idle">已停止</span>
+                  )}
                   {run && (
                     <span className="mono" style={{ color: 'var(--text-3)', marginLeft: 10 }}>
                       {run.serial}
