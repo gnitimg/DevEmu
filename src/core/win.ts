@@ -1,4 +1,4 @@
-import { run } from './exec.ts';
+import { run, stream } from './exec.ts';
 
 /** 按 AVD 名强杀 qemu 进程树（注册表丢失时的兜底关闭） */
 export async function killEmulatorProcess(avdName: string): Promise<void> {
@@ -13,8 +13,9 @@ export async function killEmulatorProcess(avdName: string): Promise<void> {
 /**
  * Windows：模拟器（Qt）会恢复上次窗口位置，可能落在屏幕之外。
  * 启动后按 AVD 名找到 qemu 窗口并移到指定位置一次；随后周期性复查，
- * 但只在窗口完全跑出虚拟屏幕时才拉回，其余时候只重申“禁止拉伸”样式，
- * 不干预用户手动移动后的位置。
+ * 只在窗口完全跑出虚拟屏幕时才拉回，不干预用户手动移动后的位置。
+ * 去掉 WS_THICKFRAME|WS_MAXIMIZEBOX：只允许移动，不允许拉伸——
+ * 无法做到零延迟的等比锁定（同步拦截需注入模拟器进程），按用户决策禁用缩放。
  */
 export function repositionEmulatorWindow(avdName: string, x: number, y: number): Promise<void> {
   // avdName 限定为 [\w.-]，可直接嵌入 WQL/正则
@@ -60,7 +61,7 @@ export function repositionEmulatorWindow(avdName: string, x: number, y: number):
       return new Promise((r) => setTimeout(r, delayMs)).then(() => waitWindow(tries - 1, delayMs));
     });
 
-  // 找到窗口前最多等 2 分钟（期间完成首次定位）；之后低频复查约 2 分钟，仅纠离屏与样式
+  // 找到窗口前最多等 2 分钟（期间完成首次定位）；之后低频复查约 2 分钟，仅纠离屏
   return waitWindow(24, 5000).then(() => {
     let reassert = 12;
     const tick = (): Promise<void> =>
