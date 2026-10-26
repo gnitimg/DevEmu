@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDevices, translateInstallError } from './adb.ts';
+import { parseDecorOverlays, parseDevices, translateInstallError } from './adb.ts';
 
 const DEVICES_OUTPUT = `List of devices attached
 emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1
@@ -20,6 +20,22 @@ test('parseDevices 解析状态', () => {
 test('parseDevices 空输出', () => {
   assert.deepEqual(parseDevices('List of devices attached\n\n'), []);
   assert.deepEqual(parseDevices('adb server is out of date'), []);
+});
+
+test('parseDecorOverlays 解析已启用的机型外观 overlay', () => {
+  const out = [
+    '[x] com.google.android.overlay.pixelconfigcommon',
+    '[ ] com.android.internal.emulation.pixel_8_pro',
+    '[x] com.android.internal.emulation.pixel_9_pro',
+    '[x] com.android.systemui.emulation.pixel_9_pro',
+    '[x] com.android.internal.display.cutout.emulation.corner',
+    '[] com.android.internal.emulation.pixel_3',
+  ].join('\r\n');
+  assert.deepEqual(parseDecorOverlays(out), [
+    'com.android.internal.emulation.pixel_9_pro',
+    'com.android.systemui.emulation.pixel_9_pro',
+  ]);
+  assert.deepEqual(parseDecorOverlays(''), []);
 });
 
 test('translateInstallError 常见错误转中文', () => {

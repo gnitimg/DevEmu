@@ -4,7 +4,8 @@ import net from 'node:net';
 import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
-import { repositionEmulatorWindow } from './win.ts';
+import { disableDeviceDecorations, waitBooted } from './adb.ts';
+import { repositionEmulatorWindow, startWindowGuard } from './win.ts';
 import type { Scope, SdkInfo } from './types.ts';
 
 export interface RunningEmu {
@@ -132,7 +133,12 @@ function startOnPort(
           const x = 96 + ((n - 1) % 6) * 48;
           const y = 96 + ((n - 1) % 6) * 36;
           void repositionEmulatorWindow(avdName, x, y).catch(() => undefined);
+          startWindowGuard(avdName);
         }
+        // 屏幕去圆角/刘海（Pixel 机型外观 overlay）；等系统就绪后执行，失败不影响使用
+        void waitBooted(sdk.adb, entry.serial, 300_000)
+          .then((ok) => (ok ? disableDeviceDecorations(sdk.adb, entry.serial) : undefined))
+          .catch(() => undefined);
         resolve(entry);
       }
     }, 3000);

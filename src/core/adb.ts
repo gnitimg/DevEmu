@@ -127,6 +127,25 @@ export async function uninstall(adb: string, serial: string, pkg: string): Promi
   return /Success/.test(res.stdout);
 }
 
+/** 从 `cmd overlay list` 输出解析已启用的机型外观 overlay（Pixel 圆角/刘海装饰的来源） */
+export function parseDecorOverlays(stdout: string): string[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((l) => l.match(/^\[x\]\s+(com\.android\.(?:internal|systemui)\.emulation\.\S+)$/)?.[1])
+    .filter((p): p is string => !!p);
+}
+
+/** 禁用机型外观 overlay，屏幕恢复为无黑角、无刘海胶囊的矩形。
+ *  开关持久化在 /data，但镜像更新或换机型可能重置，故每次启动重放 */
+export async function disableDeviceDecorations(adb: string, serial: string): Promise<void> {
+  const res = await run(adb, ['-s', serial, 'shell', 'cmd', 'overlay', 'list'], { timeoutMs: 15_000 });
+  for (const pkg of parseDecorOverlays(res.stdout)) {
+    await run(adb, ['-s', serial, 'shell', 'cmd', 'overlay', 'disable', '--user', '0', pkg], {
+      timeoutMs: 15_000,
+    }).catch(() => undefined);
+  }
+}
+
 /** 等待系统启动完成且包管理服务就绪（boot_completed 置 1 后 package 服务可能仍未发布） */
 export async function waitBooted(adb: string, serial: string, timeoutMs = 120_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
