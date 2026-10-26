@@ -33,6 +33,12 @@
 
 - 设备代理：启用后模拟器网络走 `http://127.0.0.1:<端口>`（默认 7890）
 
+**Agent 接入**
+
+- 内置本机控制桥（仅监听 127.0.0.1，Bearer 令牌鉴权），把在线虚拟设备的截图、点击、滑动、文本输入、按键、shell、界面控件树暴露为 HTTP API
+- 附带零依赖 MCP stdio 桥（`resources/agent-mcp.mjs`），ZCode / Codex CLI 等支持 MCP 的 AI 工具以 `node` 一行配置接入，即可像操作电脑一样自主操作虚拟 Android / HarmonyOS 设备
+- 设置 → Agent 接入：开关、端口、令牌管理，一键复制接入配置；详见 [docs/agent-bridge.md](docs/agent-bridge.md)
+
 **HarmonyOS（适配中）**
 
 - SDK 管理页右上角可切换 Android / HarmonyOS
@@ -83,8 +89,12 @@ src/
     throttle.ts    本地整形代理（令牌桶限速、CONNECT 隧道）
     net.ts         下载线路测速
     harmony.ts     HarmonyOS 环境探测（DevEco/SDK/hdc）与设备列表
+    agent.ts       Agent 控制桥：本机 HTTP 服务（鉴权、路由、桥生命周期）
+    agentOps.ts    控制桥设备操作实现（adb input/uiautomator、hdc uitest/snapshot）
     win.ts         窗口重定位/禁拉伸/兜底强杀（Win32）
   renderer/     React 界面（侧栏工作目录 + 各页面）
+resources/
+  agent-mcp.mjs   MCP stdio 桥（零依赖，落盘到数据目录供 `node` 启动）
 ```
 
 数据目录（默认 `%USERPROFILE%\DevEmu`，设置页可改）：

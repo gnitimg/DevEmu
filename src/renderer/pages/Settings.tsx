@@ -6,10 +6,11 @@ import { SdkPackages } from '../components/SdkPackages.tsx';
 import { Segmented } from '../components/Segmented.tsx';
 import { RoutePanel } from '../components/RoutePanel.tsx';
 import { Select } from '../components/Select.tsx';
+import { AgentPanel } from '../components/AgentPanel.tsx';
 import { About } from './About.tsx';
 import type { EnvStatus } from '../App.tsx';
 
-export type Section = 'storage' | 'sdk' | 'network' | 'download' | 'emulator' | 'about';
+export type Section = 'storage' | 'sdk' | 'network' | 'download' | 'emulator' | 'agent' | 'about';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'storage', label: '存储' },
@@ -17,6 +18,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'network', label: '网络与代理' },
   { id: 'download', label: '下载与限速' },
   { id: 'emulator', label: '模拟器' },
+  { id: 'agent', label: 'Agent 接入' },
   { id: 'about', label: '关于' },
 ];
 
@@ -328,6 +330,8 @@ export function Settings({
             </div>
           </div>
         )}
+
+        {section === 'agent' && <AgentPanel />}
 
         {section === 'about' && <About env={env} />}
 

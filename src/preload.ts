@@ -82,4 +82,7 @@ contextBridge.exposeInMainWorld('devemu', {
   uninstall: invoke('test:uninstall'),
   recordRun: invoke('run:record'),
   listRuns: invoke('run:list'),
+  agentStatus: invoke('agent:status'),
+  agentApply: invoke('agent:apply'),
+  agentRegenerateToken: invoke('agent:regenerateToken'),
 });

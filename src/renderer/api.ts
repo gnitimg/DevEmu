@@ -195,4 +195,18 @@ export const api = {
   recordRun: (scope: Scope, p: { avdName: string; serial: string; apkId?: string; result: string; note?: string }) =>
     call<RunRecord>('recordRun', scope, p),
   listRuns: (scope: Scope) => call<RunRecord[]>('listRuns', scope),
+  agentStatus: () => call<AgentStatus>('agentStatus'),
+  agentApply: (enabled: boolean, port?: number) => call<AgentStatus>('agentApply', { enabled, port }),
+  agentRegenerateToken: () => call<AgentStatus>('agentRegenerateToken'),
+};
+
+/** Agent 控制桥状态（设置页 Agent 接入分区） */
+export type AgentStatus = {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  token: string;
+  scriptPath: string;
+  snippet: string;
+  startError?: string;
 };

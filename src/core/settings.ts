@@ -44,6 +44,9 @@ export function loadSettings(dataRoot: string): Settings {
       harmonyDownloadRoute: parsed.harmonyDownloadRoute,
       maxDownloadKbps: parsed.maxDownloadKbps,
       parallelDownloads: parsed.parallelDownloads,
+      agentEnabled: parsed.agentEnabled,
+      agentPort: parsed.agentPort,
+      agentToken: parsed.agentToken,
     };
   } catch {
     return { dataRoot };

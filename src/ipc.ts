@@ -20,6 +20,18 @@ import { createProject, listProjects, updateProject, deleteProject } from './cor
 import { recordRun, listRuns } from './core/runs.ts';
 import { scopeDirs, scopeKey } from './core/env.ts';
 import { killEmulatorProcess } from './core/win.ts';
+import {
+  DEFAULT_AGENT_PORT,
+  agentBridgePort,
+  agentBridgeRunning,
+  agentScriptFile,
+  agentSnippet,
+  ensureAgentScript,
+  generateAgentToken,
+  startAgentBridge,
+  stopAgentBridge,
+} from './core/agent.ts';
+import { createAgentOps } from './core/agentOps.ts';
 import type { Scope } from './core/types.ts';
 
 function ok<T>(data: T) {
@@ -122,6 +134,46 @@ function parseScope(raw: unknown): Scope | null {
 function status() {
   const settings = loadAppSettings();
   return { settings, sdk: detectSdk(settings.sdkPath), java: detectJava(settings.javaPath) };
+}
+
+// ---------- Agent 控制桥 ----------
+
+const agentOps = createAgentOps();
+
+function agentStatus() {
+  const s = loadAppSettings();
+  const port = s.agentPort ?? DEFAULT_AGENT_PORT;
+  return {
+    enabled: s.agentEnabled === true,
+    running: agentBridgeRunning(),
+    port: agentBridgePort() ?? port,
+    token: s.agentToken ?? '',
+    scriptPath: agentScriptFile(s.dataRoot),
+    snippet: agentSnippet(s.dataRoot, port, s.agentToken ?? ''),
+  };
+}
+
+/** 按当前设置同步控制桥：落盘桥脚本、按需启停；返回启动失败原因（无则 undefined） */
+async function syncAgentBridge(): Promise<string | undefined> {
+  try {
+    const settings = loadAppSettings();
+    ensureAgentScript(settings.dataRoot, app.getAppPath());
+    if (!settings.agentEnabled) {
+      if (agentBridgeRunning()) await stopAgentBridge();
+      return undefined;
+    }
+    // 已在目标端口运行则不动，避免设置页自动保存打断进行中的 agent 会话
+    if (agentBridgeRunning() && agentBridgePort() === (settings.agentPort ?? DEFAULT_AGENT_PORT)) return undefined;
+    return await startAgentBridge(agentOps, {
+      token: settings.agentToken ?? generateAgentToken(),
+      port: settings.agentPort ?? DEFAULT_AGENT_PORT,
+    }).then(
+      () => undefined,
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    );
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 function adbAlias(sdk: NonNullable<ReturnType<typeof detectSdk>>): string {
@@ -264,6 +316,8 @@ export function registerIpc(): void {
     const routeOf = (v: unknown) => (v === 'proxy' || v === 'direct' ? v : undefined);
     const kbps = Number(s.maxDownloadKbps);
     const parallel = Number(s.parallelDownloads);
+    // agent 桥字段由 agent:apply 单独管理，普通设置保存不覆盖
+    const agent = loadAppSettings();
     saveAppSettings({
       dataRoot: s.dataRoot,
       sdkPath: s.sdkPath,
@@ -277,7 +331,12 @@ export function registerIpc(): void {
       maxDownloadKbps: Number.isFinite(kbps) && kbps >= 0 ? Math.round(kbps) : undefined,
       parallelDownloads:
         Number.isFinite(parallel) && parallel >= 1 && parallel <= 4 ? Math.round(parallel) : undefined,
+      agentEnabled: agent.agentEnabled,
+      agentPort: agent.agentPort,
+      agentToken: agent.agentToken,
     });
+    // 数据目录变化后桥脚本要重新落盘；已在目标端口运行则同步是空操作
+    void syncAgentBridge();
     return ok(loadAppSettings());
   });
 
@@ -687,4 +746,30 @@ export function registerIpc(): void {
     const dirs = scopeDirs(loadAppSettings().dataRoot, scope);
     return ok(listRuns(dirs.runsDir));
   });
+
+  handle('agent:status', () => ok(agentStatus()));
+
+  handle('agent:apply', async (raw: unknown) => {
+    const p = (raw ?? {}) as { enabled?: unknown; port?: unknown };
+    const cur = loadAppSettings();
+    const portN = Number(p.port);
+    const port = Number.isFinite(portN) && portN >= 1024 && portN <= 65535 ? Math.round(portN) : DEFAULT_AGENT_PORT;
+    saveAppSettings({
+      ...cur,
+      agentEnabled: p.enabled === true,
+      agentPort: port,
+      agentToken: cur.agentToken || generateAgentToken(),
+    });
+    const startError = await syncAgentBridge();
+    return ok({ ...agentStatus(), startError });
+  });
+
+  handle('agent:regenerateToken', async () => {
+    saveAppSettings({ ...loadAppSettings(), agentToken: generateAgentToken() });
+    const startError = await syncAgentBridge();
+    return ok({ ...agentStatus(), startError });
+  });
+
+  // 应用启动即按设置拉起控制桥（未启用时是空操作）
+  void syncAgentBridge();
 }
