@@ -173,9 +173,11 @@ export function VmPanel({
                           >
                             {isStarting ? '启动中' : '启动'}
                           </button>
-                          <button className="btn btn-sm" disabled={isStarting} onClick={() => setEditing(avd.name)}>
-                            配置
-                          </button>
+                          {scope.kind === 'project' && (
+                            <button className="btn btn-sm" disabled={isStarting} onClick={() => setEditing(avd.name)}>
+                              配置
+                            </button>
+                          )}
                         </>
                       )}
                       <button

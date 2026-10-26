@@ -404,8 +404,9 @@ textarea:focus {
   transition: background 0.12s, color 0.12s, padding 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* 选中态：左侧圆头指示条 */
-.side-item.active::before {
+/* 选中态：左侧圆头指示条（子项选中时父级仅保留指示条，不亮蓝底） */
+.side-item.active::before,
+.side-item.indicated::before {
   content: '';
   position: absolute;
   left: -8px;

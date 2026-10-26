@@ -218,6 +218,7 @@ export function App() {
             }
             label="项目"
             active={page === 'projects' && projectId === null}
+            indicated={(page === 'projects' && projectId !== null) || (page === 'device-detail' && deviceScope !== 'shared')}
             expanded={projectsOpen}
             hasChildren
             sideOpen={sideOpen}
@@ -260,6 +261,7 @@ export function App() {
             }
             label="设备池"
             active={page === 'devices'}
+            indicated={page === 'device-detail' && deviceScope === 'shared'}
             expanded={devicesOpen}
             hasChildren
             sideOpen={sideOpen}
@@ -376,6 +378,7 @@ function SideItem({
   icon,
   label,
   active,
+  indicated,
   expanded,
   hasChildren,
   sideOpen,
@@ -386,6 +389,8 @@ function SideItem({
   icon: React.ReactNode;
   label: string;
   active?: boolean;
+  /** 子项选中时父级仅保留左侧指示条，不亮蓝底 */
+  indicated?: boolean;
   expanded?: boolean;
   hasChildren?: boolean;
   sideOpen: boolean;
@@ -396,7 +401,7 @@ function SideItem({
   return (
     <div className={`side-group${active ? ' group-active' : ''}`}>
       <button
-        className={`side-item${active ? ' active' : ''}`}
+        className={`side-item${active ? ' active' : ''}${indicated ? ' indicated' : ''}`}
         onClick={onToggle}
         title={sideOpen ? label : label}
       >
