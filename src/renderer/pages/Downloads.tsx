@@ -128,13 +128,14 @@ export function Downloads() {
                 <button
                   className="btn btn-sm btn-danger dl-del"
                   disabled={removing !== ''}
+                  title={d.state === 'done' ? '卸载组件并删除记录' : '删除记录'}
                   onClick={async () => {
                     setRemoving(`${d.pkg}${d.startedAt}`);
                     await api.downloadsRemove(d.pkg, d.startedAt);
                     setRemoving('');
                   }}
                 >
-                  {removing === `${d.pkg}${d.startedAt}` ? '删除中' : '删除'}
+                  {removing === `${d.pkg}${d.startedAt}` ? (d.state === 'done' ? '卸载中' : '删除中') : d.state === 'done' ? '卸载' : '删除'}
                 </button>
               </div>
               <div className="dl-meta">

@@ -97,7 +97,7 @@ export function ApkPanel({
                       onClick={() => setPending(apk)}
                       title="选择设备安装"
                     >
-                      测试
+                      安装
                     </button>
                   </div>
                 </td>
@@ -245,7 +245,7 @@ function InstallModal({
             {busy === 'install' ? '安装中' : '仅安装'}
           </button>
           <button className="btn btn-primary" disabled={!selected || busy !== ''} onClick={() => run('install-launch')}>
-            {busy === 'install-launch' ? '测试中' : '安装并启动'}
+            {busy === 'install-launch' ? '安装并启动中' : '安装并启动'}
           </button>
         </div>
       </div>

@@ -10,13 +10,12 @@ import { AgentPanel } from '../components/AgentPanel.tsx';
 import { About } from './About.tsx';
 import type { EnvStatus } from '../App.tsx';
 
-export type Section = 'storage' | 'sdk' | 'network' | 'download' | 'emulator' | 'agent' | 'about';
+export type Section = 'storage' | 'sdk' | 'network' | 'emulator' | 'agent' | 'about';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'storage', label: '存储' },
   { id: 'sdk', label: 'SDK' },
-  { id: 'network', label: '网络与代理' },
-  { id: 'download', label: '下载与限速' },
+  { id: 'network', label: '网络与下载' },
   { id: 'emulator', label: '模拟器' },
   { id: 'agent', label: 'Agent 接入' },
   { id: 'about', label: '关于' },
@@ -242,74 +241,75 @@ export function Settings({
         )}
 
         {section === 'network' && (
-          <div className="section">
-            <div className="settings-row">
-              <span className="settings-row-label">设备网络代理</span>
-              <div className="proxy-row">
-                <label className="switch-wrap">
+          <>
+            <div className="section">
+              <div className="settings-row">
+                <span className="settings-row-label">设备网络代理</span>
+                <div className="proxy-row">
+                  <label className="switch-wrap">
+                    <input
+                      type="checkbox"
+                      checked={proxyEnabled}
+                      onChange={(e) => {
+                        dirty.current = true;
+                        setProxyEnabled(e.target.checked);
+                      }}
+                    />
+                    启用
+                  </label>
+                  <span className="proxy-addr mono">http://127.0.0.1:</span>
                   <input
-                    type="checkbox"
-                    checked={proxyEnabled}
+                    className="proxy-port"
+                    value={proxyPort}
                     onChange={(e) => {
                       dirty.current = true;
-                      setProxyEnabled(e.target.checked);
+                      setProxyPort(e.target.value.replace(/[^\d]/g, ''));
                     }}
+                    placeholder="7890"
+                    inputMode="numeric"
                   />
-                  启用
-                </label>
-                <span className="proxy-addr mono">http://127.0.0.1:</span>
-                <input
-                  className="proxy-port"
-                  value={proxyPort}
-                  onChange={(e) => {
-                    dirty.current = true;
-                    setProxyPort(e.target.value.replace(/[^\d]/g, ''));
-                  }}
-                  placeholder="7890"
-                  inputMode="numeric"
-                />
+                </div>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-label">最高下载速度</span>
+                <div style={{ width: 180 }}>
+                  <Select
+                    value={String(maxKbps)}
+                    options={SPEED_OPTIONS.map((o) => ({ value: String(o.kbps), label: o.label }))}
+                    onChange={(v) => mark(setMaxKbps)(Number(v))}
+                  />
+                </div>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-label">并行下载数</span>
+                <div style={{ width: 180 }}>
+                  <Select
+                    value={parallel}
+                    options={['1', '2', '3', '4'].map((n) => ({ value: n, label: n }))}
+                    onChange={(v) => mark(setParallel)(v)}
+                  />
+                </div>
               </div>
             </div>
-            <RoutePanel
-              system="android"
-              title="Android 下载线路"
-              value={androidRoute}
-              proxyPort={proxyPort}
-              onPick={mark(setAndroidRoute)}
-            />
-            <RoutePanel
-              system="harmonyos"
-              title="HarmonyOS 下载线路"
-              value={harmonyRoute}
-              proxyPort={proxyPort}
-              onPick={mark(setHarmonyRoute)}
-            />
-          </div>
-        )}
-
-        {section === 'download' && (
-          <div className="section">
-            <div className="settings-row">
-              <span className="settings-row-label">最高下载速度</span>
-              <div style={{ width: 180 }}>
-                <Select
-                  value={String(maxKbps)}
-                  options={SPEED_OPTIONS.map((o) => ({ value: String(o.kbps), label: o.label }))}
-                  onChange={(v) => mark(setMaxKbps)(Number(v))}
-                />
-              </div>
+            <div className="section">
+              <RoutePanel
+                system="android"
+                title="Android 下载线路"
+                value={androidRoute}
+                proxyPort={proxyPort}
+                onPick={mark(setAndroidRoute)}
+              />
             </div>
-            <div className="settings-row">
-              <span className="settings-row-label">并行下载数</span>
-              <div style={{ width: 180 }}>
-                <Select
-                  value={parallel}
-                  options={['1', '2', '3', '4'].map((n) => ({ value: n, label: n }))}
-                  onChange={(v) => mark(setParallel)(v)}
-                />
-              </div>
+            <div className="section">
+              <RoutePanel
+                system="harmonyos"
+                title="HarmonyOS 下载线路"
+                value={harmonyRoute}
+                proxyPort={proxyPort}
+                onPick={mark(setHarmonyRoute)}
+              />
             </div>
-          </div>
+          </>
         )}
 
         {section === 'emulator' && (

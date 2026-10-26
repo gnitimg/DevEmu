@@ -42,7 +42,11 @@ export function App() {
   const [sideOpen, setSideOpen] = useState(() => sessionStorage.getItem('de.sideOpen') !== '0');
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [devicesOpen, setDevicesOpen] = useState(true);
-  const [settingsSection, setSettingsSection] = useState(() => ss.get('de.settingsSection', 'storage'));
+  // 分区恢复时兼容旧值：'download' 已并入 'network'
+  const [settingsSection, setSettingsSection] = useState(() => {
+    const saved = ss.get('de.settingsSection', 'storage');
+    return saved === 'download' ? 'network' : saved;
+  });
   const [maximized, setMaximized] = useState(false);
   const [dlActive, setDlActive] = useState<DownloadItem[]>([]);
 

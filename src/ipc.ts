@@ -469,7 +469,15 @@ export function registerIpc(): void {
 
   handle('downloads:list', () => ok(listDownloads()));
   handle('downloads:cancel', (pkg: string) => ok(cancelDownload(pkg)));
-  handle('downloads:remove', (pkg: string, startedAt: number) => ok(removeFinished(pkg, Number(startedAt))));
+  // 删除历史记录：完成安装的 SDK 包同步执行卸载（与 SDK 管理页"卸载"同语义），
+  // 失败/取消的记录或卸载失败时仅删记录
+  handle('downloads:remove', async (pkg: string, startedAt: number) => {
+    if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
+    const { settings, java } = status();
+    const res = await sdkRun(settings, java, ['--uninstall', pkg]);
+    const uninstalled = !!res && res.code === 0;
+    return ok(removeFinished(pkg, Number(startedAt)) || uninstalled);
+  });
 
   handle('sdk:uninstall', async (pkg: string, progress?: ProgressFn) => {
     const { settings, java } = status();

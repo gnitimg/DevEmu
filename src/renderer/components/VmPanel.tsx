@@ -24,17 +24,9 @@ export function VmPanel({
   const [avds, setAvds] = useState<AvdInfo[] | null>(null);
   const [error, setError] = useState('');
   const [busyName, setBusyName] = useState('');
-  const [starting, setStarting] = useState<Map<string, number>>(new Map());
+  const [starting, setStarting] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const [, setTick] = useState(0);
-
-  // 有任务启动中时每秒刷新，让「启动中 45s」的耗时可见，缓解等待焦虑
-  useEffect(() => {
-    if (starting.size === 0) return;
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [starting.size > 0]);
 
   const reload = useCallback(() => {
     api.listAvds(scope).then((r) => {
@@ -52,26 +44,21 @@ export function VmPanel({
   useEffect(() => {
     if (starting.size === 0) return;
     const online = new Set(emus.filter((e) => e.state === 'device' && e.avdName).map((e) => e.avdName!));
-    const next = new Map([...starting].filter(([n]) => !online.has(n)));
+    const next = new Set([...starting].filter((n) => !online.has(n)));
     if (next.size !== starting.size) setStarting(next);
-    const timer = setTimeout(() => setStarting(new Map()), 240_000);
+    const timer = setTimeout(() => setStarting(new Set()), 240_000);
     return () => clearTimeout(timer);
   }, [emus, starting]);
-
-  const elapsedOf = (name: string): number => {
-    const ts = starting.get(name);
-    return ts === undefined ? 0 : Math.floor((Date.now() - ts) / 1000);
-  };
 
   async function launch(name: string) {
     setBusyName(name);
     setError('');
-    setStarting((s) => new Map(s).set(name, Date.now()));
+    setStarting((s) => new Set(s).add(name));
     const r = await api.launchEmu(scope, name);
     if (!r.ok) {
       setError(r.error);
       setStarting((s) => {
-        const n = new Map(s);
+        const n = new Set(s);
         n.delete(name);
         return n;
       });
@@ -140,7 +127,7 @@ export function VmPanel({
                 <tr key={avd.name}>
                   <td>
                     {isStarting ? (
-                      <span className="chip warn">启动中 {elapsedOf(avd.name)}s</span>
+                      <span className="chip warn">启动中</span>
                     ) : run ? (
                       <span className="chip ok">运行中</span>
                     ) : (
