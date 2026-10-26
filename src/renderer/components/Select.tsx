@@ -29,18 +29,32 @@ export function Select<T extends string>({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      // 弹出层挂在 fixed 定位下不在 rootRef 内，点击弹出层自身不能关
+      const t = e.target as Node;
+      if (rootRef.current && !rootRef.current.contains(t) && !listRef.current?.contains(t)) setOpen(false);
     };
-    const onScroll = () => setOpen(false);
+    // 滚动/缩放时弹出层跟随锚点重定位（页面可继续滚动，不再自动关闭）
+    const reposition = () => {
+      const btn = btnRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight) {
+        setOpen(false); // 按钮滚出视口才关闭
+        return;
+      }
+      const popH = Math.min(264, options.length * 31 + 10);
+      const up = r.bottom + popH > window.innerHeight - 8 && r.top - popH > 8;
+      setPos({ left: r.left, top: up ? r.top - popH - 5 : r.bottom + 5, width: r.width });
+    };
     document.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
     return () => {
       document.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
     };
-  }, [open]);
+  }, [open, options.length]);
 
   useEffect(() => {
     if (!open || !listRef.current) return;
