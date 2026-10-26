@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {
   DEFAULT_AGENT_PORT,
+  agentBridgeInfo,
   agentSnippet,
   agentScriptFile,
   ensureAgentScript,
@@ -186,4 +187,21 @@ test('虚拟机启停：作用域校验', async () => {
 
   assert.equal((await auth('POST', '/api/emulator/launch', { avdName: 'x', scope: '../etc' })).status, 400);
   assert.equal((await auth('POST', '/api/emulator/launch', { avdName: 'bad name!' })).status, 400);
+});
+
+test('桥记录启动端口与令牌；换令牌重启后生效', async () => {
+  // 回归：重新生成令牌后运行中的桥必须带着新令牌重启，否则外部客户端全部 401
+  const info1 = agentBridgeInfo();
+  assert.equal(info1.running, true);
+
+  await stopAgentBridge();
+  assert.deepEqual(agentBridgeInfo(), { running: false });
+
+  const port2 = await startAgentBridge(stub, { token: 'rotated-token', port: 0 });
+  assert.deepEqual(agentBridgeInfo(), { running: true, port: port2, token: 'rotated-token' });
+  const res = await fetch(`http://127.0.0.1:${port2}/api/devices`, { headers: { authorization: 'Bearer rotated-token' } });
+  assert.equal(res.status, 200);
+
+  await stopAgentBridge();
+  await startAgentBridge(stub, { token: TOKEN, port: 0 });
 });

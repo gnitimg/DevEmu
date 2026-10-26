@@ -297,15 +297,16 @@ async function handleDeviceAction(
 
 // ---------- 桥生命周期（进程内单例） ----------
 
-let bridge: { server: http.Server } | null = null;
+let bridge: { server: http.Server; token: string; port: number } | null = null;
 
 export function agentBridgeRunning(): boolean {
   return bridge !== null;
 }
 
-export function agentBridgePort(): number | undefined {
-  const addr = bridge ? (bridge.server.address() as AddressInfo | null) : null;
-  return addr ? addr.port : undefined;
+/** 运行中桥的实际端口与令牌（令牌变化后判断是否需要重启用） */
+export function agentBridgeInfo(): { running: boolean; port?: number; token?: string } {
+  if (!bridge) return { running: false };
+  return { running: true, port: bridge.port, token: bridge.token };
 }
 
 /** 启动桥（已在运行则先停）；返回实际监听端口 */
@@ -323,7 +324,7 @@ export async function startAgentBridge(
       resolve((server.address() as AddressInfo).port);
     });
   });
-  bridge = { server };
+  bridge = { server, token: opts.token, port };
   return port;
 }
 

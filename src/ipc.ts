@@ -22,7 +22,7 @@ import { scopeDirs, scopeKey } from './core/env.ts';
 import { killEmulatorProcess } from './core/win.ts';
 import {
   DEFAULT_AGENT_PORT,
-  agentBridgePort,
+  agentBridgeInfo,
   agentBridgeRunning,
   agentScriptFile,
   agentSnippet,
@@ -143,10 +143,11 @@ const agentOps = createAgentOps();
 function agentStatus() {
   const s = loadAppSettings();
   const port = s.agentPort ?? DEFAULT_AGENT_PORT;
+  const info = agentBridgeInfo();
   return {
     enabled: s.agentEnabled === true,
-    running: agentBridgeRunning(),
-    port: agentBridgePort() ?? port,
+    running: info.running,
+    port: info.port ?? port,
     token: s.agentToken ?? '',
     scriptPath: agentScriptFile(s.dataRoot),
     snippet: agentSnippet(s.dataRoot, port, s.agentToken ?? ''),
@@ -162,12 +163,17 @@ async function syncAgentBridge(): Promise<string | undefined> {
       if (agentBridgeRunning()) await stopAgentBridge();
       return undefined;
     }
-    // 已在目标端口运行则不动，避免设置页自动保存打断进行中的 agent 会话
-    if (agentBridgeRunning() && agentBridgePort() === (settings.agentPort ?? DEFAULT_AGENT_PORT)) return undefined;
-    return await startAgentBridge(agentOps, {
-      token: settings.agentToken ?? generateAgentToken(),
-      port: settings.agentPort ?? DEFAULT_AGENT_PORT,
-    }).then(
+    let token = settings.agentToken;
+    if (!token) {
+      // 无令牌时落盘一枚，保证下方比较与外部接入拿到的是同一个值
+      token = generateAgentToken();
+      saveAppSettings({ ...settings, agentToken: token });
+    }
+    const port = settings.agentPort ?? DEFAULT_AGENT_PORT;
+    // 端口与令牌都一致才保持不动，避免设置页自动保存打断进行中的 agent 会话
+    const info = agentBridgeInfo();
+    if (info.running && info.port === port && info.token === token) return undefined;
+    return await startAgentBridge(agentOps, { token, port }).then(
       () => undefined,
       (err: unknown) => (err instanceof Error ? err.message : String(err)),
     );
