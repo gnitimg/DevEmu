@@ -217,7 +217,7 @@ export function App() {
               <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 2h4.5A1.5 1.5 0 0 1 14 6.5v6A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-8Z" />
             }
             label="项目"
-            active={page === 'projects'}
+            active={page === 'projects' && projectId === null}
             expanded={projectsOpen}
             hasChildren
             sideOpen={sideOpen}
@@ -235,7 +235,11 @@ export function App() {
             {projects.map((p) => (
               <button
                 key={p.id}
-                className={`side-child${page === 'projects' && projectId === p.id ? ' active' : ''}`}
+                className={`side-child${
+                  (page === 'projects' && projectId === p.id) || (page === 'device-detail' && deviceScope === p.id)
+                    ? ' active'
+                    : ''
+                }`}
                 onClick={() => {
                   setPage('projects');
                   setProjectId(p.id);
@@ -255,7 +259,7 @@ export function App() {
               </>
             }
             label="设备池"
-            active={page === 'devices' || page === 'device-detail'}
+            active={page === 'devices'}
             expanded={devicesOpen}
             hasChildren
             sideOpen={sideOpen}
@@ -274,7 +278,9 @@ export function App() {
             {sharedAvds.map((a) => (
               <button
                 key={a.name}
-                className={`side-child${page === 'device-detail' && deviceName === a.name ? ' active' : ''}`}
+                className={`side-child${
+                  page === 'device-detail' && deviceScope === 'shared' && deviceName === a.name ? ' active' : ''
+                }`}
                 onClick={() => openDevice(a.name, 'shared')}
                 title={a.name}
               >

@@ -1252,8 +1252,8 @@ table.tbl {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 左右与底部边距一致（10px），顶距收窄使整体略微上移 */
-  padding: 4px 10px 10px;
+  /* 四边距离一致（用户要求：左上下一致） */
+  padding: 10px;
   border-top: 1px solid var(--border);
 }
 
