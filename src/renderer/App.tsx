@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onHuaweiChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -49,6 +49,8 @@ export function App() {
   });
   const [maximized, setMaximized] = useState(false);
   const [dlActive, setDlActive] = useState<DownloadItem[]>([]);
+  // null 表示尚未查完登录状态，避免闪卡片
+  const [huaweiLogin, setHuaweiLogin] = useState<boolean | null>(null);
 
   useEffect(() => {
     ss.set('de.page', page);
@@ -66,6 +68,17 @@ export function App() {
       if (r.ok) setMaximized(r.data);
     });
     return onWinMaximized(setMaximized);
+  }, []);
+
+  // 华为账号登录状态：侧栏提醒卡片跟随（登录窗口里登录成功后自动消失）
+  useEffect(() => {
+    api
+      .huaweiState()
+      .then((r) => {
+        if (r.ok) setHuaweiLogin(r.data.loggedIn);
+      })
+      .catch(() => setHuaweiLogin(false));
+    return onHuaweiChanged(setHuaweiLogin);
   }, []);
 
   // 侧栏胶囊总进度：所有进行中任务（含排队）已下载 / 总大小
@@ -296,6 +309,30 @@ export function App() {
             {sharedAvds.length === 0 && <div className="side-child side-child-empty">暂无设备</div>}
           </SideItem>
           </div>
+          {huaweiLogin === false && (
+            <div className="side-notice">
+              <div className="side-notice-head">
+                <svg
+                  className="side-notice-icon"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M8 1.8 14.8 13.8H1.2L8 1.8Z" />
+                  <path d="M8 6.4v3.2" />
+                  <path d="M8 12.1h.01" />
+                </svg>
+                <span>需要注意</span>
+              </div>
+              <p className="side-notice-text">如果要使用 HarmonyOS SDK 进行开发，你必须登录你的华为账号</p>
+              <button className="side-notice-link" onClick={() => void api.huaweiLogin()}>
+                点击跳转登录 ›
+              </button>
+            </div>
+          )}
           <div className="side-footer">
             <button
               className={`side-dl${page === 'downloads' ? ' on' : ''}${dlActive.length > 0 ? ' dl-running' : ''}`}

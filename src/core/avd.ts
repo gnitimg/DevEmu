@@ -167,7 +167,12 @@ export async function createAvd(
     return { ok: false, error: (res.stderr || res.stdout || '创建失败').trim().split(/\r?\n/).pop() };
   }
   // avdmanager 默认 hw.gpu.enabled=no，Windows 上软件渲染会让启动极慢，强制改回宿主 GPU
-  patchAvdConfig(dirs.avdHome, name, { 'hw.gpu.enabled': 'yes', 'hw.gpu.mode': 'auto' });
+  // 手机机型模板默认 hw.keyboard=no，宿主键盘不会转发进系统，测试输入全靠软键盘；统一打开
+  patchAvdConfig(dirs.avdHome, name, {
+    'hw.gpu.enabled': 'yes',
+    'hw.gpu.mode': 'auto',
+    'hw.keyboard': 'yes',
+  });
   // 用户自定义硬件配置；留空项保持 avdmanager 的机型默认值（即推荐配置）
   const patch = hardwarePatch(hw ?? {});
   if (Object.keys(patch).length > 0) patchAvdConfig(dirs.avdHome, name, patch);

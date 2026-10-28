@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, onDownloadsChanged, type DownloadItem, type HarmonyComponent, type SdkPkg } from '../api.ts';
+import { api, onDownloadsChanged, onHuaweiChanged, type DownloadItem, type HarmonyComponent, type SdkPkg } from '../api.ts';
 import { Segmented } from './Segmented.tsx';
 import { flyToDownloads } from './Fly.tsx';
 import { toast } from './Toast.tsx';
@@ -8,7 +8,19 @@ import type { EnvStatus } from '../App.tsx';
 type System = 'android' | 'harmonyos';
 
 /** SDK 组件管理（内联于设置 SDK 分区）：右上角 Android/HarmonyOS 切换，两侧结构一致 */
-export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChanged: () => void }) {
+export function SdkPackages({
+  env,
+  onChanged,
+  onPickFolder,
+  onLoginHuawei,
+}: {
+  env: EnvStatus | null;
+  onChanged: () => void;
+  /** 未检测到 HarmonyOS SDK 时空态里的「选择已有文件夹」 */
+  onPickFolder?: () => void;
+  /** 未检测到 HarmonyOS SDK 时空态里的「登录华为账号下载」 */
+  onLoginHuawei?: () => void;
+}) {
   const [system, setSystem] = useState<System>('android');
   const [tab, setTab] = useState<'installed' | 'available'>('installed');
   const [installed, setInstalled] = useState<SdkPkg[] | null>(null);
@@ -20,6 +32,18 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
 
   // 进行中的下载任务（按包名索引），驱动安装按钮状态
   const [dl, setDl] = useState<Record<string, DownloadItem>>({});
+  // 华为账号登录态：null 表示查询中；驱动空态按钮文案（登录 vs 打开下载中心）
+  const [huaweiIn, setHuaweiIn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api
+      .huaweiState()
+      .then((r) => {
+        if (r.ok) setHuaweiIn(r.data.loggedIn);
+      })
+      .catch(() => setHuaweiIn(false));
+    return onHuaweiChanged(setHuaweiIn);
+  }, []);
 
   const harmonyComponents: HarmonyComponent[] = env?.harmony?.components ?? [];
 
@@ -142,7 +166,32 @@ export function SdkPackages({ env, onChanged }: { env: EnvStatus | null; onChang
           spellCheck={false}
         />
         <div className="sdk-list">
-          {!env?.harmony && <div className="empty">未检测到 HarmonyOS SDK</div>}
+          {!env?.harmony && (
+            <div className="empty">
+              未检测到 HarmonyOS SDK
+              <div className="empty-actions">
+                {onPickFolder && (
+                  <button className="btn btn-sm" onClick={onPickFolder}>
+                    选择已有文件夹
+                  </button>
+                )}
+                {onLoginHuawei &&
+                  (huaweiIn === false ? (
+                    <button className="btn btn-sm btn-primary" onClick={onLoginHuawei}>
+                      登录华为账号下载
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-sm btn-primary"
+                      title={huaweiIn === null ? '正在查询登录状态' : '已登录华为账号，打开下载中心下载命令行工具'}
+                      onClick={onLoginHuawei}
+                    >
+                      {huaweiIn === null ? '查询登录状态…' : '打开下载中心'}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
           {env?.harmony && tab === 'installed' && harmonyComponents.length === 0 && <div className="empty">没有检测到组件</div>}
           {env?.harmony && tab === 'available' && <div className="empty">HarmonyOS SDK 组件经 DevEco Studio 下载</div>}
           {env?.harmony &&

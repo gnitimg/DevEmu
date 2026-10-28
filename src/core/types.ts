@@ -1,6 +1,9 @@
 /** 作用域：项目隔离 或 设备池公共 */
 export type Scope = { kind: 'project'; projectId: string } | { kind: 'shared' };
 
+/** 虚拟机调用相机时的画面来源 */
+export type CameraMode = 'emulated' | 'webcam' | 'screen';
+
 export interface Settings {
   dataRoot: string;
   sdkPath?: string;
@@ -9,6 +12,12 @@ export interface Settings {
   harmonySdkPath?: string;
   /** 模拟器图形后端：angle_indirect / swiftshader_indirect / host */
   gpuMode?: string;
+  /** 相机画面来源（仅 Android 虚拟机），缺省 emulated */
+  cameraMode?: CameraMode;
+  /** cameraMode=webcam 时使用的摄像头（webcam0/webcam1...），缺省 webcam0 */
+  webcam?: string;
+  /** 模拟器操作中心（屏幕右侧药丸工具条），默认启用 */
+  pillEnabled?: boolean;
   /** 设备网络代理 */
   proxyEnabled?: boolean;
   proxyPort?: number;

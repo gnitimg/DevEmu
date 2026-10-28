@@ -1,8 +1,7 @@
-# Android SDK 条款（原文）
+# Android Software Development Kit License Agreement
 
-本文件为 Google《Android Software Development Kit License Agreement》原文存档。DevEmu 运行时调用的 Android SDK（emulator、adb、aapt、sdkmanager 等）由用户自行安装，其使用受本协议约束。
-
-来源：developer.android.com/studio/terms（版本日期：April 28, 2026）。
+> Version: April 28, 2026
+>
 
 ## Terms and conditions
 

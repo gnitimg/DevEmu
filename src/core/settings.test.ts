@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { loadSettings, saveSettings, ensureDataDirs, settingsPath } from './settings.ts';
+import {
+  loadSettings,
+  saveSettings,
+  ensureDataDirs,
+  settingsPath,
+} from './settings.ts';
 
 function tmpRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-test-'));
@@ -19,6 +24,15 @@ test('settings 往返保存加载', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('settings cameraMode 往返保存加载', () => {
+  const root = tmpRoot();
+  saveSettings({ dataRoot: root, cameraMode: 'screen' });
+  assert.equal(loadSettings(root).cameraMode, 'screen');
+  saveSettings({ dataRoot: root, cameraMode: 'webcam' });
+  assert.equal(loadSettings(root).cameraMode, 'webcam');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('settings 损坏时回退默认', () => {
   const root = tmpRoot();
   fs.writeFileSync(settingsPath(root), '{broken json', 'utf8');
@@ -30,7 +44,11 @@ test('settings 损坏时回退默认', () => {
 test('ensureDataDirs 建齐目录结构', () => {
   const root = tmpRoot();
   ensureDataDirs(root);
-  for (const sub of ['projects', path.join('devices', 'avd'), path.join('devices', 'apps')]) {
+  for (const sub of [
+    'projects',
+    path.join('devices', 'avd'),
+    path.join('devices', 'apps'),
+  ]) {
     assert.ok(fs.existsSync(path.join(root, sub)), sub);
   }
   fs.rmSync(root, { recursive: true, force: true });

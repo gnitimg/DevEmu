@@ -382,10 +382,6 @@ textarea:focus {
   padding: 8px 8px 0;
 }
 
-.side-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-
 .sidebar.collapsed {
   width: var(--side-w-collapsed);
 }
@@ -840,6 +836,14 @@ table.tbl {
   text-align: center;
   color: var(--text-2);
   font-size: 12.5px;
+}
+
+/* 空态下的操作入口（如未检测到 HarmonyOS SDK 的选择文件夹/登录） */
+.empty-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 10px;
 }
 
 .empty .btn {
@@ -2076,22 +2080,15 @@ table.tbl {
   color: var(--danger);
 }
 
-/* ---------- 滚动条 ---------- */
+/* ---------- 滚动条：全局隐藏（保留滚轮与拖拽滚动） ---------- */
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 0;
+  height: 0;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 5px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
+* {
+  scrollbar-width: none;
 }
 
 /* ---------- Agent 接入 ---------- */
@@ -2177,4 +2174,49 @@ table.tbl {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ---------- 侧栏提醒卡片（华为账号登录等） ---------- */
+
+.side-notice {
+  flex: none;
+  margin: 8px;
+  padding: 10px 12px;
+  background: var(--accent-weak);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.side-notice-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.side-notice-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.side-notice-text {
+  margin: 0 0 6px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.side-notice-link {
+  color: var(--accent);
+}
+
+.side-notice-link:hover {
+  text-decoration: underline;
+}
+
+.sidebar.collapsed .side-notice {
+  display: none;
+}
+
 

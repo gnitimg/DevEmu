@@ -4,9 +4,21 @@ import net from 'node:net';
 import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
-import { disableDeviceDecorations, waitBooted } from './adb.ts';
-import { repositionEmulatorWindow, startWindowGuard } from './win.ts';
-import type { Scope, SdkInfo } from './types.ts';
+import { loadAppSettings } from './settings.ts';
+import { cameraArgs } from './camera.ts';
+import { stopLocation } from './location.ts';
+import {
+  applyPortalProbes,
+  disableDeviceDecorations,
+  startDecorWatch,
+  waitBooted,
+} from './adb.ts';
+import {
+  getShellGeometry,
+  repositionEmulatorWindow,
+  startWindowGuard,
+} from './win.ts';
+import type { CameraMode, Scope, SdkInfo } from './types.ts';
 
 export interface RunningEmu {
   avdName: string;
@@ -24,7 +36,10 @@ export function listRunning(): RunningEmu[] {
   return [...running.values()];
 }
 
-export function findRunning(scopeKey: string, avdName: string): RunningEmu | undefined {
+export function findRunning(
+  scopeKey: string,
+  avdName: string,
+): RunningEmu | undefined {
   return running.get(`${avdName}@${scopeKey}`);
 }
 
@@ -53,6 +68,20 @@ export interface LaunchOptions {
   noSnapshotLoad?: boolean;
   /** 设备网络代理，如 http://127.0.0.1:7890 */
   httpProxy?: string;
+  /** 相机画面来源（Android 虚拟机），缺省 emulated */
+  camera?: CameraMode;
+  /** camera=webcam 时使用的摄像头 id（webcam0/webcam1...），缺省 webcam0 */
+  webcam?: string;
+}
+
+function pidAlive(pid: number | undefined): boolean {
+  if (pid === undefined) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 启动模拟器；3 秒内退出视为启动失败并翻译错误 */
@@ -64,15 +93,23 @@ export function launchEmulator(
   opts: LaunchOptions = {},
 ): Promise<RunningEmu> {
   const dirs = scopeDirs(dataRoot, scope);
-  const sKey = scope.kind === 'shared' ? 'shared' : `project:${scope.projectId}`;
-  if (running.has(`${avdName}@${sKey}`)) {
+  const sKey =
+    scope.kind === 'shared' ? 'shared' : `project:${scope.projectId}`;
+  const key = `${avdName}@${sKey}`;
+  const prev = running.get(key);
+  if (prev && pidAlive(prev.pid)) {
     return Promise.reject(new Error('该虚拟机已在运行'));
   }
-  return pickPort().then((port) => startOnPort(sdk, dirs, scope, sKey, avdName, port, opts));
+  // 注册表残留（qemu 已退出但 exit 未清理）：清掉放行重新启动
+  running.delete(key);
+  return pickPort().then((port) =>
+    startOnPort(sdk, dataRoot, dirs, scope, sKey, avdName, port, opts),
+  );
 }
 
-function startOnPort(
+async function startOnPort(
   sdk: SdkInfo,
+  dataRoot: string,
   dirs: ReturnType<typeof scopeDirs>,
   scope: Scope,
   sKey: string,
@@ -82,11 +119,34 @@ function startOnPort(
 ): Promise<RunningEmu> {
   void scope;
   // 运行期提速参数；硬件（内存/核数）以各虚拟机 config.ini 为准，不再命令行覆盖
-  const args = ['-avd', avdName, '-port', String(port), '-no-boot-anim', '-netdelay', 'none', '-netspeed', 'full'];
-  const gpu = opts.gpu ?? (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
+  const args = [
+    '-avd',
+    avdName,
+    '-port',
+    String(port),
+    '-no-boot-anim',
+    '-netdelay',
+    'none',
+    '-netspeed',
+    'full',
+  ];
+  let grpcPort = port + 3000;
+  while (!(await portFree(grpcPort))) grpcPort++;
+  args.push('-grpc', String(grpcPort), '-grpc-use-token');
+  const gpu =
+    opts.gpu ??
+    (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
   if (gpu) args.push('-gpu', gpu);
   if (opts.httpProxy) args.push('-http-proxy', opts.httpProxy);
   if (opts.noSnapshotLoad) args.push('-no-snapshot-load');
+  // 相机来源：屏幕模式先启动截屏馈送，等首帧落盘再拉起模拟器（避免相机源读到空文件回退默认相机）
+  if (opts.camera === 'screen') {
+    const { startScreenFeed, screenFeedReady } = await import('./camera.ts');
+    args.push(...cameraArgs('screen', startScreenFeed(dataRoot)));
+    await screenFeedReady();
+  } else {
+    args.push(...cameraArgs(opts.camera, '', opts.webcam));
+  }
   const child = spawn(sdk.emulator, args, {
     env: { ...process.env, ...scopeEnv(dirs) },
     cwd: path.dirname(sdk.emulator),
@@ -109,8 +169,26 @@ function startOnPort(
       child,
     };
     let settled = false;
+    // 屏幕相机馈送随模拟器退出/启动失败而释放；exit 与 error 可能双发，只释放一次
+    let feedHeld = opts.camera === 'screen';
+    const releaseFeed = () => {
+      if (!feedHeld) return;
+      feedHeld = false;
+      void import('./camera.ts')
+        .then((m) => m.stopScreenFeed())
+        .catch(() => undefined);
+    };
     const onExit = () => {
       running.delete(`${avdName}@${sKey}`);
+      // 药丸窗口随模拟器一起关闭（electron 未加载时静默跳过）
+      stopLocation(entry.serial);
+      void import('./shell.ts')
+        .then((m) => {
+          m.closePill(entry.serial);
+          m.closeLocationPanel(entry.serial);
+        })
+        .catch(() => undefined);
+      releaseFeed();
       if (!settled) {
         settled = true;
         reject(new Error(translateEmulatorError(stderrTail)));
@@ -118,6 +196,7 @@ function startOnPort(
     };
     child.on('exit', onExit);
     child.on('error', (err) => {
+      releaseFeed();
       if (!settled) {
         settled = true;
         reject(err);
@@ -133,11 +212,29 @@ function startOnPort(
           const x = 96 + ((n - 1) % 6) * 48;
           const y = 96 + ((n - 1) % 6) * 36;
           void repositionEmulatorWindow(avdName, x, y).catch(() => undefined);
-          startWindowGuard(avdName);
+          startWindowGuard(avdName, entry.serial);
         }
-        // 屏幕去圆角/刘海（Pixel 机型外观 overlay）；等系统就绪后执行，失败不影响使用
+        // 开机后就绪链路：去圆角/刘海 overlay（后台监视防翻回）→ 联网验证探测源修正 → 药丸窗口（可在设置关闭）
         void waitBooted(sdk.adb, entry.serial, 300_000)
-          .then((ok) => (ok ? disableDeviceDecorations(sdk.adb, entry.serial) : undefined))
+          .then(async (ok) => {
+            if (!ok) return;
+            await disableDeviceDecorations(sdk.adb, entry.serial);
+            startDecorWatch(sdk.adb, entry.serial);
+            await applyPortalProbes(sdk.adb, entry.serial);
+            if (process.platform !== 'win32') return;
+            if (loadAppSettings().pillEnabled === false) return;
+            const geom = await getShellGeometry(avdName);
+            if (!geom) return;
+            const { openPill } = await import('./shell.ts');
+            await openPill({
+              serial: entry.serial,
+              avdName,
+              x: geom.x,
+              y: geom.y,
+              screenW: geom.screenW,
+              screenH: geom.screenH,
+            });
+          })
           .catch(() => undefined);
         resolve(entry);
       }
@@ -146,9 +243,14 @@ function startOnPort(
 }
 
 /** 关闭（强制）：2.5 秒优雅期后强杀进程树 */
-export async function stopEmulator(sdk: SdkInfo, entry: RunningEmu): Promise<boolean> {
+export async function stopEmulator(
+  sdk: SdkInfo,
+  entry: RunningEmu,
+): Promise<boolean> {
   try {
-    await run(sdk.adb, ['-s', entry.serial, 'emu', 'kill'], { timeoutMs: 8000 });
+    await run(sdk.adb, ['-s', entry.serial, 'emu', 'kill'], {
+      timeoutMs: 8000,
+    });
   } catch {
     // adb 不通就直接杀进程
   }
@@ -156,7 +258,9 @@ export async function stopEmulator(sdk: SdkInfo, entry: RunningEmu): Promise<boo
   if (!running.has(`${entry.avdName}@${entry.scopeKey}`)) return true;
   if (entry.pid !== undefined) {
     if (process.platform === 'win32') {
-      await run('taskkill.exe', ['/PID', String(entry.pid), '/T', '/F'], { timeoutMs: 15_000 }).catch(() => undefined);
+      await run('taskkill.exe', ['/PID', String(entry.pid), '/T', '/F'], {
+        timeoutMs: 15_000,
+      }).catch(() => undefined);
     } else {
       entry.child.kill('SIGKILL');
     }

@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { api, ENV_LABELS, type EnvKind } from '../api.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  api,
+  ENV_LABELS,
+  type CameraMode,
+  type EnvKind,
+  type StorageInfo,
+} from '../api.ts';
 import { Modal } from '../components/Modal.tsx';
 import { toast } from '../components/Toast.tsx';
 import { SdkPackages } from '../components/SdkPackages.tsx';
@@ -10,7 +16,13 @@ import { AgentPanel } from '../components/AgentPanel.tsx';
 import { About } from './About.tsx';
 import type { EnvStatus } from '../App.tsx';
 
-export type Section = 'storage' | 'sdk' | 'network' | 'emulator' | 'agent' | 'about';
+export type Section =
+  | 'storage'
+  | 'sdk'
+  | 'network'
+  | 'emulator'
+  | 'agent'
+  | 'about';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'storage', label: '存储' },
@@ -32,6 +44,26 @@ const SPEED_OPTIONS: { kbps: number; label: string }[] = [
   { kbps: 16384, label: '16 MB/s' },
 ];
 
+/** 存储维护操作的确认弹窗文案 */
+const CONFIRM_META = {
+  clearLogs: {
+    title: '清除日志',
+    confirm: '清除',
+    text: '将删除 logs 目录下的全部日志文件。日志只用于排查问题，清除不影响虚拟机与项目数据。',
+  },
+  clearAvds: {
+    title: '清除所有虚拟机',
+    confirm: '全部删除',
+    text: '运行中的虚拟机会先被关闭，随后删除共享库与所有项目里的全部虚拟机（含配置、磁盘与快照）。应用库与运行记录保留。',
+  },
+  reset: {
+    title: '软件重置',
+    confirm: '重置并重启',
+    text: '将关闭所有虚拟机并停止控制桥，删除项目、虚拟机、应用库、下载记录、日志与全部设置，然后自动重启应用。此操作不可恢复。',
+  },
+} as const;
+type ConfirmOp = keyof typeof CONFIRM_META;
+
 export function Settings({
   env,
   refreshEnv,
@@ -48,18 +80,34 @@ export function Settings({
   const [harmonyPath, setHarmonyPath] = useState('');
   const [javaPath, setJavaPath] = useState('');
   const [gpuMode, setGpuMode] = useState('');
+  const [cameraMode, setCameraMode] = useState<CameraMode>('emulated');
+  const [webcam, setWebcam] = useState('webcam0');
+  const [webcams, setWebcams] = useState<{ id: string; label: string }[]>([]);
+  const [pillEnabled, setPillEnabled] = useState(true);
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [proxyPort, setProxyPort] = useState('7890');
   const [maxKbps, setMaxKbps] = useState(0);
   const [parallel, setParallel] = useState('2');
-  const [androidRoute, setAndroidRoute] = useState<'direct' | 'proxy'>('direct');
-  const [harmonyRoute, setHarmonyRoute] = useState<'direct' | 'proxy'>('direct');
+  const [androidRoute, setAndroidRoute] = useState<'direct' | 'proxy'>(
+    'direct',
+  );
+  const [harmonyRoute, setHarmonyRoute] = useState<'direct' | 'proxy'>(
+    'direct',
+  );
   const [savedAt, setSavedAt] = useState(0);
   const [hintOn, setHintOn] = useState(false);
   const [error, setError] = useState('');
   // 浏览目录未找到环境时的“在此安装”弹窗
-  const [installAsk, setInstallAsk] = useState<{ kind: EnvKind; field: 'sdkPath' | 'harmonyPath' | 'javaPath'; dir: string; title: string } | null>(null);
+  const [installAsk, setInstallAsk] = useState<{
+    kind: EnvKind;
+    field: 'sdkPath' | 'harmonyPath' | 'javaPath';
+    dir: string;
+    title: string;
+  } | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [confirmAsk, setConfirmAsk] = useState<ConfirmOp | null>(null);
+  const [busy, setBusy] = useState(false);
   const dirty = useRef(false);
   // 只在首次拿到 env 时回填一次；之后一律以用户输入为准，
   // 避免保存后的 env 刷新把正在编辑的值跳回旧值
@@ -73,12 +121,38 @@ export function Settings({
       setHarmonyPath(env.settings.harmonySdkPath ?? env.harmony?.sdkRoot ?? '');
       setJavaPath(env.settings.javaPath ?? env.java ?? '');
       setGpuMode(env.settings.gpuMode ?? 'swiftshader_indirect');
+      setCameraMode(
+        env.settings.cameraMode === 'webcam' ||
+          env.settings.cameraMode === 'screen'
+          ? env.settings.cameraMode
+          : 'emulated',
+      );
+      setWebcam(
+        env.settings.webcam && /^webcam\d+$/.test(env.settings.webcam)
+          ? env.settings.webcam
+          : 'webcam0',
+      );
+      setPillEnabled(env.settings.pillEnabled !== false);
       setProxyEnabled(env.settings.proxyEnabled === true);
-      setProxyPort(env.settings.proxyPort ? String(env.settings.proxyPort) : '7890');
-      setMaxKbps(env.settings.maxDownloadKbps && env.settings.maxDownloadKbps > 0 ? env.settings.maxDownloadKbps : 0);
-      setParallel(env.settings.parallelDownloads ? String(env.settings.parallelDownloads) : '2');
-      setAndroidRoute(env.settings.androidDownloadRoute === 'proxy' ? 'proxy' : 'direct');
-      setHarmonyRoute(env.settings.harmonyDownloadRoute === 'proxy' ? 'proxy' : 'direct');
+      setProxyPort(
+        env.settings.proxyPort ? String(env.settings.proxyPort) : '7890',
+      );
+      setMaxKbps(
+        env.settings.maxDownloadKbps && env.settings.maxDownloadKbps > 0
+          ? env.settings.maxDownloadKbps
+          : 0,
+      );
+      setParallel(
+        env.settings.parallelDownloads
+          ? String(env.settings.parallelDownloads)
+          : '2',
+      );
+      setAndroidRoute(
+        env.settings.androidDownloadRoute === 'proxy' ? 'proxy' : 'direct',
+      );
+      setHarmonyRoute(
+        env.settings.harmonyDownloadRoute === 'proxy' ? 'proxy' : 'direct',
+      );
     }
   }, [env]);
 
@@ -101,8 +175,14 @@ export function Settings({
         javaPath: javaPath.trim() || undefined,
         harmonySdkPath: harmonyPath.trim() || undefined,
         gpuMode: gpuMode || undefined,
+        cameraMode,
+        webcam,
+        pillEnabled,
         proxyEnabled,
-        proxyPort: Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined,
+        proxyPort:
+          Number.isFinite(port) && port >= 1 && port <= 65535
+            ? port
+            : undefined,
         maxDownloadKbps: maxKbps > 0 ? maxKbps : 0,
         parallelDownloads: Number(parallel) || 2,
         androidDownloadRoute: androidRoute,
@@ -115,10 +195,87 @@ export function Settings({
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [dataRoot, sdkPath, harmonyPath, javaPath, gpuMode, proxyEnabled, proxyPort, maxKbps, parallel, androidRoute, harmonyRoute, refreshEnv]);
+  }, [
+    dataRoot,
+    sdkPath,
+    harmonyPath,
+    javaPath,
+    gpuMode,
+    cameraMode,
+    webcam,
+    pillEnabled,
+    proxyEnabled,
+    proxyPort,
+    maxKbps,
+    parallel,
+    androidRoute,
+    harmonyRoute,
+    refreshEnv,
+  ]);
+
+  // 选了摄像头直通时拉取宿主摄像头列表（进入模拟器分区且切到 webcam 时）
+  useEffect(() => {
+    if (section !== 'emulator' || cameraMode !== 'webcam') return;
+    void api.cameraWebcams().then((r) => {
+      if (r.ok) setWebcams(r.data);
+    });
+  }, [section, cameraMode]);
+
+  const loadStorage = useCallback(() => {
+    void api.storageInfo().then((r) => {
+      if (r.ok) setStorage(r.data);
+    });
+  }, []);
+
+  // 进入存储分区时刷新文件位置与虚拟机计数（操作完成后也会调用）
+  useEffect(() => {
+    if (section === 'storage') loadStorage();
+  }, [section, loadStorage]);
+
+  async function revealStorage(p: string) {
+    const r = await api.storageReveal(p);
+    if (!r.ok) toast(r.error);
+  }
+
+  /** 执行存储维护操作；软件重置由主进程延迟重启，保持 busy 盖住界面即可 */
+  async function runStorageOp(op: ConfirmOp) {
+    setBusy(true);
+    if (op === 'clearLogs') {
+      const r = await api.storageClearLogs();
+      setBusy(false);
+      setConfirmAsk(null);
+      if (!r.ok) {
+        toast(r.error);
+        return;
+      }
+      toast(`已清除 ${r.data} 个日志文件`, 'ok');
+      loadStorage();
+    } else if (op === 'clearAvds') {
+      const r = await api.storageClearAvds();
+      setBusy(false);
+      setConfirmAsk(null);
+      if (!r.ok) {
+        toast(r.error);
+        return;
+      }
+      toast(`已删除 ${r.data} 台虚拟机`, 'ok');
+      loadStorage();
+      refreshEnv();
+    } else {
+      // 成功时主进程延迟重启应用；失败必须恢复界面让用户重试或取消
+      const r = await api.storageReset();
+      setBusy(false);
+      setConfirmAsk(null);
+      if (!r.ok) toast(r.error);
+    }
+  }
 
   type PickField = 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath';
-  const FIELD_KIND: Partial<Record<PickField, EnvKind>> = { sdkPath: 'android', harmonyPath: 'harmonyos', javaPath: 'java' };
+  const FIELD_KIND: Partial<Record<PickField, EnvKind>> = {
+    sdkPath: 'android',
+    harmonyPath: 'harmonyos',
+    javaPath: 'java',
+  };
 
   function applyPick(field: PickField, dir: string) {
     dirty.current = true;
@@ -166,16 +323,21 @@ export function Settings({
     setInstallAsk(null);
     if (r.data.manual && r.data.url) {
       void api.openUrl(r.data.url);
-      toast('已打开官方下载页（需登录华为账号），下载完成后解压到所选目录', 'ok');
+      toast(
+        '已打开官方下载页（需登录华为账号），下载完成后解压到所选目录',
+        'ok',
+      );
     } else {
       toast('已加入下载队列，可在“下载管理”查看进度', 'ok');
     }
   }
 
-  const mark = <T,>(setter: (v: T) => void) => (v: T) => {
-    dirty.current = true;
-    setter(v);
-  };
+  const mark =
+    <T,>(setter: (v: T) => void) =>
+    (v: T) => {
+      dirty.current = true;
+      setter(v);
+    };
 
   return (
     <div>
@@ -183,22 +345,116 @@ export function Settings({
         <h1 className="page-title">设置</h1>
         <span className={`save-hint${hintOn ? ' show' : ''}`}>已保存</span>
         <div className="page-actions">
-          <Segmented options={SECTIONS} value={section as Section} onChange={onSection} />
+          <Segmented
+            options={SECTIONS}
+            value={section as Section}
+            onChange={onSection}
+          />
         </div>
       </div>
       <div key={section} className="sys-page">
         {section === 'storage' && (
-          <div className="section">
-            <div className="settings-row">
-              <span className="settings-row-label">数据根目录</span>
-              <div className="path-row">
-                <input value={dataRoot} readOnly spellCheck={false} title={dataRoot} />
-                <button className="btn" onClick={() => browse('dataRoot', '选择数据根目录')}>
-                  浏览
+          <>
+            <div className="section">
+              <div className="settings-row">
+                <span className="settings-row-label">数据根目录</span>
+                <div className="path-row">
+                  <input
+                    value={dataRoot}
+                    readOnly
+                    spellCheck={false}
+                    title={dataRoot}
+                  />
+                  <button
+                    className="btn"
+                    onClick={() => browse('dataRoot', '选择数据根目录')}
+                  >
+                    浏览
+                  </button>
+                </div>
+              </div>
+              {(storage?.items ?? []).map((item) => (
+                <div className="settings-row" key={item.id}>
+                  <span className="settings-row-label">{item.label}</span>
+                  <div className="path-row">
+                    <input
+                      value={item.path}
+                      readOnly
+                      spellCheck={false}
+                      title={item.path}
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                    <button
+                      className="btn"
+                      onClick={() => void revealStorage(item.path)}
+                    >
+                      打开位置
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="section">
+              <div className="settings-row">
+                <span className="settings-row-label">清除日志</span>
+                <button
+                  className="btn btn-danger"
+                  disabled={!storage}
+                  onClick={() => setConfirmAsk('clearLogs')}
+                >
+                  清除日志
+                </button>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-label">清除所有虚拟机</span>
+                <button
+                  className="btn btn-danger"
+                  disabled={!storage}
+                  onClick={() => setConfirmAsk('clearAvds')}
+                >
+                  全部删除
+                </button>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-label">软件重置</span>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => setConfirmAsk('reset')}
+                >
+                  重置并重启
                 </button>
               </div>
             </div>
-          </div>
+
+            {confirmAsk && (
+              <Modal
+                title={CONFIRM_META[confirmAsk].title}
+                onClose={() => {
+                  if (!busy) setConfirmAsk(null);
+                }}
+                footer={
+                  <>
+                    <button
+                      className="btn"
+                      disabled={busy}
+                      onClick={() => setConfirmAsk(null)}
+                    >
+                      取消
+                    </button>
+                    <button
+                      className="btn btn-danger"
+                      disabled={busy}
+                      onClick={() => void runStorageOp(confirmAsk)}
+                    >
+                      {busy ? '处理中…' : CONFIRM_META[confirmAsk].confirm}
+                    </button>
+                  </>
+                }
+              >
+                <p>{CONFIRM_META[confirmAsk].text}</p>
+              </Modal>
+            )}
+          </>
         )}
 
         {section === 'sdk' && (
@@ -207,8 +463,16 @@ export function Settings({
               <div className="settings-row">
                 <span className="settings-row-label">Android SDK 路径</span>
                 <div className="path-row">
-                  <input value={sdkPath} readOnly spellCheck={false} title={sdkPath} />
-                  <button className="btn" onClick={() => browse('sdkPath', '选择 Android SDK 目录')}>
+                  <input
+                    value={sdkPath}
+                    readOnly
+                    spellCheck={false}
+                    title={sdkPath}
+                  />
+                  <button
+                    className="btn"
+                    onClick={() => browse('sdkPath', '选择 Android SDK 目录')}
+                  >
                     浏览
                   </button>
                 </div>
@@ -216,8 +480,19 @@ export function Settings({
               <div className="settings-row">
                 <span className="settings-row-label">HarmonyOS SDK 路径</span>
                 <div className="path-row">
-                  <input value={harmonyPath} readOnly spellCheck={false} title={harmonyPath} placeholder="未检测到" />
-                  <button className="btn" onClick={() => browse('harmonyPath', '选择 HarmonyOS SDK 目录')}>
+                  <input
+                    value={harmonyPath}
+                    readOnly
+                    spellCheck={false}
+                    title={harmonyPath}
+                    placeholder="未检测到"
+                  />
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      browse('harmonyPath', '选择 HarmonyOS SDK 目录')
+                    }
+                  >
                     浏览
                   </button>
                 </div>
@@ -225,8 +500,18 @@ export function Settings({
               <div className="settings-row">
                 <span className="settings-row-label">Java 路径</span>
                 <div className="path-row">
-                  <input value={javaPath} readOnly spellCheck={false} title={javaPath} />
-                  <button className="btn" onClick={() => browse('javaPath', '选择 Java bin 目录或 jbr 目录')}>
+                  <input
+                    value={javaPath}
+                    readOnly
+                    spellCheck={false}
+                    title={javaPath}
+                  />
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      browse('javaPath', '选择 Java bin 目录或 jbr 目录')
+                    }
+                  >
                     浏览
                   </button>
                 </div>
@@ -234,7 +519,12 @@ export function Settings({
             </div>
             <div className="section">
               <div style={{ padding: '10px 14px 14px' }}>
-                <SdkPackages env={env} onChanged={refreshEnv} />
+                <SdkPackages
+                  env={env}
+                  onChanged={refreshEnv}
+                  onPickFolder={() => void browse('harmonyPath', '选择 HarmonyOS SDK 目录')}
+                  onLoginHuawei={() => void api.huaweiLogin()}
+                />
               </div>
             </div>
           </>
@@ -275,7 +565,10 @@ export function Settings({
                 <div style={{ width: 180 }}>
                   <Select
                     value={String(maxKbps)}
-                    options={SPEED_OPTIONS.map((o) => ({ value: String(o.kbps), label: o.label }))}
+                    options={SPEED_OPTIONS.map((o) => ({
+                      value: String(o.kbps),
+                      label: o.label,
+                    }))}
                     onChange={(v) => mark(setMaxKbps)(Number(v))}
                   />
                 </div>
@@ -285,7 +578,10 @@ export function Settings({
                 <div style={{ width: 180 }}>
                   <Select
                     value={parallel}
-                    options={['1', '2', '3', '4'].map((n) => ({ value: n, label: n }))}
+                    options={['1', '2', '3', '4'].map((n) => ({
+                      value: n,
+                      label: n,
+                    }))}
                     onChange={(v) => mark(setParallel)(v)}
                   />
                 </div>
@@ -328,6 +624,50 @@ export function Settings({
                 />
               </div>
             </div>
+            <div className="settings-row">
+              <span className="settings-row-label">相机画面来源</span>
+              <div style={{ width: 200 }}>
+                <Select
+                  value={cameraMode}
+                  options={[
+                    { value: 'emulated', label: '软件仿真（默认）' },
+                    { value: 'screen', label: '识别 Windows 屏幕' },
+                    { value: 'webcam', label: '调用 Windows 摄像头' },
+                  ]}
+                  onChange={(v) => mark(setCameraMode)(v)}
+                />
+              </div>
+            </div>
+            {cameraMode === 'webcam' && (
+              <div className="settings-row">
+                <span className="settings-row-label">摄像头设备</span>
+                <div style={{ width: 200 }}>
+                  <Select
+                    value={webcam}
+                    options={
+                      webcams.length
+                        ? webcams.map((w) => ({ value: w.id, label: w.label }))
+                        : [{ value: webcam, label: webcam }]
+                    }
+                    onChange={(v) => mark(setWebcam)(v)}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="settings-row">
+              <span className="settings-row-label">辅助控制中心</span>
+              <label className="switch-wrap">
+                <input
+                  type="checkbox"
+                  checked={pillEnabled}
+                  onChange={(e) => {
+                    dirty.current = true;
+                    setPillEnabled(e.target.checked);
+                  }}
+                />
+                启用
+              </label>
+            </div>
           </div>
         )}
 
@@ -335,7 +675,11 @@ export function Settings({
 
         {section === 'about' && <About env={env} />}
 
-        {error && <div className="error-line" style={{ marginTop: 12 }}>{error}</div>}
+        {error && (
+          <div className="error-line" style={{ marginTop: 12 }}>
+            {error}
+          </div>
+        )}
       </div>
 
       {installAsk && (
@@ -347,8 +691,16 @@ export function Settings({
               <button className="btn" onClick={browseAgain}>
                 浏览其他路径
               </button>
-              <button className="btn btn-primary" disabled={installing} onClick={() => void installHere()}>
-                {installing ? '解析中…' : installAsk.kind === 'harmonyos' ? '打开官方下载页' : `在此安装${ENV_LABELS[installAsk.kind]}`}
+              <button
+                className="btn btn-primary"
+                disabled={installing}
+                onClick={() => void installHere()}
+              >
+                {installing
+                  ? '解析中…'
+                  : installAsk.kind === 'harmonyos'
+                    ? '打开官方下载页'
+                    : `在此安装${ENV_LABELS[installAsk.kind]}`}
               </button>
             </>
           }
@@ -362,7 +714,8 @@ export function Settings({
           ) : (
             <p className="page-sub">
               将下载官方最新版并解压到所选目录，进度可在“下载管理”中查看。
-              {installAsk.kind === 'android' && '命令行工具装好后会自动续装 platform-tools 与 emulator。'}
+              {installAsk.kind === 'android' &&
+                '命令行工具装好后会自动续装 platform-tools 与 emulator。'}
             </p>
           )}
         </Modal>

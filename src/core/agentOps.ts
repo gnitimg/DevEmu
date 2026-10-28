@@ -10,7 +10,12 @@ import { launchEmulator, stopEmulator, findRunning } from './emulator.ts';
 import { killEmulatorProcess } from './win.ts';
 import { scopeKey } from './env.ts';
 import type { HarmonyInfo, SdkInfo, Scope } from './types.ts';
-import type { AgentDevice, AgentOps, DeviceType, ShellResult } from './agent.ts';
+import type {
+  AgentDevice,
+  AgentOps,
+  DeviceType,
+  ShellResult,
+} from './agent.ts';
 
 /**
  * Agent 控制桥的生产 AgentOps：Android 走 adb（input/uiautomator），
@@ -25,7 +30,8 @@ function requireSdk(): SdkInfo {
 
 function requireHarmony(): HarmonyInfo {
   const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
-  if (!harmony) throw new Error('未检测到 HarmonyOS SDK，请先在 DevEmu 设置页配置');
+  if (!harmony)
+    throw new Error('未检测到 HarmonyOS SDK，请先在 DevEmu 设置页配置');
   return harmony;
 }
 
@@ -74,7 +80,9 @@ async function listDevices(): Promise<AgentDevice[]> {
           serial: d.serial,
           type: 'android',
           state: d.state,
-          avdName: d.serial.startsWith('emulator-') ? await avdNameOf(sdk.adb, d.serial) : undefined,
+          avdName: d.serial.startsWith('emulator-')
+            ? await avdNameOf(sdk.adb, d.serial)
+            : undefined,
         });
       }
     } catch {
@@ -85,7 +93,8 @@ async function listDevices(): Promise<AgentDevice[]> {
   if (harmony) {
     try {
       for (const t of await harmonyTargets(harmony.hdc)) {
-        if (!out.some((d) => d.serial === t)) out.push({ serial: t, type: 'harmonyos', state: 'device' });
+        if (!out.some((d) => d.serial === t))
+          out.push({ serial: t, type: 'harmonyos', state: 'device' });
       }
     } catch {
       // hdc 服务未起或无设备
@@ -94,33 +103,67 @@ async function listDevices(): Promise<AgentDevice[]> {
   return out;
 }
 
-async function screenshot(serial: string, type: DeviceType): Promise<{ data: Buffer; mime: string }> {
+async function screenshot(
+  serial: string,
+  type: DeviceType,
+): Promise<{ data: Buffer; mime: string }> {
   if (type === 'android') {
-    return { data: await adbScreenshot(requireSdk().adb, serial), mime: 'image/png' };
+    return {
+      data: await adbScreenshot(requireSdk().adb, serial),
+      mime: 'image/png',
+    };
   }
   // HarmonyOS：设备端截图后经 hdc file recv 取回本机
   const hdc = requireHarmony().hdc;
   const remote = '/data/local/tmp/devemu_agent_shot.jpeg';
-  const local = path.join(os.tmpdir(), `devemu-shot-${Date.now()}-${Math.random().toString(36).slice(2)}.jpeg`);
+  const local = path.join(
+    os.tmpdir(),
+    `devemu-shot-${Date.now()}-${Math.random().toString(36).slice(2)}.jpeg`,
+  );
   try {
-    const cap = await run(hdc, ['-t', serial, 'shell', 'snapshot_display', '-f', remote], { timeoutMs: 15_000 });
-    if (cap.code !== 0) throw new Error('截图失败：' + (cap.stderr || cap.stdout).trim().slice(0, 160));
-    const recv = await run(hdc, ['-t', serial, 'file', 'recv', remote, local], { timeoutMs: 20_000 });
-    if (recv.code !== 0 || !fs.existsSync(local)) throw new Error('截图回传失败');
+    const cap = await run(
+      hdc,
+      ['-t', serial, 'shell', 'snapshot_display', '-f', remote],
+      { timeoutMs: 15_000 },
+    );
+    if (cap.code !== 0)
+      throw new Error(
+        '截图失败：' + (cap.stderr || cap.stdout).trim().slice(0, 160),
+      );
+    const recv = await run(hdc, ['-t', serial, 'file', 'recv', remote, local], {
+      timeoutMs: 20_000,
+    });
+    if (recv.code !== 0 || !fs.existsSync(local))
+      throw new Error('截图回传失败');
     return { data: fs.readFileSync(local), mime: 'image/jpeg' };
   } finally {
     fs.rmSync(local, { force: true });
-    void run(hdc, ['-t', serial, 'shell', 'rm', remote], { timeoutMs: 8000 }).catch(() => undefined);
+    void run(hdc, ['-t', serial, 'shell', 'rm', remote], {
+      timeoutMs: 8000,
+    }).catch(() => undefined);
   }
 }
 
-async function tap(serial: string, type: DeviceType, x: number, y: number): Promise<void> {
+async function tap(
+  serial: string,
+  type: DeviceType,
+  x: number,
+  y: number,
+): Promise<void> {
   if (type === 'android') {
-    await run(requireSdk().adb, ['-s', serial, 'shell', 'input', 'tap', String(x), String(y)], { timeoutMs: 15_000 });
+    await run(
+      requireSdk().adb,
+      ['-s', serial, 'shell', 'input', 'tap', String(x), String(y)],
+      { timeoutMs: 15_000 },
+    );
     return;
   }
   const hdc = requireHarmony().hdc;
-  await run(hdc, ['-t', serial, 'shell', 'uitest', 'uiInput', 'click', String(x), String(y)], { timeoutMs: 15_000 });
+  await run(
+    hdc,
+    ['-t', serial, 'shell', 'uitest', 'uiInput', 'click', String(x), String(y)],
+    { timeoutMs: 15_000 },
+  );
 }
 
 async function swipe(
@@ -135,18 +178,44 @@ async function swipe(
   if (type === 'android') {
     await run(
       requireSdk().adb,
-      ['-s', serial, 'shell', 'input', 'swipe', String(x1), String(y1), String(x2), String(y2), String(Math.round(durationMs))],
+      [
+        '-s',
+        serial,
+        'shell',
+        'input',
+        'swipe',
+        String(x1),
+        String(y1),
+        String(x2),
+        String(y2),
+        String(Math.round(durationMs)),
+      ],
       { timeoutMs: 30_000 },
     );
     return;
   }
   // uitest 的 swipe 参数是速度（px/s），由距离与时长换算并夹到合法区间
   const dist = Math.max(1, Math.hypot(x2 - x1, y2 - y1));
-  const speed = Math.min(40_000, Math.max(200, Math.round((dist / Math.max(1, durationMs)) * 1000)));
+  const speed = Math.min(
+    40_000,
+    Math.max(200, Math.round((dist / Math.max(1, durationMs)) * 1000)),
+  );
   const hdc = requireHarmony().hdc;
   await run(
     hdc,
-    ['-t', serial, 'shell', 'uitest', 'uiInput', 'swipe', String(x1), String(y1), String(x2), String(y2), String(speed)],
+    [
+      '-t',
+      serial,
+      'shell',
+      'uitest',
+      'uiInput',
+      'swipe',
+      String(x1),
+      String(y1),
+      String(x2),
+      String(y2),
+      String(speed),
+    ],
     { timeoutMs: 30_000 },
   );
 }
@@ -156,85 +225,178 @@ function shellQuote(text: string): string {
   return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
-async function inputText(serial: string, type: DeviceType, text: string, x?: number, y?: number): Promise<void> {
+async function inputText(
+  serial: string,
+  type: DeviceType,
+  text: string,
+  x?: number,
+  y?: number,
+): Promise<void> {
   const quoted = shellQuote(text);
   if (type === 'android') {
-    await run(requireSdk().adb, ['-s', serial, 'shell', 'input', 'text', quoted], { timeoutMs: 20_000 });
+    await run(
+      requireSdk().adb,
+      ['-s', serial, 'shell', 'input', 'text', quoted],
+      { timeoutMs: 20_000 },
+    );
     return;
   }
   // uiInput inputText 需要点位（先点中输入框），缺省落点为屏幕中部
   const hdc = requireHarmony().hdc;
   await run(
     hdc,
-    ['-t', serial, 'shell', 'uitest', 'uiInput', 'inputText', String(x ?? 360), String(y ?? 640), quoted],
+    [
+      '-t',
+      serial,
+      'shell',
+      'uitest',
+      'uiInput',
+      'inputText',
+      String(x ?? 360),
+      String(y ?? 640),
+      quoted,
+    ],
     { timeoutMs: 20_000 },
   );
 }
 
-async function pressKey(serial: string, type: DeviceType, key: string): Promise<void> {
+async function pressKey(
+  serial: string,
+  type: DeviceType,
+  key: string,
+): Promise<void> {
   if (/^\d{1,4}$/.test(key)) {
-    if (type !== 'android') throw new Error('HarmonyOS 暂只支持按键名，不支持数字键值');
-    await run(requireSdk().adb, ['-s', serial, 'shell', 'input', 'keyevent', key], { timeoutMs: 15_000 });
+    if (type !== 'android')
+      throw new Error('HarmonyOS 暂只支持按键名，不支持数字键值');
+    await run(
+      requireSdk().adb,
+      ['-s', serial, 'shell', 'input', 'keyevent', key],
+      { timeoutMs: 15_000 },
+    );
     return;
   }
   const name = key.toLowerCase();
   if (type === 'android') {
     const code = ANDROID_KEYS[name];
-    if (!code) throw new Error(`不支持的按键：${key}（支持 ${Object.keys(ANDROID_KEYS).join('/')} 或数字键值）`);
-    await run(requireSdk().adb, ['-s', serial, 'shell', 'input', 'keyevent', code], { timeoutMs: 15_000 });
+    if (!code)
+      throw new Error(
+        `不支持的按键：${key}（支持 ${Object.keys(ANDROID_KEYS).join('/')} 或数字键值）`,
+      );
+    await run(
+      requireSdk().adb,
+      ['-s', serial, 'shell', 'input', 'keyevent', code],
+      { timeoutMs: 15_000 },
+    );
     return;
   }
   const ev = HARMONY_KEYS[name];
-  if (!ev) throw new Error(`不支持的按键：${key}（支持 ${Object.keys(HARMONY_KEYS).join('/')}）`);
+  if (!ev)
+    throw new Error(
+      `不支持的按键：${key}（支持 ${Object.keys(HARMONY_KEYS).join('/')}）`,
+    );
   const hdc = requireHarmony().hdc;
-  await run(hdc, ['-t', serial, 'shell', 'uitest', 'uiInput', 'keyEvent', ev], { timeoutMs: 15_000 });
+  await run(hdc, ['-t', serial, 'shell', 'uitest', 'uiInput', 'keyEvent', ev], {
+    timeoutMs: 15_000,
+  });
 }
 
-async function shell(serial: string, type: DeviceType, command: string): Promise<ShellResult> {
+async function shell(
+  serial: string,
+  type: DeviceType,
+  command: string,
+): Promise<ShellResult> {
   const res =
     type === 'android'
-      ? await run(requireSdk().adb, ['-s', serial, 'shell', command], { timeoutMs: 120_000 })
-      : await run(requireHarmony().hdc, ['-t', serial, 'shell', command], { timeoutMs: 120_000 });
+      ? await run(requireSdk().adb, ['-s', serial, 'shell', command], {
+          timeoutMs: 120_000,
+        })
+      : await run(requireHarmony().hdc, ['-t', serial, 'shell', command], {
+          timeoutMs: 120_000,
+        });
   return { code: res.code, stdout: res.stdout, stderr: res.stderr };
 }
 
-async function uiTree(serial: string, type: DeviceType): Promise<{ format: 'xml' | 'json'; content: string }> {
+async function uiTree(
+  serial: string,
+  type: DeviceType,
+): Promise<{ format: 'xml' | 'json'; content: string }> {
   if (type === 'android') {
     const adb = requireSdk().adb;
     const remote = '/sdcard/devemu_ui.xml';
-    const dump = await run(adb, ['-s', serial, 'shell', 'uiautomator', 'dump', remote], { timeoutMs: 30_000 });
+    const dump = await run(
+      adb,
+      ['-s', serial, 'shell', 'uiautomator', 'dump', remote],
+      { timeoutMs: 30_000 },
+    );
     if (dump.code !== 0 || /ERROR/i.test(dump.stdout)) {
-      throw new Error('界面树获取失败：' + (dump.stdout || dump.stderr).trim().slice(0, 160));
+      throw new Error(
+        '界面树获取失败：' + (dump.stdout || dump.stderr).trim().slice(0, 160),
+      );
     }
     try {
-      const cat = await run(adb, ['-s', serial, 'shell', 'cat', remote], { timeoutMs: 15_000 });
+      const cat = await run(adb, ['-s', serial, 'shell', 'cat', remote], {
+        timeoutMs: 15_000,
+      });
       return { format: 'xml', content: cat.stdout };
     } finally {
-      void run(adb, ['-s', serial, 'shell', 'rm', remote], { timeoutMs: 8000 }).catch(() => undefined);
+      void run(adb, ['-s', serial, 'shell', 'rm', remote], {
+        timeoutMs: 8000,
+      }).catch(() => undefined);
     }
   }
   const hdc = requireHarmony().hdc;
   const remote = '/data/local/tmp/devemu_ui.json';
-  const local = path.join(os.tmpdir(), `devemu-ui-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  const local = path.join(
+    os.tmpdir(),
+    `devemu-ui-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+  );
   try {
-    const dump = await run(hdc, ['-t', serial, 'shell', 'uitest', 'dumpLayout', '-p', remote], { timeoutMs: 30_000 });
-    if (dump.code !== 0) throw new Error('界面树获取失败：' + (dump.stderr || dump.stdout).trim().slice(0, 160));
-    const recv = await run(hdc, ['-t', serial, 'file', 'recv', remote, local], { timeoutMs: 20_000 });
-    if (recv.code !== 0 || !fs.existsSync(local)) throw new Error('界面树回传失败');
+    const dump = await run(
+      hdc,
+      ['-t', serial, 'shell', 'uitest', 'dumpLayout', '-p', remote],
+      { timeoutMs: 30_000 },
+    );
+    if (dump.code !== 0)
+      throw new Error(
+        '界面树获取失败：' + (dump.stderr || dump.stdout).trim().slice(0, 160),
+      );
+    const recv = await run(hdc, ['-t', serial, 'file', 'recv', remote, local], {
+      timeoutMs: 20_000,
+    });
+    if (recv.code !== 0 || !fs.existsSync(local))
+      throw new Error('界面树回传失败');
     return { format: 'json', content: fs.readFileSync(local, 'utf8') };
   } finally {
     fs.rmSync(local, { force: true });
-    void run(hdc, ['-t', serial, 'shell', 'rm', remote], { timeoutMs: 8000 }).catch(() => undefined);
+    void run(hdc, ['-t', serial, 'shell', 'rm', remote], {
+      timeoutMs: 8000,
+    }).catch(() => undefined);
   }
 }
 
-async function launchEmulatorOp(avdName: string, scope?: string): Promise<{ serial: string }> {
+async function launchEmulatorOp(
+  avdName: string,
+  scope?: string,
+): Promise<{ serial: string }> {
   const settings = loadAppSettings();
   const sdk = requireSdk();
-  const entry = await launchEmulator(sdk, settings.dataRoot, parseScopeArg(scope), avdName, {
-    gpu: settings.gpuMode ?? (process.platform === 'win32' ? 'swiftshader_indirect' : undefined),
-    httpProxy: settings.proxyEnabled && settings.proxyPort ? `http://127.0.0.1:${settings.proxyPort}` : undefined,
-  });
+  const entry = await launchEmulator(
+    sdk,
+    settings.dataRoot,
+    parseScopeArg(scope),
+    avdName,
+    {
+      gpu:
+        settings.gpuMode ??
+        (process.platform === 'win32' ? 'swiftshader_indirect' : undefined),
+      httpProxy:
+        settings.proxyEnabled && settings.proxyPort
+          ? `http://127.0.0.1:${settings.proxyPort}`
+          : undefined,
+      camera: settings.cameraMode,
+      webcam: settings.webcam,
+    },
+  );
   return { serial: entry.serial };
 }
 
@@ -253,7 +415,9 @@ async function stopEmulatorOp(avdName: string, scope?: string): Promise<void> {
     if (!d.serial.startsWith('emulator-') || d.state !== 'device') continue;
     if ((await avdNameOf(sdk.adb, d.serial)) === avdName) {
       found = true;
-      await run(sdk.adb, ['-s', d.serial, 'emu', 'kill'], { timeoutMs: 8000 }).catch(() => undefined);
+      await run(sdk.adb, ['-s', d.serial, 'emu', 'kill'], {
+        timeoutMs: 8000,
+      }).catch(() => undefined);
     }
   }
   if (!found) throw new Error('该虚拟机未在运行');

@@ -29,18 +29,24 @@ export function loadSettings(dataRoot: string): Settings {
   try {
     const raw = fs.readFileSync(settingsPath(dataRoot), 'utf8');
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    if (typeof parsed.dataRoot !== 'string' || !parsed.dataRoot) throw new Error('bad');
+    if (typeof parsed.dataRoot !== 'string' || !parsed.dataRoot)
+      throw new Error('bad');
     return {
       dataRoot: parsed.dataRoot,
       sdkPath: parsed.sdkPath,
       javaPath: parsed.javaPath,
       harmonySdkPath: parsed.harmonySdkPath,
       gpuMode: parsed.gpuMode,
+      cameraMode: parsed.cameraMode,
+      webcam: parsed.webcam,
+      pillEnabled: parsed.pillEnabled,
       proxyEnabled: parsed.proxyEnabled,
       proxyPort: parsed.proxyPort,
       // 旧版单一 downloadRoute 迁移为 Android 线路
       androidDownloadRoute:
-        parsed.androidDownloadRoute ?? (parsed as Partial<Settings> & { downloadRoute?: 'direct' | 'proxy' }).downloadRoute,
+        parsed.androidDownloadRoute ??
+        (parsed as Partial<Settings> & { downloadRoute?: 'direct' | 'proxy' })
+          .downloadRoute,
       harmonyDownloadRoute: parsed.harmonyDownloadRoute,
       maxDownloadKbps: parsed.maxDownloadKbps,
       parallelDownloads: parsed.parallelDownloads,

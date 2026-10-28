@@ -90,12 +90,12 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
 export function stream(
   cmd: string,
   args: string[],
-  opts: { env?: Record<string, string>; onLine: (line: string) => void; onExit?: (code: number | null) => void },
+  opts: { env?: Record<string, string>; input?: boolean; onLine: (line: string) => void; onExit?: (code: number | null) => void },
 ): ChildProcess {
   const child = spawn(cmd, args.map(String), {
     env: opts.env ? { ...process.env, ...opts.env } : process.env,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [opts.input ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   });
   let buf = '';
   const pump = (text: string) => {
