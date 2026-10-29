@@ -90,9 +90,12 @@ import {
 } from './core/adb.ts';
 import {
   closeAllPills,
+  closeLocationPanel,
   closeLocationPanels,
+  closePill,
   handlePillAction,
   hasPill,
+  openGroupSerials,
   openLocationPanel,
   openPill,
   startPillMove,
@@ -582,6 +585,8 @@ export function registerIpc(): void {
       javaPath: s.javaPath,
       harmonySdkPath: harmonyPath,
       gpuMode: gpu,
+      // 保存过设置即视为已确认图形后端选择，swiftshader 一次性迁移不再重复
+      gpuSwiftshaderMigrated: true,
       cameraMode,
       webcam,
       pillEnabled: pillOn,
@@ -1033,7 +1038,7 @@ export function registerIpc(): void {
     if (!scope || !sdk) return fail('未检测到 Android SDK');
     const gpu =
       settings.gpuMode ??
-      (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
+      (process.platform === 'win32' ? 'angle_indirect' : undefined);
     const httpProxy =
       settings.proxyEnabled && settings.proxyPort
         ? `http://127.0.0.1:${settings.proxyPort}`
@@ -1282,6 +1287,14 @@ export function registerIpc(): void {
             avdName: e.avdName,
             type: 'android',
           });
+        }
+      }
+      // 设备已消失但窗口组还在（守卫未生效或崩溃时的兜底）：刷新时同步回收
+      for (const serial of openGroupSerials()) {
+        if (!result.some((r) => r.serial === serial)) {
+          await stopLocation(serial).catch(() => undefined);
+          closePill(serial);
+          closeLocationPanel(serial);
         }
       }
     }

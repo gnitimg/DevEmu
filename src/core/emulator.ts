@@ -133,9 +133,9 @@ async function startOnPort(
   let grpcPort = port + 3000;
   while (!(await portFree(grpcPort))) grpcPort++;
   args.push('-grpc', String(grpcPort), '-grpc-use-token');
-  const gpu =
-    opts.gpu ??
-    (process.platform === 'win32' ? 'swiftshader_indirect' : undefined);
+  // swiftshader_indirect 在 API 35+ 预览镜像上整屏全黑（2026-10 实测 guest/窗口 0% 点亮），
+  // angle_indirect 双路正常；个别机器 angle 黑屏时可在设置切回软件渲染
+  const gpu = opts.gpu ?? (process.platform === 'win32' ? 'angle_indirect' : undefined);
   if (gpu) args.push('-gpu', gpu);
   if (opts.httpProxy) args.push('-http-proxy', opts.httpProxy);
   if (opts.noSnapshotLoad) args.push('-no-snapshot-load');

@@ -138,7 +138,6 @@ try {
   const config = sanitizeLocationConfig({
     mode: 'manual',
     anchor: { lat: 39.9, lon: 116.4 },
-    headingDeg: 90,
     altitudeM: 24,
     speedJitterPct: 0,
     strideJitterPct: 0,
@@ -187,13 +186,15 @@ try {
     'Android LocationManager 未收到连续 GPS：' + JSON.stringify(result),
   );
   const last = result.fixes.at(-1)!;
+  // 罗盘模型：up 键 = 正北，纬度增大、经度不变、航向 0
   assert.ok(
-    Math.abs(last.lat - 39.9) < 0.00001 && last.lon > 116.4,
+    Math.abs(last.lat - 39.9) > 0.00001 &&
+      Math.abs(last.lon - 116.4) < 0.00001,
     JSON.stringify(last),
   );
   assert.ok(Math.abs(last.speed - 1.4) < 0.05, JSON.stringify(last));
   assert.ok(Math.abs(last.altitude - 24) < 1, JSON.stringify(last));
-  assert.ok(Math.abs(last.bearing - 90) < 1, JSON.stringify(last));
+  assert.ok(Math.abs(last.bearing) < 1, JSON.stringify(last));
   const acceleration = result.sensors.find((s) => s.type === 1)!;
   assert.ok(
     acceleration.samples > 30 && acceleration.max - acceleration.min > 2,

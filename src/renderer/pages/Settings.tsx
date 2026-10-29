@@ -120,7 +120,7 @@ export function Settings({
       setSdkPath(env.settings.sdkPath ?? env.sdk?.root ?? '');
       setHarmonyPath(env.settings.harmonySdkPath ?? env.harmony?.sdkRoot ?? '');
       setJavaPath(env.settings.javaPath ?? env.java ?? '');
-      setGpuMode(env.settings.gpuMode ?? 'swiftshader_indirect');
+      setGpuMode(env.settings.gpuMode ?? 'angle_indirect');
       setCameraMode(
         env.settings.cameraMode === 'webcam' ||
           env.settings.cameraMode === 'screen'

@@ -33,6 +33,11 @@ export function hasPill(serial: string): boolean {
   return !!pills.get(serial) && !pills.get(serial)!.isDestroyed();
 }
 
+/** 当前开着药丸或定位面板的设备 serial（设备消失回收兜底用） */
+export function openGroupSerials(): string[] {
+  return [...new Set([...pills.keys(), ...locationPanels.keys()])];
+}
+
 export function pillTitle(serial: string): string {
   return `devemu-pill ${serial}`;
 }
@@ -362,14 +367,23 @@ export async function handlePillAction(
   return { ok: false, error: '未知动作' };
 }
 
-/** 药丸底部把手拖动：qemu + 药丸双窗同步移动（直传药丸原生句柄） */
+/** 药丸底部把手拖动：qemu、药丸与定位面板按同一偏移跟随鼠标（直传原生句柄） */
 export function startPillMove(serial: string): boolean {
   const entry = listRunning().find((e) => e.serial === serial);
   const win = pills.get(serial);
   if (!entry || !win || win.isDestroyed()) return false;
+  const hwndHex = nativeHandleHex(win);
+  const panel = locationPanels.get(serial);
+  startPairDrag(
+    entry.avdName,
+    hwndHex,
+    panel && !panel.isDestroyed() ? nativeHandleHex(panel) : '',
+  );
+  return true;
+}
+
+function nativeHandleHex(win: import('electron').BrowserWindow): string {
   // getNativeWindowHandle() 前 8 字节为 HWND（小端）
   const handle = win.getNativeWindowHandle();
-  const hwndHex = (handle.length >= 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE())).toString(16);
-  startPairDrag(entry.avdName, hwndHex);
-  return true;
+  return (handle.length >= 8 ? handle.readBigUInt64LE() : BigInt(handle.readUInt32LE())).toString(16);
 }

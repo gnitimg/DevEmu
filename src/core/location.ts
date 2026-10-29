@@ -610,9 +610,10 @@ async function startLocationSession(
   if (!clean.ok) return clean;
   await stopLocationSession(serial);
   config = clean.config;
-  // 设备定位总开关被关时 App 侧只会看到"GPS 信号弱"；注入前先确保开启（切换失败不阻断注入）。
+  // 设备定位总开关被关时 App 侧只会看到"GPS 信号弱"；注入前切到高精度模式。
+  // 不用 svc location：部分镜像无此子命令（只打印帮助且退出码为 0，无法察觉失败）。
   const runShell = deps.shell ?? ((args: string[]) => run(deps.adbPath, ['-s', serial, 'shell', ...args], { timeoutMs: 4000 }));
-  try { await runShell(['svc', 'location', 'enable']); } catch { /* 继续注入 */ }
+  try { await runShell(['settings', 'put', 'secure', 'location_mode', '3']); } catch { /* 继续注入 */ }
   const s: Session = {
     deps, serial, config, motion: new LocationMotion(config), console: null, gps: null, timer: null,
     stopped: false, lastAt: 0, lastGeoAt: 0, viaConsole: false, sensors: [],
@@ -621,7 +622,9 @@ async function startLocationSession(
   };
   sessions.set(serial, s);
   try {
-    s.gps = await (deps.gps ?? (() => connectGps(serial)))();
+    // gRPC 端点来自运行目录的 pid ini，可能过期或未监听；失败回退控制台/adb 通道，不作为启动失败。
+    try { s.gps = await (deps.gps ?? (() => connectGps(serial)))(); }
+    catch (err) { s.sensorError = `gps: ${err instanceof Error ? err.message : String(err)}`; }
     try {
       s.console = await (deps.connect ?? connectConsole)(serial, 1500);
       if (s.stopped) { s.console.close(); return { ok: false, error: '启动已取消' }; }

@@ -215,17 +215,22 @@ export async function getShellGeometry(
   return { x: parts[0]!, y: parts[1]!, screenW: parts[2]!, screenH: parts[3]! };
 }
 
-/** 双窗拖动（药丸把手发起）：qemu 与药丸按同一偏移跟随鼠标，左键抬起结束。
- *  pillHwndHex 为药丸窗口句柄的十六进制（getNativeWindowHandle），由 electron 侧直传，
+/** 双窗拖动（药丸把手发起）：qemu、药丸与定位面板按同一偏移跟随鼠标，左键抬起结束。
+ *  pillHwndHex/panelHwndHex 为窗口句柄的十六进制（getNativeWindowHandle），由 electron 侧直传，
  *  避免按标题找窗口（页面 title 会覆盖窗口标题）。
  *  独立进程执行，无需前台校验（拖动由明确的用户按下动作发起）。 */
-export function startPairDrag(avdName: string, pillHwndHex: string): void {
+export function startPairDrag(
+  avdName: string,
+  pillHwndHex: string,
+  panelHwndHex = '',
+): void {
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
     'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuD { public struct RECT { public int L; public int T; public int R; public int B; } public struct POINT { public int X; public int Y; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int cx, int cy, bool r); [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k); [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); } }\'',
     `$avd = '${avdName}'`,
     '[DevEmuD.U]::SetProcessDPIAware() | Out-Null',
     `$pill = [IntPtr]([Convert]::ToInt64('${pillHwndHex || '0'}', 16))`,
+    `$panel = [IntPtr]([Convert]::ToInt64('${panelHwndHex || '0'}', 16))`,
     '$hwnd = [IntPtr]::Zero',
     'for ($i = 0; $i -lt 20 -and $hwnd -eq [IntPtr]::Zero; $i++) {',
     "  $proc = Get-CimInstance Win32_Process -Filter \"Name='qemu-system-x86_64.exe'\" | Where-Object { $_.CommandLine -match ('-avd ' + $avd + '(\\s|$)') } | Select-Object -First 1",
@@ -256,6 +261,15 @@ export function startPairDrag(avdName: string, pillHwndHex: string): void {
     '  $pw = $pr.R - $pr.L',
     '  $ph = $pr.B - $pr.T',
     '}',
+    '$lx = 0; $ly = 0; $lw = 0; $lh = 0',
+    'if ($panel -ne [IntPtr]::Zero) {',
+    '  $lr = New-Object DevEmuD.RECT',
+    '  [DevEmuD.U]::GetWindowRect($panel, [ref]$lr) | Out-Null',
+    '  $lx = $lr.L - $r0.L',
+    '  $ly = $lr.T - $r0.T',
+    '  $lw = $lr.R - $lr.L',
+    '  $lh = $lr.B - $lr.T',
+    '}',
     'while (([DevEmuD.U]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0) {',
     '  $p1 = New-Object DevEmuD.POINT',
     '  [DevEmuD.U]::GetCursorPos([ref]$p1) | Out-Null',
@@ -263,6 +277,7 @@ export function startPairDrag(avdName: string, pillHwndHex: string): void {
     '  $ny = $p1.Y - $offY',
     '  [DevEmuD.U]::MoveWindow($hwnd, $nx, $ny, $dw, $dh, $true) | Out-Null',
     '  if ($pill -ne [IntPtr]::Zero) { [DevEmuD.U]::MoveWindow($pill, $nx + $px, $ny + $py, $pw, $ph, $true) | Out-Null }',
+    '  if ($panel -ne [IntPtr]::Zero) { [DevEmuD.U]::MoveWindow($panel, $nx + $lx, $ny + $ly, $lw, $lh, $true) | Out-Null }',
     '  Start-Sleep -Milliseconds 16',
     '}',
   ].join('\n');

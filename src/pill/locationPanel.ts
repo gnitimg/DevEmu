@@ -79,15 +79,17 @@ body.locpanel { --accent:#8ab4ff; color:#e8eaed; font-family:'Segoe UI Variable'
 .icon-button { border-radius:999px; height:36px; width:36px; flex:none; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14)!important; padding:0; font-size:16px!important; }
 .loc-error { color:#ff7b72; font-size:12px; text-align:center; border:0; background:transparent; border-radius:0; overflow-wrap:anywhere; }
 .loc-error:empty { display:none; }
-.op-area { flex:none; display:grid; grid-template-rows:0fr 1fr; border:1px solid rgba(255,255,255,.12); border-radius:999px; background:rgba(16,18,24,.94); overflow:hidden; transition:grid-template-rows .3s ease, border-radius .3s ease; }
-.op-area.expanded { grid-template-rows:1fr 0fr; border-radius:20px; }
-.op-fold { min-height:0; overflow:hidden; }
-.op-fold > .loc-card { border:0; border-radius:0; background:transparent; }
+.op-area { flex:none; border:1px solid rgba(255,255,255,.12); border-radius:999px; background:rgba(16,18,24,.94); overflow:hidden; transition:border-radius .3s ease; }
+.op-area.expanded { border-radius:20px; }
+.settings-wrap { display:grid; grid-template-rows:0fr; transition:grid-template-rows .3s ease; }
+.op-area.expanded .settings-wrap { grid-template-rows:1fr; }
+.op-clip { min-height:0; overflow:hidden; }
+.op-clip > .loc-card { border:0; border-radius:0; background:transparent; }
 #settings svg { transition:transform .3s ease; }
 #settings.open svg { transform:rotate(180deg); }
 .exp-collapse svg, .icon-button svg { width:16px; height:16px; display:block; margin:auto; }
 .locpanel [hidden] { display:none!important; }
-@media (prefers-reduced-motion:reduce) { .panel-col, .op-area, #settings svg { transition:none; } }
+@media (prefers-reduced-motion:reduce) { .panel-col, .settings-wrap, #settings svg { transition:none; } }
 `;
 
 export function renderLocationPanel(): void {
@@ -132,8 +134,11 @@ export function renderLocationPanel(): void {
 <section class="loc-card action-card" id="draw-bar" hidden><input class="search-input" id="draw-name" placeholder="路线名称" aria-label="路线名称"><button class="icon-button" id="undo" title="撤销末点">↶</button><button class="secondary" id="draw-save">保存</button><button class="icon-button" id="draw-cancel" title="取消绘制">×</button></section>`;
   document.body.append(col);
   const opArea=document.createElement('section'); opArea.className='op-area';
-  const fold=(card: Element): HTMLElement => { const f=document.createElement('div'); f.className='op-fold'; f.append(card); return f; };
-  opArea.append(fold(col.querySelector('.settings-card')!),fold(col.querySelector('.action-card')!));
+  const settingsWrap=document.createElement('div'); settingsWrap.className='settings-wrap';
+  const clip=document.createElement('div'); clip.className='op-clip';
+  clip.append(col.querySelector('.settings-card')!);
+  settingsWrap.append(clip);
+  opArea.append(settingsWrap,col.querySelector('.action-card')!);
   col.querySelector('.map-card')!.after(opArea);
 
   const settingsCard = col.querySelector<HTMLElement>('.settings-card')!;
@@ -142,10 +147,8 @@ export function renderLocationPanel(): void {
   head.innerHTML='<span class="exp-title">定位设置</span><button class="exp-collapse" title="收起设置" aria-label="收起设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
   settingsCard.prepend(head);
   const actions=document.createElement('div'); actions.className='row';
-  const runExpanded=document.createElement('button'); runExpanded.className='run'; runExpanded.textContent='开始';
-  actions.append(col.querySelector('#save-prefs')!,runExpanded);
+  actions.append(col.querySelector('#save-prefs')!);
   settingsCard.append(actions,col.querySelector('.loc-error')!);
-  runExpanded.addEventListener('click',()=>col.querySelector<HTMLButtonElement>('#run')!.click());
   head.querySelector('button')!.addEventListener('click',()=>col.querySelector<HTMLButtonElement>('#settings')!.click());
   const floatStatus=document.createElement('output'); floatStatus.className='float-status'; floatStatus.hidden=true; floatStatus.title='步数按运动模型估算；系统计步器是否可用取决于镜像';
   col.querySelector('.map-card')!.append(floatStatus);
@@ -216,16 +219,12 @@ export function renderLocationPanel(): void {
     q('#route-row').hidden = mode !== 'route';
     q('#loop-wrap').hidden = mode !== 'route';
     const showRun = !!state || mode === 'route';
-    runExpanded.hidden = !showRun;
-    runExpanded.textContent = busy ? '处理中…' : state ? '停止' : '开始';
-    runExpanded.classList.toggle('stop',!!state);
-    runExpanded.disabled = busy || !ready;
     button('run').hidden = !showRun;
     button('run').textContent = busy ? '处理中…' : state ? '停止' : '开始';
     button('run').disabled = busy || !ready;
     button('run').classList.toggle('stop', !!state);
     q('.dpad').hidden = !state || state.mode !== 'manual' || state.paused;
-    for (const control of q('.settings-card').querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('input,button,select')) control.disabled = control === runExpanded || control === head.querySelector('button') ? busy : !!state || busy;
+    for (const control of q('.settings-card').querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('input,button,select')) control.disabled = control === head.querySelector('button') ? busy : !!state || busy;
     opArea.classList.toggle('expanded',settingsOpen);
     opArea.hidden=drawing;
     settingsCard.inert = !settingsOpen || drawing;

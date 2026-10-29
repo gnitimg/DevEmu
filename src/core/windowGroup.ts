@@ -53,7 +53,8 @@ namespace DevEmuGroup {
     static WinEventProc layerCallback;
     static IntPtr foregroundHook, reorderHook;
     static bool dragging;
-    static int startX, startY, left, top, width, height;
+    static int startX, startY, left, top, width, height, pillDX, pillDY, locDX, locDY;
+    static bool pillFollows, locFollows;
     static RECT lastGeometry;
     static readonly HashSet<IntPtr> hiddenWindows = new HashSet<IntPtr>();
     public static void Init(uint pid, string id) {
@@ -76,12 +77,22 @@ namespace DevEmuGroup {
       if ((msg == 0x204 && GetWindowRect(device, out r) && Contains(r, m.x, m.y) && target == device) ||
           (msg == 0x201 && pill != IntPtr.Zero && GetWindowRect(pill, out r) && Contains(r, m.x, m.y) && m.y >= r.B-(int)(48*Scale()) && target == pill)) {
         GetWindowRect(device, out r);
-        startX=m.x; startY=m.y; left=r.L; top=r.T; width=r.R-r.L; height=r.B-r.T; dragging=true;
+        startX=m.x; startY=m.y; left=r.L; top=r.T; width=r.R-r.L; height=r.B-r.T;
+        // 跟手关键：药丸/面板与设备同循环原生移动，不走 Electron 异步 setBounds（会滞后）
+        RECT f = new RECT();
+        pillFollows = pill != IntPtr.Zero && GetWindowRect(pill, out f);
+        if (pillFollows) { pillDX=f.L-r.L; pillDY=f.T-r.T; }
+        locFollows = location != IntPtr.Zero && GetWindowRect(location, out f);
+        if (locFollows) { locDX=f.L-r.L; locDY=f.T-r.T; }
+        dragging=true;
         Raise();
         return (IntPtr)1;
       }
       if (dragging && msg == 0x200) {
-        SetWindowPos(device, IntPtr.Zero, left+m.x-startX, top+m.y-startY, width, height, 0x14);
+        int nx=left+m.x-startX, ny=top+m.y-startY;
+        SetWindowPos(device, IntPtr.Zero, nx, ny, width, height, 0x14);
+        if (pillFollows) SetWindowPos(pill, IntPtr.Zero, nx+pillDX, ny+pillDY, 0, 0, 0x15);
+        if (locFollows) SetWindowPos(location, IntPtr.Zero, nx+locDX, ny+locDY, 0, 0, 0x15);
         Align();
       }
       if (dragging && (msg == 0x202 || msg == 0x205)) { dragging=false; return (IntPtr)1; }
@@ -179,7 +190,9 @@ while ($true) {
   }
   $p=Get-Process -Id $qemuId -ErrorAction SilentlyContinue
   if (-not $p) { Write-Output 'QEMU-GONE'; exit 0 }
-  if ($p.MainWindowHandle -ne 0) { [DevEmuGroup.Native]::Tick($p.MainWindowHandle, [uint32]$qemuId) }
+  # 退出竞态：进程对象仍在但主窗口句柄已回收（null/0），绝不能让 Tick 异常杀死循环，QEMU-GONE 必须可达
+  $h=$p.MainWindowHandle
+  if ($null -ne $h -and "$h" -ne "0") { try { [DevEmuGroup.Native]::Tick($h, [uint32]$qemuId) } catch {} }
   Start-Sleep -Milliseconds 25
 }`;
 }

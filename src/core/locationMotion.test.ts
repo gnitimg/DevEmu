@@ -289,7 +289,7 @@ test('手动会话内传送立即生效且不计里程', async () => {
         )
       ).ok,
     );
-    assert.deepEqual(shellCalls, [['svc', 'location', 'enable']]);
+    assert.deepEqual(shellCalls, [['settings', 'put', 'secure', 'location_mode', '3']]);
     const before = locationStatus(serial)!;
     assert.ok(before.lat !== 31.2 || before.lon !== 121.5);
     assert.ok(teleportLocation(serial, 31.2, 121.5));
@@ -309,6 +309,38 @@ test('手动会话内传送立即生效且不计里程', async () => {
   }
   assert.equal(locationStatus(serial), null);
   assert.equal(teleportLocation('emulator-5599', 31.2, 121.5), false);
+});
+
+test('gRPC 失效时回退控制台通道，定位模式切高精度', async () => {
+  const serial = 'emulator-5596';
+  const commands: string[] = [];
+  const shellCalls: string[][] = [];
+  const connect = async () => ({
+    send: async (command: string) => {
+      commands.push(command);
+      return command === 'sensor status' ? '' : '';
+    },
+    close: () => undefined,
+  });
+  try {
+    const r = await startLocation(
+      {
+        adbPath: 'unused',
+        connect,
+        gps: async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:8554'); },
+        shell: async (args) => { shellCalls.push(args); },
+      },
+      serial,
+      config(),
+    );
+    assert.ok(r.ok, r.error ?? '启动失败');
+    assert.deepEqual(shellCalls, [['settings', 'put', 'secure', 'location_mode', '3']]);
+    await new Promise((res) => setTimeout(res, 100));
+    assert.match(commands.find((c) => c.startsWith('geo fix'))!, /116\.400000 39\.900000/);
+    assert.match(locationStatus(serial)!.sensorError!, /ECONNREFUSED/);
+  } finally {
+    await stopLocation(serial);
+  }
 });
 
 test('GPS 双通道失败不会假报启动成功，单传感器拒绝不影响 GPS', async () => {

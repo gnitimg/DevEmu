@@ -36,7 +36,14 @@ export function loadSettings(dataRoot: string): Settings {
       sdkPath: parsed.sdkPath,
       javaPath: parsed.javaPath,
       harmonySdkPath: parsed.harmonySdkPath,
-      gpuMode: parsed.gpuMode,
+      // 旧 UI 默认值 swiftshader_indirect 被随保存写入，在 API 35+ 预览镜像上整屏全黑
+      // （2026-10 实测 guest/窗口 0% 点亮）：未标记迁移过的存量值一次性迁到 angle_indirect。
+      // 标记随任一次设置保存落盘，此后用户手动选回的软件渲染不再被迁移。
+      gpuMode:
+        !parsed.gpuSwiftshaderMigrated && parsed.gpuMode === 'swiftshader_indirect'
+          ? 'angle_indirect'
+          : parsed.gpuMode,
+      gpuSwiftshaderMigrated: parsed.gpuSwiftshaderMigrated,
       cameraMode: parsed.cameraMode,
       webcam: parsed.webcam,
       pillEnabled: parsed.pillEnabled,

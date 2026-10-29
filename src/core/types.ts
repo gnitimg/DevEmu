@@ -12,6 +12,8 @@ export interface Settings {
   harmonySdkPath?: string;
   /** 模拟器图形后端：angle_indirect / swiftshader_indirect / host */
   gpuMode?: string;
+  /** 旧默认 swiftshader_indirect 全黑问题的一次性迁移标记（随任一次设置保存落盘） */
+  gpuSwiftshaderMigrated?: boolean;
   /** 相机画面来源（仅 Android 虚拟机），缺省 emulated */
   cameraMode?: CameraMode;
   /** cameraMode=webcam 时使用的摄像头（webcam0/webcam1...），缺省 webcam0 */
