@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   RouteWalker,
   bearingOf,
+  composeAccel,
   derivedStrideM,
   destination,
   haversineM,
@@ -80,6 +81,21 @@ test('stepWave 重力基线附近起伏，idleWave 近似静止', () => {
   const idle = idleWave(1.23);
   assert.ok(Math.abs(idle.y - 9.81) < 0.05);
   assert.ok(Math.abs(idle.x) < 0.05);
+});
+
+test('composeAccel 极限转弯下感知倾角恒在竖屏带内（屏幕不得横翻）', () => {
+  // 12 m/s × 90°/s 转向速率 ≈ 18.8 m/s² 侧向力（>1g），叠加最大颠簸与加减速
+  const lateralMax = 12 * (Math.PI / 2);
+  for (let t = 0; t <= 2; t += 0.005) {
+    const a = composeAccel(stepWave(t, 112, 2), 5, lateralMax);
+    const tiltDeg = (Math.atan2(Math.hypot(a.x, a.z), a.y) * 180) / Math.PI;
+    assert.ok(tiltDeg <= 40 + 1e-6, `倾角 ${tiltDeg.toFixed(1)}° 超出竖屏带 (t=${t})`);
+    assert.ok(a.y > 0, `重力基线越零 (t=${t})`);
+  }
+  // 侧向力封顶：超出竖屏安全值的部分不进入注入加速度
+  const base = stepWave(0, 112, 1);
+  const capped = composeAccel(base, 0, 100);
+  assert.ok(Math.abs(capped.x - base.x) <= 2.5 + 1e-9);
 });
 
 test('sanitizeLocationConfig 清洗与拒绝', () => {

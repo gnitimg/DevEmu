@@ -71,7 +71,12 @@ body.locpanel { --accent:#8ab4ff; color:#e8eaed; font-family:'Segoe UI Variable'
 .check { display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; height:32px; font-size:12px; }
 .check input { accent-color:#8ab4ff; }
 .secondary { background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14)!important; border-radius:20px; height:34px; padding:0 14px; white-space:nowrap; }
-.action-card { display:flex; align-items:center; gap:10px; flex:none; height:48px; padding:0 8px 0 16px; border-radius:999px; background:rgba(16,18,24,.92); backdrop-filter:blur(8px); }
+.action-card { display:flex; align-items:center; gap:10px; flex:none; height:48px; padding:0 8px 0 10px; border-radius:999px; background:rgba(16,18,24,.92); backdrop-filter:blur(8px); }
+.info-pills { display:flex; align-items:center; gap:7px; flex:1; min-width:0; overflow:hidden; }
+.info-pill { flex:1 1 0; min-width:0; height:34px; line-height:32px; padding:0 12px; border-radius:999px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); font-size:12px; color:rgba(255,255,255,.85); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center; }
+.info-pill b { color:#8ab4ff; font-weight:600; }
+button.info-pill { cursor:pointer; }
+button.info-pill.stop { flex:0 0 auto; color:#ff7b72; background:rgba(255,123,114,.15); border-color:rgba(255,123,114,.45); }
 .action-mode { white-space:nowrap; color:rgba(255,255,255,.7); font-size:12px; }
 .action-mode b { color:#8ab4ff; font-weight:600; }
 .run { flex:1; height:34px; border-radius:20px; padding:0 14px; background:#8ab4ff; color:#0b1220!important; font-size:12px; font-weight:600!important; }
@@ -130,7 +135,7 @@ export function renderLocationPanel(): void {
   <button class="secondary" id="save-prefs">保存</button>
 </section>
 <div class="loc-card loc-error" role="alert"></div>
-<section class="loc-card action-card"><button class="run" id="run">开始</button><button class="icon-button" id="settings" title="收起设置" aria-label="收起设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></section>
+<section class="loc-card action-card"><div class="info-pills" id="info-pills"></div><button class="icon-button" id="settings" title="展开设置" aria-label="展开设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></section>
 <section class="loc-card action-card" id="draw-bar" hidden><input class="search-input" id="draw-name" placeholder="路线名称" aria-label="路线名称"><button class="icon-button" id="undo" title="撤销末点">↶</button><button class="secondary" id="draw-save">保存</button><button class="icon-button" id="draw-cancel" title="取消绘制">×</button></section>`;
   document.body.append(col);
   const opArea=document.createElement('section'); opArea.className='op-area';
@@ -147,7 +152,8 @@ export function renderLocationPanel(): void {
   head.innerHTML='<span class="exp-title">定位设置</span><button class="exp-collapse" title="收起设置" aria-label="收起设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
   settingsCard.prepend(head);
   const actions=document.createElement('div'); actions.className='row';
-  actions.append(col.querySelector('#save-prefs')!);
+  const run=document.createElement('button'); run.className='run'; run.id='run'; run.textContent='开始';
+  actions.append(col.querySelector('#save-prefs')!,run);
   settingsCard.append(actions,col.querySelector('.loc-error')!);
   head.querySelector('button')!.addEventListener('click',()=>col.querySelector<HTMLButtonElement>('#settings')!.click());
   const floatStatus=document.createElement('output'); floatStatus.className='float-status'; floatStatus.hidden=true; floatStatus.title='步数按运动模型估算；系统计步器是否可用取决于镜像';
@@ -186,6 +192,9 @@ export function renderLocationPanel(): void {
     anchor = p;
     map.setMarker(p);
     coord.textContent = p.lat.toFixed(6) + ', ' + p.lon.toFixed(6);
+    // 新锚点即新的起点：清掉上一次尝试残留的"缺少锚点"类错误
+    err.textContent = '';
+    floatStatus.hidden = true;
     if (center) map.setCenter(p);
   };
   function previewRoute(center = true): void {
@@ -218,13 +227,37 @@ export function renderLocationPanel(): void {
     for (const b of col.querySelectorAll<HTMLButtonElement>('[data-mode]')) b.classList.toggle('on', b.dataset.mode === mode);
     q('#route-row').hidden = mode !== 'route';
     q('#loop-wrap').hidden = mode !== 'route';
-    const showRun = !!state || mode === 'route';
-    button('run').hidden = !showRun;
-    button('run').textContent = busy ? '处理中…' : state ? '停止' : '开始';
-    button('run').disabled = busy || !ready;
-    button('run').classList.toggle('stop', !!state);
+    const runBtn = button('run');
+    runBtn.textContent = busy ? '处理中…' : state ? '停止' : '开始';
+    runBtn.disabled = busy || !ready;
+    runBtn.classList.toggle('stop', !!state);
+    // 收起态信息药丸：模式 / 速度 / 步频步幅（+运行中的停止）
+    const rt = routes.find(r => r.id === selectedRoute);
+    const modeText = state?.mode === 'route' || mode === 'route' ? (rt?.name ?? '路线') : '实时操作';
+    const spd = (state ? state.speedMps : numeric('speed')).toFixed(1);
+    const cad = Math.round(state ? state.cadenceSpm : numeric('cadence'));
+    const str = (state ? state.strideM : numeric('stride')).toFixed(2);
+    const pills = q('#info-pills');
+    pills.replaceChildren();
+    const mkPill = (html: string): void => {
+      const d = document.createElement('div');
+      d.className = 'info-pill';
+      d.innerHTML = html;
+      pills.append(d);
+    };
+    mkPill(modeText);
+    mkPill(`<b>${spd}</b> m/s`);
+    mkPill(`<b>${cad}</b> 步/分 · <b>${str}</b>m`);
+    if (state) {
+      const stop = document.createElement('button');
+      stop.className = 'info-pill stop';
+      stop.type = 'button';
+      stop.dataset.stop = '1';
+      stop.textContent = '停止';
+      pills.append(stop);
+    }
     q('.dpad').hidden = !state || state.mode !== 'manual' || state.paused;
-    for (const control of q('.settings-card').querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('input,button,select')) control.disabled = control === head.querySelector('button') ? busy : !!state || busy;
+    for (const control of q('.settings-card').querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('input,button,select')) control.disabled = control.id === 'run' || control === head.querySelector('button') ? busy : !!state || busy;
     opArea.classList.toggle('expanded',settingsOpen);
     opArea.hidden=drawing;
     settingsCard.inert = !settingsOpen || drawing;
@@ -329,6 +362,7 @@ export function renderLocationPanel(): void {
     })().catch(error);
   });
   button('settings').addEventListener('click', () => { settingsOpen = !settingsOpen; syncUi(); });
+  q('#info-pills').addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-stop]')) button('run').click(); });
   button('save-prefs').addEventListener('click', safe(async () => {
     validateFields();
     check(await api.locPrefsSave(fields()));
@@ -354,7 +388,7 @@ export function renderLocationPanel(): void {
         const route = routes.find(r => r.id === selectedRoute)?.points;
         if (mode === 'route' && (!route || route.length < 2)) throw new Error('请选择或绘制路线');
         const start = mode === 'route' ? route![0]! : anchor;
-        if (!start) throw new Error('请双击地图或输入坐标设置起点');
+        if (!start) throw new Error('请先在地图上双击或搜索选择起点');
         const config = {...fields(), mode, anchor: start, route} as LocationConfig;
         check(await api.locationStart(serial, config));
         await api.locPrefsSave(fields());

@@ -132,6 +132,30 @@ export function idleWave(tSec: number): Vec3 {
   };
 }
 
+/**
+ * 感知倾角上限 40°（竖屏带）。系统自动旋转在感知倾角 >60° 时切横屏；
+ * 转弯侧向力（速度×转向速率，12 m/s 急转可达 ~19 m/s²）与加减速若原样叠加，
+ * 一次小转弯就会把整机姿态甩出竖屏。转向只允许体现在航向/陀螺仪/罗盘上。
+ */
+const MAX_PORTRAIT_TILT_RAD = rad(40);
+
+/** 波形叠加纵向加减速与侧向转弯力，并把合成矢量与重力基线的夹角钳在竖屏带内 */
+export function composeAccel(w: Vec3, forwardMps2: number, lateralMps2: number): Vec3 {
+  const out: Vec3 = {
+    x: w.x + Math.min(2.5, Math.max(-2.5, lateralMps2)),
+    y: w.y,
+    z: w.z + forwardMps2,
+  };
+  const maxDev = out.y * Math.tan(MAX_PORTRAIT_TILT_RAD);
+  const dev = Math.hypot(out.x, out.z);
+  if (dev > maxDev) {
+    const k = maxDev / dev;
+    out.x *= k;
+    out.z *= k;
+  }
+  return out;
+}
+
 // ---------- 路线推进 ----------
 
 interface Segment {
@@ -559,12 +583,15 @@ async function sendSensors(s: Session): Promise<void> {
   if (!s.console || s.sensors.length === 0) return;
   const m = s.motion;
   const t = m.elapsedSec;
-  const w = m.speedMps > 0 ? stepWave(m.steps, 60, m.strideM / 0.75 * Math.min(1, m.speedMps / 0.5)) : idleWave(t);
-  w.z += m.accelerationMps2;
-  w.x += m.lateralAccelerationMps2;
+  // 颠簸幅度封顶：驾车速度下按步幅等比放大（步幅 3m → 4×）会让重力基线瞬时趋零，
+  // composeAccel 的倾角钳制随之无解；波形只保留人体感，不还原真实路面
+  const w = m.speedMps > 0
+    ? stepWave(m.steps, 60, Math.min(2, m.strideM / 0.75 * Math.min(1, m.speedMps / 0.5)))
+    : idleWave(t);
+  const a = composeAccel(w, m.accelerationMps2, m.lateralAccelerationMps2);
   const h = rad(m.headingDeg);
   const values: Record<string, string> = {
-    acceleration: `${fmt(w.x)}:${fmt(w.y)}:${fmt(w.z)}`,
+    acceleration: `${fmt(a.x)}:${fmt(a.y)}:${fmt(a.z)}`,
     gyroscope: `0:${fmt(-m.turnRateRad)}:0`,
     orientation: `${fmt(m.headingDeg)}:-90:0`,
     'magnetic-field': `${fmt(-20 * Math.sin(h))}:-40:${fmt(-20 * Math.cos(h))}`,

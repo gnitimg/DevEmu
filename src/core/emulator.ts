@@ -125,6 +125,8 @@ async function startOnPort(
     '-port',
     String(port),
     '-no-boot-anim',
+    // skin 边框只在部分启动状态下出现，出现时窗口含 bezel 导致药丸对位与外观不一致：统一不画
+    '-noskin',
     '-netdelay',
     'none',
     '-netspeed',
