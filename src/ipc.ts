@@ -12,6 +12,7 @@ import {
   loadAppSettings,
   saveAppSettings,
   settingsPath,
+  migrateDataRoot,
   DEFAULT_DATA_ROOT,
 } from './core/settings.ts';
 import { appendLog, clearLogs } from './core/log.ts';
@@ -530,7 +531,7 @@ export function registerIpc(): void {
   });
   watchHuaweiLogin((loggedIn) => broadcast('huawei:changed', { loggedIn }));
 
-  handle('settings:save', (raw: unknown) => {
+  handle('settings:save', async (raw: unknown) => {
     const s = raw as {
       dataRoot?: string;
       sdkPath?: string;
@@ -579,6 +580,32 @@ export function registerIpc(): void {
     const agent = loadAppSettings();
     const pillWasOn = agent.pillEnabled !== false;
     const pillOn = s.pillEnabled !== false;
+    // 数据根变更：先随迁全部数据再切换；迁不完（源被占用）则放弃切换，避免数据两边分裂后被当成已迁移
+    const oldRoot = path.resolve(agent.dataRoot);
+    const newRoot = path.resolve(s.dataRoot);
+    if (path.relative(oldRoot, newRoot) !== '') {
+      // 虚拟机磁盘文件被进程持有，不关干净迁移必留残缺
+      if (listRunning().length > 0)
+        return fail('有虚拟机正在运行，请先全部关闭后再更改数据根目录');
+      // 桥进程持有旧数据根里的脚本路径，先停，保存完成后按新数据根重启
+      if (agentBridgeRunning()) await stopAgentBridge().catch(() => undefined);
+      const migration = migrateDataRoot(oldRoot, newRoot);
+      if (migration.failed.length) {
+        appendLog(
+          DEFAULT_DATA_ROOT,
+          `数据根迁移失败：${migration.failed.join('、')} 未迁完，数据根保持不变`,
+        );
+        return fail(
+          `以下内容未能迁入新数据根（可能被占用）：${migration.failed.join('、')}，数据根未变更`,
+        );
+      }
+      // 下载记录已迁到新根，下载存储改挂新位置，否则后续任务会把文件写回旧根
+      initDownloadStore(newRoot);
+      appendLog(
+        DEFAULT_DATA_ROOT,
+        `数据根迁移：${migration.moved.length} 项已迁至 ${newRoot}（改写 ${migration.iniFixed} 个虚拟机配置）`,
+      );
+    }
     saveAppSettings({
       dataRoot: s.dataRoot,
       sdkPath: s.sdkPath,

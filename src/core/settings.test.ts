@@ -8,10 +8,16 @@ import {
   saveSettings,
   ensureDataDirs,
   settingsPath,
+  migrateDataRoot,
 } from './settings.ts';
 
 function tmpRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-test-'));
+}
+
+function writeFile(p: string, content: string): void {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, content, 'utf8');
 }
 
 test('settings 往返保存加载', () => {
@@ -52,4 +58,142 @@ test('ensureDataDirs 建齐目录结构', () => {
     assert.ok(fs.existsSync(path.join(root, sub)), sub);
   }
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 全量随迁且源目录清空', () => {
+  const from = tmpRoot();
+  const to = path.join(tmpRoot(), 'dest');
+  const pairs: [string, string][] = [
+    [path.join('projects', 'p1', 'meta.json'), 'p1'],
+    [path.join('devices', 'avd', 'a.ini'), 'ini'],
+    [path.join('devices', 'apps', 'x.apk'), 'apk'],
+    [path.join('devices', 'runs', 'r.json'), 'run'],
+    [path.join('agent', 'agent-mcp.mjs'), 'mjs'],
+    [path.join('logs', 'app.log'), 'log'],
+    [path.join('location', 'routes', 'r1.json'), 'route'],
+    [path.join('location', 'prefs.json'), 'prefs'],
+    [path.join('camera', 'screen.jpg'), 'jpg'],
+    [path.join('screenshots', 's.png'), 'png'],
+    ['downloads.json', 'dl'],
+  ];
+  for (const [rel, content] of pairs) writeFile(path.join(from, rel), content);
+  const r = migrateDataRoot(from, to);
+  assert.deepEqual(r.failed, []);
+  assert.deepEqual(
+    r.moved.slice().sort(),
+    [
+      'projects',
+      path.join('devices', 'avd'),
+      path.join('devices', 'apps'),
+      path.join('devices', 'runs'),
+      'agent',
+      'logs',
+      'location',
+      'camera',
+      'screenshots',
+      'downloads.json',
+    ].sort(),
+  );
+  for (const [rel, content] of pairs)
+    assert.equal(
+      fs.readFileSync(path.join(to, rel), 'utf8'),
+      content,
+      rel,
+    );
+  assert.equal(fs.existsSync(from), false, '源根目录应无残留');
+  fs.rmSync(to, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 目标已有同名内容：以迁移源为准，目标独有项保留', () => {
+  const from = tmpRoot();
+  const to = tmpRoot();
+  writeFile(path.join(from, 'projects', 'p1', 'meta.json'), 'new');
+  writeFile(path.join(from, 'downloads.json'), 'new-dl');
+  writeFile(path.join(to, 'projects', 'p1', 'meta.json'), 'old');
+  writeFile(path.join(to, 'projects', 'p2', 'meta.json'), 'keep');
+  writeFile(path.join(to, 'logs', 'app.log'), 'keep-log');
+  const r = migrateDataRoot(from, to);
+  assert.deepEqual(r.failed, []);
+  assert.equal(
+    fs.readFileSync(path.join(to, 'projects', 'p1', 'meta.json'), 'utf8'),
+    'new',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(to, 'projects', 'p2', 'meta.json'), 'utf8'),
+    'keep',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(to, 'logs', 'app.log'), 'utf8'),
+    'keep-log',
+  );
+  assert.equal(fs.readFileSync(path.join(to, 'downloads.json'), 'utf8'), 'new-dl');
+  assert.equal(fs.existsSync(from), false);
+  fs.rmSync(to, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 源缺项按跳过处理，settings.json 不随迁也不被删', () => {
+  const from = tmpRoot();
+  const to = tmpRoot();
+  writeFile(path.join(from, 'logs', 'app.log'), 'log');
+  writeFile(settingsPath(from), '{"dataRoot":"x"}');
+  const r = migrateDataRoot(from, to);
+  assert.deepEqual(r.failed, []);
+  assert.ok(fs.existsSync(path.join(to, 'logs', 'app.log')));
+  assert.ok(fs.existsSync(settingsPath(from)));
+  assert.ok(fs.existsSync(from), '旧根还压着 settings.json，不能被删');
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.rmSync(from, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 新根在旧根子树内：安全项照迁，含新根的项跳过', () => {
+  const from = tmpRoot();
+  const to = path.join(from, 'projects', 'custom', 'data');
+  writeFile(path.join(to, 'seed.txt'), 'seed');
+  writeFile(path.join(from, 'logs', 'app.log'), 'log');
+  const r = migrateDataRoot(from, to);
+  assert.deepEqual(r.failed, []);
+  assert.ok(r.moved.includes('logs'));
+  assert.ok(!r.moved.includes('projects'));
+  assert.ok(fs.existsSync(path.join(to, 'logs', 'app.log')));
+  assert.ok(fs.existsSync(path.join(to, 'seed.txt')));
+  fs.rmSync(from, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 同一目录为空操作', () => {
+  const root = tmpRoot();
+  writeFile(path.join(root, 'logs', 'app.log'), 'log');
+  const r = migrateDataRoot(root, root);
+  assert.deepEqual(r, { moved: [], failed: [], iniFixed: 0 });
+  assert.ok(fs.existsSync(path.join(root, 'logs', 'app.log')));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 改写 AVD ini 里指向旧数据根的绝对路径', () => {
+  const from = tmpRoot();
+  const to = tmpRoot();
+  writeFile(
+    path.join(from, 'devices', 'avd', 'a.ini'),
+    `avd.ini.encoding=UTF-8\r\npath=${path.join(from, 'devices', 'avd', 'a.avd')}\r\ntarget=android-36\r\n`,
+  );
+  writeFile(
+    path.join(from, 'projects', 'p1', 'avd', 'b.ini'),
+    `path=${path.join(from, 'projects', 'p1', 'avd', 'b.avd')}\n`,
+  );
+  // 指向数据根外的路径不属于本根，保持原样
+  writeFile(
+    path.join(from, 'devices', 'avd', 'keep.ini'),
+    'path=C:\\elsewhere\\x.avd\n',
+  );
+  const r = migrateDataRoot(from, to);
+  assert.deepEqual(r.failed, []);
+  assert.equal(r.iniFixed, 2);
+  const a = fs.readFileSync(path.join(to, 'devices', 'avd', 'a.ini'), 'utf8');
+  assert.ok(a.includes(`path=${path.join(to, 'devices', 'avd', 'a.avd')}`), a);
+  assert.ok(a.includes('\r\n'), '应保留原 CRLF 行尾');
+  const b = fs.readFileSync(path.join(to, 'projects', 'p1', 'avd', 'b.ini'), 'utf8');
+  assert.ok(b.includes(`path=${path.join(to, 'projects', 'p1', 'avd', 'b.avd')}`), b);
+  const keep = fs.readFileSync(path.join(to, 'devices', 'avd', 'keep.ini'), 'utf8');
+  assert.equal(keep, 'path=C:\\elsewhere\\x.avd\n');
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.rmSync(from, { recursive: true, force: true });
 });
