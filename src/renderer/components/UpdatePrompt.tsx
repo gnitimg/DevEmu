@@ -75,10 +75,8 @@ export function UpdatePrompt() {
     setPhase('downloading');
     setProgress({ received: 0, total: 0 });
     const r = await api.updateDownload();
-    if (!r.ok) {
-      toast(r.error);
-      setPhase('hidden');
-    }
+    // 失败提示由主进程 update:error 广播统一给出（这里不重复 toast）
+    if (!r.ok) setPhase('hidden');
   }
 
   async function cancel() {

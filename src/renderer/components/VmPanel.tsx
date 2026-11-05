@@ -24,7 +24,8 @@ export function VmPanel({
   const [avds, setAvds] = useState<AvdInfo[] | null>(null);
   const [error, setError] = useState('');
   const [busyName, setBusyName] = useState('');
-  const [starting, setStarting] = useState<Set<string>>(new Set());
+  // 名称 → 点击启动的时刻；上限按时间戳判定（定时器会被 3s 轮询重置而永不触发）
+  const [starting, setStarting] = useState<Record<string, number>>({});
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -40,26 +41,28 @@ export function VmPanel({
   const runningOf = (name: string): EmuDevice | undefined =>
     emus.find((e) => e.state === 'device' && e.avdName === name);
 
-  // 「启动中」：点击启动后持续到设备真正上线（或超时）
+  // 「启动中」：点击启动后持续到设备真正上线或超时（与主进程 waitBooted 300s 对齐留缓冲）
   useEffect(() => {
-    if (starting.size === 0) return;
+    const entries = Object.entries(starting);
+    if (entries.length === 0) return;
     const online = new Set(emus.filter((e) => e.state === 'device' && e.avdName).map((e) => e.avdName!));
-    const next = new Set([...starting].filter((n) => !online.has(n)));
-    if (next.size !== starting.size) setStarting(next);
-    const timer = setTimeout(() => setStarting(new Set()), 240_000);
-    return () => clearTimeout(timer);
+    const next: Record<string, number> = {};
+    for (const [name, at] of entries) {
+      if (!online.has(name) && Date.now() - at < 320_000) next[name] = at;
+    }
+    if (Object.keys(next).length !== entries.length) setStarting(next);
   }, [emus, starting]);
 
   async function launch(name: string) {
     setBusyName(name);
     setError('');
-    setStarting((s) => new Set(s).add(name));
+    setStarting((s) => ({ ...s, [name]: Date.now() }));
     const r = await api.launchEmu(scope, name);
     if (!r.ok) {
       setError(r.error);
       setStarting((s) => {
-        const n = new Set(s);
-        n.delete(name);
+        const n = { ...s };
+        delete n[name];
         return n;
       });
     }
@@ -122,7 +125,7 @@ export function VmPanel({
           <tbody>
             {avds.map((avd) => {
               const run = runningOf(avd.name);
-              const isStarting = starting.has(avd.name);
+              const isStarting = avd.name in starting;
               return (
                 <tr key={avd.name}>
                   <td>

@@ -83,10 +83,7 @@ export function About({ env }: { env: EnvStatus | null }) {
     setDownloading(true);
     const r = await api.updateDownload();
     setDownloading(false);
-    if (!r.ok) {
-      toast(r.error);
-      return;
-    }
+    if (!r.ok) return; // 失败由主进程 update:error 广播统一提示，避免双弹
     // 成功后进度与安装就绪由全局更新弹窗接管
     toast('已开始下载新版本', 'ok');
   }

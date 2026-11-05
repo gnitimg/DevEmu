@@ -25,7 +25,8 @@ export function DeviceDetail({
   const [avd, setAvd] = useState<AvdInfo | null>(null);
   const [hw, setHw] = useState<{ ramMb?: number; cores?: number; storageGb?: number } | null>(null);
   const [apps, setApps] = useState<ApkMeta[] | null>(null);
-  const [starting, setStarting] = useState(false);
+  // 点击启动的时刻（null=非启动中）；上限按时间戳判定，定时器会被轮询重置而永不触发
+  const [starting, setStarting] = useState<number | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [runsKey, setRunsKey] = useState(0);
@@ -56,22 +57,20 @@ export function DeviceDetail({
 
   const run = emus.find((e) => e.state === 'device' && e.avdName === avdName);
 
-  // 启动中：设备上线或超时后清除
+  // 启动中：设备上线或超时（与主进程 waitBooted 300s 对齐留缓冲）后清除
   useEffect(() => {
-    if (!starting) return;
-    if (run) setStarting(false);
-    const timer = setTimeout(() => setStarting(false), 240_000);
-    return () => clearTimeout(timer);
+    if (starting === null) return;
+    if (run || Date.now() - starting > 320_000) setStarting(null);
   }, [run, starting]);
 
   async function launch() {
     setBusy('launch');
     setError('');
-    setStarting(true);
+    setStarting(Date.now());
     const r = await api.launchEmu(scope, avdName);
     if (!r.ok) {
       setError(r.error);
-      setStarting(false);
+      setStarting(null);
     }
     refreshEmus();
     setBusy('');
@@ -199,7 +198,7 @@ export function DeviceDetail({
               {busy === 'stop' ? '关闭中' : '关闭'}
             </button>
           ) : (
-                    <button className="btn btn-primary" disabled={busy !== '' || starting} onClick={launch}>
+                    <button className="btn btn-primary" disabled={busy !== '' || starting !== null} onClick={launch}>
                       {starting ? '启动中' : '启动'}
             </button>
           )}

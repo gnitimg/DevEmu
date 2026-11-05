@@ -210,7 +210,7 @@ function broadcastAutoInstall(payload: {
   }
 }
 
-// 设备启动完成后把该作用域库中的所有应用补装到设备，结果经 apk:autoinstall 广播
+// 设备启动完成后把该作用域库中的应用补装到设备（已装的跳过），结果经 apk:autoinstall 广播
 function autoInstallAfterBoot(
   scope: Scope,
   avdName: string,
@@ -228,6 +228,18 @@ function autoInstallAfterBoot(
       if (!booted) return; // 启动超时或中途关闭：静默放弃
       const results: AutoInstallResult[] = [];
       for (const a of apps) {
+        // 补装语义：已装的应用跳过——每次开机都 -r 重装会让冷启动后再空转
+        // 一轮包管理器，且不断弹"已安装"噪音；更新走应用库的"更新"按钮
+        try {
+          const chk = await runCmd(
+            sdk.adb,
+            ['-s', serial, 'shell', 'pm', 'path', a.packageName ?? ''],
+            { timeoutMs: 15_000 },
+          );
+          if (chk.code === 0 && /package:/.test(chk.stdout)) continue;
+        } catch {
+          // 探测失败按未安装处理，继续尝试安装
+        }
         const r = await installApk(
           sdk.adb,
           serial,
@@ -928,7 +940,12 @@ export function registerIpc(): void {
   handle('update:download', async () => {
     if (downloading) return ok(true);
     const release = lastRelease;
-    if (!release) return fail('请先检查更新');
+    // 失败一律经 update:error 广播：UpdatePrompt 只信广播，避免 invoke
+    // 返回 fail 但弹窗没人通知、卡在“下载中”
+    if (!release) {
+      broadcast('update:error', { message: '请先检查更新' });
+      return fail('请先检查更新');
+    }
     downloading = true;
     // “设备网络代理”是本机通用代理入口，更新下载跟随它；限速沿用全局下载限速
     const settings = loadAppSettings();
@@ -1465,26 +1482,30 @@ export function registerIpc(): void {
     // HarmonyOS 在线设备（hdc）与 adb 设备可并存；查询失败不影响 Android 列表
     const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
     if (harmony) {
-      try {
-        // 3 秒轮询下结果缓存 5 秒，避免每轮都 spawn hdc
-        const now = Date.now();
-        if (
-          !harmonyTargetsCache ||
-          now - harmonyTargetsCache.at >= HARMONY_TARGETS_CACHE_MS
-        ) {
+      // 3 秒轮询下结果缓存 5 秒（失败同样缓存）：hdc 服务挂起时每次 list targets
+      // 都要等满 10s 超时，不能让每轮轮询都排队 spawn 一次
+      const now = Date.now();
+      const stale =
+        !harmonyTargetsCache ||
+        now - harmonyTargetsCache.at >= HARMONY_TARGETS_CACHE_MS;
+      if (stale) {
+        try {
           harmonyTargetsCache = {
             at: now,
             targets: await harmonyTargets(harmony.hdc),
           };
+        } catch {
+          harmonyTargetsCache = { at: now, targets: [] };
+          // hdc 服务未起或无设备：忽略
         }
-        for (const t of harmonyTargetsCache.targets) {
+      }
+      const cached = harmonyTargetsCache;
+      if (cached) {
+        for (const t of cached.targets) {
           if (!result.some((r) => r.serial === t)) {
             result.push({ serial: t, state: 'device', type: 'harmonyos' });
           }
         }
-      } catch {
-        harmonyTargetsCache = null;
-        // hdc 服务未起或无设备：忽略
       }
     }
     return ok(result);

@@ -168,6 +168,9 @@ export function runSdkmanager(
     ? ['--proxy_type', 'http', '--proxy_host', '127.0.0.1', '--proxy_port', String(opts.proxy.port)]
     : [];
   return run(tool.exe, [...tool.prefix, `--sdk_root=${sdk.root}`, ...proxyArgs, ...args], {
+    // 查询/卸载类操作 bounded：JVM 挂起时不能让调用方 IPC 永不返回；
+    // 下载安装走 downloads 的独立 spawn，不经此路
+    timeoutMs: 300_000,
     onLine: opts.onLine ? (l) => opts.onLine!(l) : undefined,
   });
 }

@@ -158,7 +158,9 @@ export class ShapingProxy {
         void pumpDown(c).catch(() => undefined);
       });
       client.on('data', (c: Buffer) => {
-        if (!remote.write(c)) remote.pause();
+        // 上行背压：remote 写满要暂停的是数据源 client（暂停 remote 挡不住
+        // client 继续泵数据，只会无界缓冲）
+        if (!remote.write(c)) client.pause();
       });
       remote.on('drain', () => client.resume());
       const bye = () => {

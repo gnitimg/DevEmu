@@ -106,9 +106,19 @@ export function stream(
   };
   child.stdout?.on('data', (c: Buffer) => pump(c.toString('utf8')));
   child.stderr?.on('data', (c: Buffer) => pump(c.toString('utf8')));
+  let ended = false;
   child.on('close', (code) => {
+    if (ended) return;
+    ended = true;
     if (buf) opts.onLine(buf);
     opts.onExit?.(code);
+  });
+  // spawn 失败（进程不存在/被策略拦截）只发 error 不发 close：不监听会以
+  // 未捕获异常崩掉主进程；与 close 互斥防 onExit 双发
+  child.on('error', () => {
+    if (ended) return;
+    ended = true;
+    opts.onExit?.(-1);
   });
   return child;
 }

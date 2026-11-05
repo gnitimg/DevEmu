@@ -139,10 +139,16 @@ export function closeAllPills(): void {
 
 const locationPanels = new Map<string, import('electron').BrowserWindow>();
 
-/** 物理像素矩形 → 所在显示器的 DIP 矩形：按"包含左上角的显示器"的 scaleFactor 手动换算。
- *  不用 screenToDipRect(null,…)（按主显示器换算），否则多显示器不同 DPI 时
- *  与 createPill 初建算法不一致，GEOM 更新后药丸/面板会跳位。 */
-async function physRectToDip(geom: PillGeom): Promise<{ x: number; y: number; width: number; height: number }> {
+/** 物理像素矩形 → 所在显示器的 DIP 矩形：按"包含左上角的显示器"的 scaleFactor 手动换算，
+ *  work 为该显示器的工作区（已是 DIP）。不用 screenToDipRect(null,…)（按主显示器换算），
+ *  否则多显示器不同 DPI 时与 createPill 初建算法不一致，GEOM 更新后药丸/面板会跳位。 */
+async function physRectToDip(geom: PillGeom): Promise<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  work: { x: number; y: number; width: number; height: number };
+}> {
   const { screen } = await import('electron');
   const disp =
     screen.getAllDisplays().find((d) => {
@@ -161,6 +167,7 @@ async function physRectToDip(geom: PillGeom): Promise<{ x: number; y: number; wi
     y: Math.round(geom.y / s),
     width: Math.round(geom.screenW / s),
     height: Math.round(geom.screenH / s),
+    work: disp.workArea,
   };
 }
 
@@ -209,7 +216,7 @@ function locationPanelHtml(
 
 /** 虚拟定位面板：药丸定位按钮唤出的参数与方向控制小窗（每台设备一个，已开则置前） */
 export async function openLocationPanel(serial: string): Promise<void> {
-  const { BrowserWindow, screen } = await import('electron');
+  const { BrowserWindow } = await import('electron');
   const existing = locationPanels.get(serial);
   if (existing && !existing.isDestroyed()) {
     // 二次点击：播放收起动画后关窗（渲染层 __panelClose 自关，主进程兜底强关）
@@ -231,7 +238,6 @@ export async function openLocationPanel(serial: string): Promise<void> {
   // 零延迟（不走 PowerShell 查 qemu 几何），高度/顶边天然与药丸对齐
   let PANEL_H = 764;
   const pill = pills.get(serial);
-  const wa = screen.getPrimaryDisplay().workArea;
   if (pill && !pill.isDestroyed()) {
     const b = pill.getBounds();
     PANEL_H = b.height;
@@ -243,16 +249,18 @@ export async function openLocationPanel(serial: string): Promise<void> {
     if (entry) {
       const geom = await getShellGeometry(entry.avdName).catch(() => undefined);
       if (geom) {
-        const s = screen.getPrimaryDisplay().scaleFactor || 1;
-        PANEL_H = Math.max(
-          320,
-          Math.min(Math.round(geom.screenH / s), wa.height - 12),
-        );
-        x = Math.round((geom.x + geom.screenW) / s) + VM_GAP_DIP - 6;
-        y = Math.max(
-          wa.y,
-          Math.min(Math.round(geom.y / s), wa.y + wa.height - PANEL_H),
-        );
+        // 与药丸同款换算：按所在显示器（而非主显示器）的 scaleFactor 与工作区
+        const b = await physRectToDip({
+          serial,
+          avdName: '',
+          x: geom.x,
+          y: geom.y,
+          screenW: geom.screenW,
+          screenH: geom.screenH,
+        });
+        PANEL_H = Math.max(320, Math.min(b.height, b.work.height - 12));
+        x = b.x + b.width + VM_GAP_DIP - 6;
+        y = Math.max(b.work.y, Math.min(b.y, b.work.y + b.work.height - PANEL_H));
       }
     }
   }

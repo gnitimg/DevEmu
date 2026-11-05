@@ -159,6 +159,9 @@ async function startOnPort(
   child.stderr?.on('data', (c: Buffer) => {
     if (stderrTail.length < 8000) stderrTail += c.toString('utf8');
   });
+  // stdout 是 pipe 却无人消费：OS 管道缓冲（约 64KB）写满后 qemu 会阻塞在
+  // stdout 写入上，表现为模拟器卡死/黑屏假死——必须持续丢弃
+  child.stdout?.on('data', () => undefined);
 
   return new Promise((resolve, reject) => {
     const entry: RunningEmu = {

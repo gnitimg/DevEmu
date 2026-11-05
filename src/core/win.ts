@@ -2,8 +2,15 @@ import { run, stream } from './exec.ts';
 import { buildWindowGuardScript } from './windowGroup.ts';
 export { buildWindowGuardScript } from './windowGroup.ts';
 
+/** avd 名会嵌入 WQL/正则/PowerShell 字符串（进程匹配、窗口查找），
+ *  这些函数可能收到渲染层或 console 回显来的名字，入口统一校验 */
+function assertAvdName(avdName: string): void {
+  if (!/^[\w.-]{1,50}$/.test(avdName)) throw new Error('非法的虚拟机名称');
+}
+
 /** 按 AVD 名强杀 qemu 进程树（注册表丢失时的兜底关闭） */
 export async function killEmulatorProcess(avdName: string): Promise<void> {
+  assertAvdName(avdName);
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
     `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
@@ -41,6 +48,7 @@ export function repositionEmulatorWindow(
   x: number,
   y: number,
 ): Promise<void> {
+  assertAvdName(avdName);
   // avdName 限定为 [\w.-]，可直接嵌入 WQL/正则
   // force=true：首次定位，无条件移动；false：仅当窗口与虚拟屏幕完全无交集时移动
   const script = (force: boolean) =>
@@ -180,6 +188,7 @@ export interface ShellGeom {
 export async function getShellGeometry(
   avdName: string,
 ): Promise<ShellGeom | undefined> {
+  assertAvdName(avdName);
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
     `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
@@ -224,6 +233,7 @@ export function startPairDrag(
   pillHwndHex: string,
   panelHwndHex = '',
 ): void {
+  assertAvdName(avdName);
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
     'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuD { public struct RECT { public int L; public int T; public int R; public int B; } public struct POINT { public int X; public int Y; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int cx, int cy, bool r); [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k); [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); } }\'',

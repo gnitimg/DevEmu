@@ -59,10 +59,14 @@ const createWindow = () => {
 
 function startMain(): void {
   app.on('second-instance', () => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
+    // 药丸/定位面板也是本进程窗口（标题 devemu-* 前缀）：必须聚焦主窗口
+    const main =
+      BrowserWindow.getAllWindows().find(
+        (w) => !w.isDestroyed() && !w.getTitle().startsWith('devemu-'),
+      ) ?? BrowserWindow.getAllWindows()[0];
+    if (main) {
+      if (main.isMinimized()) main.restore();
+      main.focus();
     }
   });
 
