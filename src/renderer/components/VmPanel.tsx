@@ -308,7 +308,7 @@ function NewVmModal({
           <button className="btn" onClick={onDone}>
             取消
           </button>
-          <button className="btn btn-primary" disabled={creating || !name.trim() || !imagePkg} onClick={create}>
+          <button className="btn btn-primary" disabled={creating || !name.trim() || !imagePkg || !defId} onClick={create}>
             {creating ? '创建中' : '创建'}
           </button>
         </>

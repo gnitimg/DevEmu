@@ -48,7 +48,7 @@ function makeAvd(home: string, name: string): void {
   fs.mkdirSync(path.join(home, `${name}.avd`), { recursive: true });
 }
 
-test('countAllAvds / clearAllAvds 覆盖共享库与所有项目', () => {
+test('countAllAvds / clearAllAvds 覆盖共享库与所有项目', async () => {
   const root = tmpRoot();
   const shared = path.join(root, 'devices', 'avd');
   const proj = path.join(root, 'projects', 'demo', 'avd');
@@ -56,31 +56,31 @@ test('countAllAvds / clearAllAvds 覆盖共享库与所有项目', () => {
   makeAvd(shared, 'b');
   makeAvd(proj, 'c');
   assert.equal(countAllAvds(root), 3);
-  assert.equal(clearAllAvds(root), 3);
+  assert.equal(await clearAllAvds(root), 3);
   assert.equal(countAllAvds(root), 0);
   // 项目目录本身保留，只清虚拟机
   assert.ok(fs.existsSync(path.join(root, 'projects', 'demo', 'avd')));
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('clearAllAvds 不碰应用库等其他文件', () => {
+test('clearAllAvds 不碰应用库等其他文件', async () => {
   const root = tmpRoot();
   const shared = path.join(root, 'devices', 'avd');
   makeAvd(shared, 'a');
   fs.mkdirSync(path.join(root, 'devices', 'apps'), { recursive: true });
   fs.writeFileSync(path.join(root, 'devices', 'apps', 'x.apk'), 'apk', 'utf8');
-  assert.equal(clearAllAvds(root), 1);
+  assert.equal(await clearAllAvds(root), 1);
   assert.ok(fs.existsSync(path.join(root, 'devices', 'apps', 'x.apk')));
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('factoryReset 清理已知目录，保留数据根目录本身与未知文件', () => {
+test('factoryReset 清理已知目录，保留数据根目录本身与未知文件', async () => {
   const root = tmpRoot();
   makeAvd(path.join(root, 'devices', 'avd'), 'a');
   fs.writeFileSync(path.join(root, 'settings.json'), '{}', 'utf8');
   fs.writeFileSync(path.join(root, 'downloads.json'), '[]', 'utf8');
   fs.writeFileSync(path.join(root, 'keep.txt'), 'not ours', 'utf8');
-  factoryReset(root, root);
+  await factoryReset(root, root);
   assert.ok(fs.existsSync(root));
   assert.ok(fs.existsSync(path.join(root, 'keep.txt')));
   assert.ok(!fs.existsSync(path.join(root, 'devices')));

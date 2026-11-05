@@ -164,7 +164,10 @@ export async function installAndroidCmdtools(zipPath: string, dir: string, setPc
       throw new Error('压缩包结构不符合预期（缺少 cmdline-tools/bin）');
     }
     fs.mkdirSync(path.join(dir, 'cmdline-tools'), { recursive: true });
-    fs.renameSync(extracted, path.join(dir, 'cmdline-tools', 'latest'));
+    const latest = path.join(dir, 'cmdline-tools', 'latest');
+    // 带 bin 的 latest 在函数入口已幂等跳过；走到这里说明是上次失败的残壳，清掉再落位
+    fs.rmSync(latest, { recursive: true, force: true });
+    fs.renameSync(extracted, latest);
     setPct(95);
   } finally {
     try {

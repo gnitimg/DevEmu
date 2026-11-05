@@ -413,7 +413,8 @@ async function chainAndroidComponents(
   }).catch(() => undefined);
   const dl = envDownloadOpts(settings);
   const lite = { root: dir, sdkmanager: sm }; // startDownload 仅用到 root 与 sdkmanager
-  await startDownload(
+  // 前序失败（含被取消）必须中止链路：继续装 emulator 只会白耗带宽，SDK 仍不可用
+  const pt = await startDownload(
     lite,
     java,
     dl.proxy,
@@ -426,6 +427,7 @@ async function chainAndroidComponents(
       upstreamPort: dl.upstreamPort,
     },
   );
+  if (!pt.ok) throw new Error(pt.error ?? 'platform-tools 安装失败');
   await startDownload(lite, java, dl.proxy, 'emulator', 'emulator', undefined, {
     parallel: dl.parallel,
     maxBps: dl.maxBps,
@@ -747,7 +749,7 @@ export function registerIpc(): void {
     closeLocationPanels();
     await stopAllEmulators();
     closeAllPills();
-    const deleted = clearAllAvds(settings.dataRoot);
+    const deleted = await clearAllAvds(settings.dataRoot);
     appendLog(settings.dataRoot, `清除所有虚拟机：删除 ${deleted} 台`);
     return ok(deleted);
   });
@@ -759,7 +761,7 @@ export function registerIpc(): void {
     closeAllPills();
     await stopAllEmulators();
     await stopAgentBridge().catch(() => undefined);
-    const failed = factoryReset(settings.dataRoot);
+    const failed = await factoryReset(settings.dataRoot);
     appendLog(
       DEFAULT_DATA_ROOT,
       failed.length
@@ -917,6 +919,8 @@ export function registerIpc(): void {
   handle('update:install', () => {
     if (!downloadedExePath) return fail('请先下载更新');
     const exePath = downloadedExePath;
+    // 立即清空：退出被延迟时重复点击会 spawn 第二个安装器
+    downloadedExePath = null;
     // 略等当前 invoke 返回、界面收尾，再交给 Squirrel 安装器；退出走 before-quit 清理
     setTimeout(() => {
       spawnInstaller(exePath);
@@ -1368,13 +1372,17 @@ export function registerIpc(): void {
         if (d.serial.startsWith('emulator-')) {
           const avdName = await avdNameCached(sdk.adb, d.serial);
           if (process.platform === 'win32' && d.state === 'device' && avdName && loadAppSettings().pillEnabled !== false && !hasPill(d.serial)) {
-            // 开机期窗口几何尚未就绪：失败后 60 秒内不重试，避免 3 秒轮询每次
-            // 都 spawn PowerShell 查询（冷启动期间持续空转拖慢整机）
-            const lastAttempt = pillRetryAt.get(d.serial) ?? 0;
-            if (Date.now() - lastAttempt >= PILL_RETRY_MS) {
-              pillRetryAt.set(d.serial, Date.now());
-              const geom = await getShellGeometry(avdName);
-              if (geom) await openPill({ ...geom, serial: d.serial, avdName });
+            try {
+              // 开机期窗口几何尚未就绪：失败后 60 秒内不重试，避免 3 秒轮询每次
+              // 都 spawn PowerShell 查询（冷启动期间持续空转拖慢整机）
+              const lastAttempt = pillRetryAt.get(d.serial) ?? 0;
+              if (Date.now() - lastAttempt >= PILL_RETRY_MS) {
+                pillRetryAt.set(d.serial, Date.now());
+                const geom = await getShellGeometry(avdName);
+                if (geom) await openPill({ ...geom, serial: d.serial, avdName });
+              }
+            } catch {
+              // 外部 AVD 名可能超出可嵌入脚本的字符集：该设备跳过药丸，列表照常返回
             }
           }
           result.push({

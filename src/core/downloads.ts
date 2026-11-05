@@ -281,7 +281,11 @@ export function startDownload(
 
   return new Promise((resolve) => {
     const startNow = () => {
-      if (entry.state === 'cancelled') return;
+      // 排队期间被取消：必须 resolve，否则串接方（如环境安装链式补装）永久挂死
+      if (entry.state === 'cancelled') {
+        resolve({ ok: false, error: '已取消' });
+        return;
+      }
       entry.state = 'downloading';
       void spawnTaskImpl(sdk, javaPath, proxy, pkg, entry, onLine, opts, resolve);
     };

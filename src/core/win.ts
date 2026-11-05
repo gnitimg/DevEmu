@@ -15,12 +15,14 @@ const LARGEST_WINDOW_CS = String.raw`
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr data);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     public static IntPtr LargestVisibleWindow(uint pid) {
       IntPtr best = IntPtr.Zero; long bestArea = 0;
       EnumWindows(delegate(IntPtr h, IntPtr data) {
         uint wpid; GetWindowThreadProcessId(h, out wpid);
         RECT r;
-        if (wpid == pid && IsWindowVisible(h) && GetWindowRect(h, out r)) {
+        // 最小化窗口的 rect 是 -32000 屏外坐标：排除，宁可选不到再重试
+        if (wpid == pid && IsWindowVisible(h) && !IsIconic(h) && GetWindowRect(h, out r)) {
           long area = (long)(r.R - r.L) * (r.B - r.T);
           if (area > bestArea) { bestArea = area; best = h; }
         }

@@ -113,8 +113,10 @@ async function createPill(geom: PillGeom): Promise<void> {
   win.webContents.on('console-message', (_e, level, message, line, source) => {
     console.log(`[pill:${level}] ${message} (${source}:${line})`);
   });
-  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+  win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     console.log(`[pill] load failed ${code} ${desc} ${url}`);
+    // 主帧加载失败则永远等不到 ready-to-show：关窗让 emu:list 轮询重建
+    if (isMainFrame && !win.isDestroyed()) win.close();
   });
   pillHtml(win, geom.serial);
   win.once('ready-to-show', () => {
@@ -301,8 +303,9 @@ export async function openLocationPanel(serial: string): Promise<void> {
     e.preventDefault();
     win.setTitle(`devemu-location ${serial}`);
   });
-  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+  win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     console.log(`[location] load failed ${code} ${desc} ${url}`);
+    if (isMainFrame && !win.isDestroyed()) win.close();
   });
   locationPanelHtml(win, serial);
   win.once('ready-to-show', () => {

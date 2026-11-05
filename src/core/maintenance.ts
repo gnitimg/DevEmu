@@ -55,8 +55,9 @@ export function countAllAvds(dataRoot: string): number {
  * 删除所有作用域（共享库 + 全部项目）里的虚拟机文件。
  * 直接删 <名称>.ini 与 <名称>.avd，与 listAvds 的目录扫描口径一致，
  * 不依赖 avdmanager（清除时可能 SDK 已被卸载）。
+ * 异步删除：AVD 目录可达数 GB，同步 rm 会冻结主进程所有窗口。
  */
-export function clearAllAvds(dataRoot: string): number {
+export async function clearAllAvds(dataRoot: string): Promise<number> {
   let deleted = 0;
   for (const home of avdHomeDirs(dataRoot)) {
     let entries: string[] = [];
@@ -68,7 +69,10 @@ export function clearAllAvds(dataRoot: string): number {
     for (const entry of entries) {
       if (!entry.endsWith('.ini') && !entry.endsWith('.avd')) continue;
       try {
-        fs.rmSync(path.join(home, entry), { recursive: true, force: true });
+        await fs.promises.rm(path.join(home, entry), {
+          recursive: true,
+          force: true,
+        });
         if (entry.endsWith('.avd')) deleted++;
       } catch {
         // 单个删除失败不阻塞其余
@@ -84,10 +88,10 @@ export function clearAllAvds(dataRoot: string): number {
  * settingsRoot 为 settings.json 实际所在目录（固定默认数据目录），测试时可指向临时目录。
  * 返回未能删除的目标清单（调用前应确保模拟器进程已全部退出）。
  */
-export function factoryReset(
+export async function factoryReset(
   dataRoot: string,
   settingsRoot: string = DEFAULT_DATA_ROOT,
-): string[] {
+): Promise<string[]> {
   const targets = [
     path.join(dataRoot, 'projects'),
     // devices 拆成子目录：avd 被残留进程锁住时，应用库与测试记录仍能清掉
@@ -101,11 +105,17 @@ export function factoryReset(
     // settings.json 固定在默认数据目录；重置必须删它才能回到默认设置
     settingsPath(settingsRoot),
   ];
-  // 单个目标失败（进程残留占用文件锁）不阻塞其余目标，失败清单交调用方记录
+  // 单个目标失败（进程残留占用文件锁）不阻塞其余目标，失败清单交调用方记录；
+  // 异步删除避免数 GB 清理期间冻结主进程
   const failed: string[] = [];
   for (const target of targets) {
     try {
-      fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 1000 });
+      await fs.promises.rm(target, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 1000,
+      });
     } catch {
       failed.push(target);
     }
