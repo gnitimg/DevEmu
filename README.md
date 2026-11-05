@@ -116,6 +116,7 @@ DevEmu/
 - 渲染层无 Node 集成，全部能力经 contextBridge 暴露的白名单 IPC 通道
 - IPC 入参做类型与格式校验（作用域 projectId 拒绝路径字符、包名白名单正则）
 - 不收集任何数据；代理与限速仅在本机环回端口工作
+- Windows 安装包通过 [SignPath Foundation](https://signpath.org) 的开源项目计划进行 Authenticode 代码签名，发布产物随附 `checksums.txt`（sha256）供完整性校验
 
 ## 分支
 
