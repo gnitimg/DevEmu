@@ -55,7 +55,10 @@ export function DeviceDetail({
 
   useEffect(reload, [reload]);
 
-  const run = emus.find((e) => e.state === 'device' && e.avdName === avdName);
+  // offline 也是 qemu 在跑（adb 通道抖动）：按"运行中"处理，与 VmPanel 同口径
+  const run = emus.find(
+    (e) => e.serial.startsWith('emulator-') && e.avdName === avdName,
+  );
 
   // 启动中：设备上线或超时（与主进程 waitBooted 300s 对齐留缓冲）后清除
   useEffect(() => {

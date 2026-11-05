@@ -229,7 +229,13 @@ export async function handleAgentRequest(
     sendJson(res, 404, { error: '未知接口' });
   } catch (err) {
     const msg = errMessage(err);
-    sendJson(res, msg.includes('JSON') || msg.startsWith('参数 ') || msg.includes('非法') ? 400 : 500, { error: msg });
+    // JSON 解析失败按请求方错误归 400：SyntaxError 消息是英文，靠类型判定
+    const clientError =
+      err instanceof SyntaxError ||
+      msg.startsWith('参数 ') ||
+      msg.includes('非法') ||
+      msg.includes('JSON 对象');
+    sendJson(res, clientError ? 400 : 500, { error: msg });
   }
 }
 

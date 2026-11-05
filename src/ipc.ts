@@ -199,7 +199,10 @@ ipcMain.handle('win:minimize', (event) => {
 });
 ipcMain.handle('win:toggleMaximize', (event) => {
   const w = BrowserWindow.fromWebContents(event.sender);
-  if (w) w.isMaximized() ? w.unmaximize() : w.maximize();
+  if (w) {
+    if (w.isMaximized()) w.unmaximize();
+    else w.maximize();
+  }
   return ok(true);
 });
 ipcMain.handle('win:close', (event) => {
@@ -1369,10 +1372,11 @@ export function registerIpc(): void {
     }[] = [];
     if (sdk) {
       const devices = await adbDevices(sdk.adb);
+      const pillOn = loadAppSettings().pillEnabled !== false;
       for (const d of devices) {
         if (d.serial.startsWith('emulator-')) {
           const avdName = await avdNameCached(sdk.adb, d.serial);
-          if (process.platform === 'win32' && d.state === 'device' && avdName && loadAppSettings().pillEnabled !== false && !hasPill(d.serial)) {
+          if (process.platform === 'win32' && d.state === 'device' && avdName && pillOn && !hasPill(d.serial)) {
             try {
               // 开机期窗口几何尚未就绪：失败后 60 秒内不重试，避免 3 秒轮询每次
               // 都 spawn PowerShell 查询（冷启动期间持续空转拖慢整机）

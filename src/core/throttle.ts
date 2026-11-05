@@ -47,16 +47,19 @@ export class ShapingProxy {
     return this.port;
   }
 
-  /** 领取 n 个字节额度；无限制时立即返回 */
+  /** 领取 n 个字节额度；无限制时立即返回。
+   *  请求量按桶容量截断：单块 n 超过 maxBps 时 FIFO 唤醒条件永远不满足，
+   *  队首卡死会阻塞整条下载管线。 */
   private take(n: number): Promise<void> {
     if (this.maxBps <= 0) return Promise.resolve();
+    const need = Math.min(n, this.maxBps);
     this.refill();
-    if (this.tokens >= n) {
-      this.tokens -= n;
+    if (this.tokens >= need) {
+      this.tokens -= need;
       return Promise.resolve();
     }
     return new Promise((resolve) => {
-      this.waiters.push({ n, resolve });
+      this.waiters.push({ n: need, resolve });
     });
   }
 
@@ -154,7 +157,12 @@ export class ShapingProxy {
           await this.take(piece.length);
           if (this.closed) break;
           if (!client.write(piece)) {
-            await new Promise<void>((r) => client.once('drain', () => r()));
+            // drain 之外 close/error 也要唤醒：对端断开时等 drain 会永久挂起
+            await new Promise<void>((r) => {
+              client.once('drain', r);
+              client.once('close', r);
+              client.once('error', r);
+            });
           }
           off += piece.length;
         }

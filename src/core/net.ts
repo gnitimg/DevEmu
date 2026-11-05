@@ -398,8 +398,12 @@ export async function downloadToFile(target: DlTarget, dest: string, opts: DlOpt
   const writeChunk = (b: Buffer) =>
     new Promise<void>((resolve, reject) => {
       if (fileErr) return reject(fileErr);
-      if (out.write(b)) resolve();
-      else out.once('drain', () => (fileErr ? reject(fileErr) : resolve()));
+      if (out.write(b)) return resolve();
+      // drain 之外 error/close 也要唤醒：文件流出错时等 drain 会永久挂起
+      const ok = () => (fileErr ? reject(fileErr) : resolve());
+      out.once('drain', ok);
+      out.once('error', ok);
+      out.once('close', ok);
     });
   try {
     return await download(target, opts, writeChunk);

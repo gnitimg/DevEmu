@@ -175,6 +175,8 @@ export function renderLocationPanel(): void {
   let selectedRoute = '';
   let state: LocationStatus | null = null;
   let lastFix: MapPoint | null = null;
+  // 上次跟随居中的位置：仅在位移后重新居中，避免轮询把用户拖动的地图拉回去
+  let lastFollowed: MapPoint | null = null;
   let busy = false, drawing = false, pollBusy = false, disposed = false, settingsOpen = false, ready = false;
   let drawPts: MapPoint[] = [];
   let stroke: {pointerId: number; x: number; y: number} | null = null;
@@ -279,7 +281,11 @@ export function renderLocationPanel(): void {
       coord.textContent = s.lat.toFixed(6) + ', ' + s.lon.toFixed(6);
       lastFix={lat:s.lat,lon:s.lon};
       map.setLiveMarker(s);
-      if (s.mode === 'manual') map.setCenter(s);
+      // 手动模式跟随仅在实际位移时触发：每 250ms 强制回中会让用户根本拖不动地图
+      if (s.mode === 'manual' && (s.lat !== lastFollowed?.lat || s.lon !== lastFollowed?.lon)) {
+        lastFollowed={lat:s.lat,lon:s.lon};
+        map.setCenter(s);
+      }
       if (s.lastError) error(s.lastError);
     } else map.setLiveMarker(lastFix);
     syncUi();

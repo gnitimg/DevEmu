@@ -74,15 +74,22 @@ export async function importApk(
 }
 
 export function listApps(appsDir: string): ApkMeta[] {
+  let entries: string[] = [];
   try {
-    return fs
-      .readdirSync(appsDir)
-      .filter((f) => f.endsWith('.meta.json'))
-      .map((f) => JSON.parse(fs.readFileSync(path.join(appsDir, f), 'utf8')) as ApkMeta)
-      .sort((a, b) => b.importedAt.localeCompare(a.importedAt));
+    entries = fs.readdirSync(appsDir).filter((f) => f.endsWith('.meta.json'));
   } catch {
     return [];
   }
+  const out: ApkMeta[] = [];
+  for (const f of entries) {
+    try {
+      // 单个损坏的 meta 文件不能炸掉整个应用库（与 listRoutes/listRuns 同口径）
+      out.push(JSON.parse(fs.readFileSync(path.join(appsDir, f), 'utf8')) as ApkMeta);
+    } catch {
+      // 损坏文件跳过
+    }
+  }
+  return out.sort((a, b) => b.importedAt.localeCompare(a.importedAt));
 }
 
 export function apkFilePath(appsDir: string, id: string): string {

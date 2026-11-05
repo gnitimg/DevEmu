@@ -81,8 +81,9 @@ function pidAlive(pid: number | undefined): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // EPERM = 进程存在但无权限发信号，必须按存活处理，否则注册表被误清后双重启动
+    return err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 

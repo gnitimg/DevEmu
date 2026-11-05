@@ -38,8 +38,12 @@ export function VmPanel({
 
   useEffect(reload, [reload]);
 
+  // offline 也是 qemu 在跑（adb 通道抖动）：按"运行中"处理，否则显示已停止、
+  // 点启动却被注册表以"已在运行"拒绝，状态自相矛盾
   const runningOf = (name: string): EmuDevice | undefined =>
-    emus.find((e) => e.state === 'device' && e.avdName === name);
+    emus.find(
+      (e) => e.serial.startsWith('emulator-') && e.avdName === name,
+    );
 
   // 「启动中」：点击启动后持续到设备真正上线或超时（与主进程 waitBooted 300s 对齐留缓冲）
   useEffect(() => {
