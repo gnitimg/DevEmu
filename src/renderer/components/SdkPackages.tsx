@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, onDownloadsChanged, onHuaweiChanged, type DownloadItem, type HarmonyComponent, type SdkPkg } from '../api.ts';
 import { Segmented } from './Segmented.tsx';
 import { flyToDownloads } from './Fly.tsx';
@@ -68,15 +68,27 @@ export function SdkPackages({
     });
   }, [tab, available, loading]);
 
-  // 下载快照：多任务互不影响，各按钮只反映自己
+  // 下载快照：多任务互不影响，各按钮只反映自己；任务从进行中消失
+  // （完成/取消/失败）时刷新"已安装"列表，装完的包不再停留在"可安装"
+  const prevActiveRef = useRef<Set<string>>(new Set());
   useEffect(
     () =>
       onDownloadsChanged((s) => {
         const m: Record<string, DownloadItem> = {};
         for (const d of s.active) m[d.pkg] = d;
         setDl(m);
+        const now = new Set(Object.keys(m));
+        let removed = false;
+        for (const pkg of prevActiveRef.current) {
+          if (!now.has(pkg)) {
+            removed = true;
+            break;
+          }
+        }
+        if (removed) reloadInstalled();
+        prevActiveRef.current = now;
       }),
-    [],
+    [reloadInstalled],
   );
 
   function install(pkg: string, rect: DOMRect) {

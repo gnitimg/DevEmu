@@ -142,7 +142,8 @@ test('设备列表与截图', async () => {
 test('点按参数解析与非法参数', async () => {
   const okRes = await auth('POST', '/api/device/Pixel_Test/tap', { x: 120, y: 640 });
   assert.equal(okRes.status, 200);
-  assert.ok(calls.includes('tap:Pixel_Test:android:120:640'), calls.join(','));
+  // AVD 名寻址必须解析成 canonical serial 再交给设备操作
+  assert.ok(calls.includes('tap:emulator-5554:android:120:640'), calls.join(','));
 
   const bad = await auth('POST', '/api/device/Pixel_Test/tap', { x: 'abc', y: 1 });
   assert.equal(bad.status, 400);

@@ -10,9 +10,11 @@ import { stopLocation } from './location.ts';
 import {
   applyPortalProbes,
   disableDeviceDecorations,
+  installApk,
   startDecorWatch,
   waitBooted,
 } from './adb.ts';
+import { apkFilePath, listApps } from './apk.ts';
 import {
   getShellGeometry,
   repositionEmulatorWindow,
@@ -84,6 +86,64 @@ function pidAlive(pid: number | undefined): boolean {
   }
 }
 
+/** 开机完成后把该作用域库中的应用补装到设备（已装跳过），结果广播到各窗口。
+ *  放在核心启动链路：UI 与 Agent 桥两条启动路径行为一致。 */
+function autoInstallAfterBoot(
+  sdk: SdkInfo,
+  scope: Scope,
+  avdName: string,
+  serial: string,
+): void {
+  void (async () => {
+    try {
+      const settings = loadAppSettings();
+      const apps = listApps(
+        scopeDirs(settings.dataRoot, scope).appsDir,
+      ).filter((a) => a.kind !== 'hap');
+      if (apps.length === 0) return;
+      if (!(await waitBooted(sdk.adb, serial, 300_000))) return;
+      const results: { id: string; label: string; ok: boolean; error?: string }[] =
+        [];
+      for (const a of apps) {
+        // 补装语义：已装的应用跳过——每次开机都 -r 重装会让冷启动后再空转
+        // 一轮包管理器，且不断弹"已安装"噪音；更新走应用库的"更新"按钮
+        try {
+          const chk = await run(
+            sdk.adb,
+            ['-s', serial, 'shell', 'pm', 'path', a.packageName ?? ''],
+            { timeoutMs: 15_000 },
+          );
+          if (chk.code === 0 && /package:/.test(chk.stdout)) continue;
+        } catch {
+          // 探测失败按未安装处理，继续尝试安装
+        }
+        const r = await installApk(
+          sdk.adb,
+          serial,
+          apkFilePath(scopeDirs(settings.dataRoot, scope).appsDir, a.id),
+        ).catch((err: unknown) => ({
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        results.push({
+          id: a.id,
+          label: a.label ?? a.fileName,
+          ok: !!r.ok,
+          error: r.ok ? undefined : r.error,
+        });
+      }
+      if (results.length === 0) return;
+      const { BrowserWindow } = await import('electron');
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed() && !w.webContents.isDestroyed())
+          w.webContents.send('apk:autoinstall', { avdName, results });
+      }
+    } catch {
+      // 设备已关闭等：静默
+    }
+  })();
+}
+
 /** 启动模拟器；3 秒内退出视为启动失败并翻译错误 */
 export function launchEmulator(
   sdk: SdkInfo,
@@ -117,7 +177,6 @@ async function startOnPort(
   port: number,
   opts: LaunchOptions,
 ): Promise<RunningEmu> {
-  void scope;
   // 运行期提速参数；硬件（内存/核数）以各虚拟机 config.ini 为准，不再命令行覆盖
   const args = [
     '-avd',
@@ -219,6 +278,7 @@ async function startOnPort(
           void repositionEmulatorWindow(avdName, x, y).catch(() => undefined);
           startWindowGuard(avdName, entry.serial);
         }
+        autoInstallAfterBoot(sdk, scope, avdName, entry.serial);
         // 开机后就绪链路：药丸只依赖 qemu 窗口（不依赖 adb），先并行开出；
         // 随后去圆角/刘海 overlay（后台监视防翻回）→ 联网验证探测源修正
         void waitBooted(sdk.adb, entry.serial, 300_000)

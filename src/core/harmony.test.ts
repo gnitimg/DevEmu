@@ -16,6 +16,16 @@ test('parseHdcTargets 解析 serial 与空态', () => {
   assert.deepEqual(parseHdcTargets('127.0.0.1:5555 [offline]\r\n'), ['127.0.0.1:5555']);
 });
 
+test('parseHdcTargets 过滤 daemon 提示等含空格杂行（防幽灵设备）', () => {
+  const out = [
+    'Install hdc daemon successfully',
+    'Connect server failed: connect timeout',
+    '127.0.0.1:5555',
+    '0X123456789ABCDEF',
+  ].join('\n');
+  assert.deepEqual(parseHdcTargets(out), ['127.0.0.1:5555', '0X123456789ABCDEF']);
+});
+
 test('listHarmonyComponents 扫描 openharmony 与 hms 子目录', () => {
   const set = tmpDir();
   fs.mkdirSync(path.join(set, 'openharmony', 'toolchains'), { recursive: true });

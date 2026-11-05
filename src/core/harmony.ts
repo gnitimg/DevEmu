@@ -15,13 +15,16 @@ import type { HarmonyComponent, HarmonyInfo } from './types.ts';
  * 旧版为 <root>/<版本号>/openharmony/...，探测时两种都认。
  */
 
-/** 解析 `hdc list targets` 输出为 serial 列表 */
+/** 解析 `hdc list targets` 输出为 serial 列表。
+ *  daemon 安装/连接提示等杂行（stderr 合并时更多）会被误当 serial：
+ *  serial（127.0.0.1:5555、USB 序列号）不含空格，提示行含空格，按此过滤。 */
 export function parseHdcTargets(out: string): string[] {
   return out
     .split(/\r\n|\r|\n/)
     .map((l) => l.trim())
     .filter((l) => l && l !== '[Empty]' && !l.startsWith('==='))
-    .map((l) => l.replace(/\s*\[(offline|connecting|unknown)\]$/i, ''));
+    .map((l) => l.replace(/\s*\[(offline|connecting|unknown)\]$/i, ''))
+    .filter((l) => !/\s/.test(l));
 }
 
 /** hdc 在线设备列表 */

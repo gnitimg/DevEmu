@@ -43,7 +43,8 @@ export async function importApk(
   if (!/\.apk$/i.test(fileName)) throw new Error('只支持 .apk 文件');
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const dest = path.join(appsDir, `${id}.apk`);
-  fs.copyFileSync(srcPath, dest);
+  // 大包导入不能同步复制：几百 MB 的 copyFileSync 会冻结整个主进程
+  await fs.promises.copyFile(srcPath, dest);
 
   let meta: ApkMeta = { id, fileName, size: stat.size, importedAt: new Date().toISOString() };
   if (aapt) {

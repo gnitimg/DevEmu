@@ -411,19 +411,29 @@ async function stopEmulatorOp(avdName: string, scope?: string): Promise<void> {
   }
   // 控制桥在应用重启后会丢失运行注册表：按 adb 兜底关闭
   const devices = await adbDevices(sdk.adb);
-  let found = false;
+  const targets: string[] = [];
   for (const d of devices) {
     if (!d.serial.startsWith('emulator-') || d.state !== 'device') continue;
     if ((await avdNameOf(sdk.adb, d.serial)) === avdName) {
-      found = true;
-      await run(sdk.adb, ['-s', d.serial, 'emu', 'kill'], {
-        timeoutMs: 8000,
-      }).catch(() => undefined);
+      targets.push(d.serial);
     }
   }
-  if (!found) throw new Error('该虚拟机未在运行');
-  await new Promise((r) => setTimeout(r, 3000));
-  await killEmulatorProcess(avdName).catch(() => undefined);
+  if (targets.length === 0) throw new Error('该虚拟机未在运行');
+  for (const serial of targets) {
+    await run(sdk.adb, ['-s', serial, 'emu', 'kill'], {
+      timeoutMs: 8000,
+    }).catch(() => undefined);
+  }
+  // 等 qemu 自行退出（快照保存大内存 AVD 可超 20 秒）再兜底强杀
+  const matchSet = new Set(targets);
+  let still = true;
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    const after = await adbDevices(sdk.adb).catch(() => []);
+    still = after.some((d) => matchSet.has(d.serial));
+    if (!still) break;
+  }
+  if (still) await killEmulatorProcess(avdName).catch(() => undefined);
 }
 
 export function createAgentOps(): AgentOps {

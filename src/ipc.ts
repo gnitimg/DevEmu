@@ -192,76 +192,6 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
-// 启动后自动补装结果广播
-type AutoInstallResult = {
-  id: string;
-  label: string;
-  ok: boolean;
-  error?: string;
-};
-function broadcastAutoInstall(payload: {
-  avdName: string;
-  results: AutoInstallResult[];
-}): void {
-  for (const w of BrowserWindow.getAllWindows()) {
-    // 窗口已销毁时访问 webContents 会抛 Object has been destroyed：先查窗口
-    if (!w.isDestroyed() && !w.webContents.isDestroyed())
-      w.webContents.send('apk:autoinstall', payload);
-  }
-}
-
-// 设备启动完成后把该作用域库中的应用补装到设备（已装的跳过），结果经 apk:autoinstall 广播
-function autoInstallAfterBoot(
-  scope: Scope,
-  avdName: string,
-  serial: string,
-): void {
-  void (async () => {
-    try {
-      const { sdk, settings } = status();
-      if (!sdk) return;
-      const apps = listApps(scopeDirs(settings.dataRoot, scope).appsDir).filter(
-        (a) => a.kind !== 'hap',
-      );
-      if (apps.length === 0) return;
-      const booted = await waitBooted(sdk.adb, serial, 300_000);
-      if (!booted) return; // 启动超时或中途关闭：静默放弃
-      const results: AutoInstallResult[] = [];
-      for (const a of apps) {
-        // 补装语义：已装的应用跳过——每次开机都 -r 重装会让冷启动后再空转
-        // 一轮包管理器，且不断弹"已安装"噪音；更新走应用库的"更新"按钮
-        try {
-          const chk = await runCmd(
-            sdk.adb,
-            ['-s', serial, 'shell', 'pm', 'path', a.packageName ?? ''],
-            { timeoutMs: 15_000 },
-          );
-          if (chk.code === 0 && /package:/.test(chk.stdout)) continue;
-        } catch {
-          // 探测失败按未安装处理，继续尝试安装
-        }
-        const r = await installApk(
-          sdk.adb,
-          serial,
-          apkFilePath(scopeDirs(settings.dataRoot, scope).appsDir, a.id),
-        ).catch((err: unknown) => ({
-          ok: false as const,
-          error: err instanceof Error ? err.message : String(err),
-        }));
-        results.push({
-          id: a.id,
-          label: a.label ?? a.fileName,
-          ok: !!r.ok,
-          error: r.ok ? undefined : r.error,
-        });
-      }
-      broadcastAutoInstall({ avdName, results });
-    } catch {
-      // 等待启动失败（设备已被关闭等）：不提示
-    }
-  })();
-}
-
 // 自绘标题栏的窗口控制
 ipcMain.handle('win:minimize', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.minimize();
@@ -1218,7 +1148,7 @@ export function registerIpc(): void {
       webcam: settings.webcam,
     });
     appendLog(settings.dataRoot, `启动虚拟机 ${avdName}（${entry.serial}）`);
-    autoInstallAfterBoot(scope, avdName, entry.serial);
+    // 自动补装已并入核心启动链路（Agent 桥启动同样生效）
     return ok({
       avdName: entry.avdName,
       port: entry.port,
@@ -1410,12 +1340,15 @@ export function registerIpc(): void {
         timeoutMs: 8000,
       }).catch(() => undefined);
     }
-    await new Promise((r) => setTimeout(r, 3000));
-    const after = await adbDevices(sdk.adb);
-    let still = false;
-    for (const d of after) {
-      if (!d.serial.startsWith('emulator-') || d.state !== 'device') continue;
-      if ((await avdNameOf(sdk.adb, d.serial)) === avdName) still = true;
+    // 等 qemu 自行退出（快照保存大内存 AVD 可超 20 秒）再兜底强杀；
+    // 按 serial 判断退出即可，不必每轮都经控制台反查 avd 名
+    const matchSet = new Set(matches);
+    let still = true;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const after = await adbDevices(sdk.adb).catch(() => []);
+      still = after.some((d) => matchSet.has(d.serial));
+      if (!still) break;
     }
     if (still) await killEmulatorProcess(avdName);
     appendLog(loadAppSettings().dataRoot, `关闭虚拟机 ${avdName}`);

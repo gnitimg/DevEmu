@@ -8,6 +8,27 @@ function assertAvdName(avdName: string): void {
   if (!/^[\w.-]{1,50}$/.test(avdName)) throw new Error('非法的虚拟机名称');
 }
 
+/** qemu 有多个顶层窗口（设备屏/工具窗），MainWindowHandle 会随 Z 序跳变；
+ *  设备屏窗必然面积最大。各脚本按此口径枚举选定，避免作用于错误窗口。 */
+const LARGEST_WINDOW_CS = String.raw`
+    public delegate bool EnumProc(IntPtr h, IntPtr data);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr data);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    public static IntPtr LargestVisibleWindow(uint pid) {
+      IntPtr best = IntPtr.Zero; long bestArea = 0;
+      EnumWindows(delegate(IntPtr h, IntPtr data) {
+        uint wpid; GetWindowThreadProcessId(h, out wpid);
+        RECT r;
+        if (wpid == pid && IsWindowVisible(h) && GetWindowRect(h, out r)) {
+          long area = (long)(r.R - r.L) * (r.B - r.T);
+          if (area > bestArea) { bestArea = area; best = h; }
+        }
+        return true;
+      }, IntPtr.Zero);
+      return best;
+    }`;
+
 /** 按 AVD 名强杀 qemu 进程树（注册表丢失时的兜底关闭） */
 export async function killEmulatorProcess(avdName: string): Promise<void> {
   assertAvdName(avdName);
@@ -56,11 +77,9 @@ export function repositionEmulatorWindow(
       "$ErrorActionPreference='SilentlyContinue'",
       `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
       'if (-not $proc) { exit 1 }',
-      '$w = Get-Process -Id $proc.ProcessId',
-      'if (-not $w) { exit 1 }',
-      'if ($w.MainWindowHandle -eq 0) { exit 1 }',
-      '$h = $w.MainWindowHandle',
-      'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuWin { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i); [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int i, int v); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); } }\'',
+      'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuWin { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i); [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int i, int v); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); ' + LARGEST_WINDOW_CS + ' } }\'',
+      '$h = [DevEmuWin.U]::LargestVisibleWindow([uint32]$proc.ProcessId)',
+      'if ($h -eq [IntPtr]::Zero) { exit 1 }',
       `$move = { [DevEmuWin.U]::SetWindowPos($h, [IntPtr]::Zero, ${String(x)}, ${String(y)}, 0, 0, 5) | Out-Null }`,
       force
         ? [
@@ -193,10 +212,9 @@ export async function getShellGeometry(
     "$ErrorActionPreference='SilentlyContinue'",
     `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
     'if (-not $proc) { exit 1 }',
-    '$w = Get-Process -Id $proc.ProcessId',
-    'if (-not $w -or $w.MainWindowHandle -eq 0) { exit 1 }',
-    '$h = $w.MainWindowHandle',
-    'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuS { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); } }\'',
+    'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuS { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); ' + LARGEST_WINDOW_CS + ' } }\'',
+    '$h = [DevEmuS.U]::LargestVisibleWindow([uint32]$proc.ProcessId)',
+    'if ($h -eq [IntPtr]::Zero) { exit 1 }',
     '[DevEmuS.U]::SetProcessDPIAware() | Out-Null',
     '$r = New-Object DevEmuS.RECT',
     '[DevEmuS.U]::GetWindowRect($h, [ref]$r) | Out-Null',
@@ -236,7 +254,7 @@ export function startPairDrag(
   assertAvdName(avdName);
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
-    'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuD { public struct RECT { public int L; public int T; public int R; public int B; } public struct POINT { public int X; public int Y; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int cx, int cy, bool r); [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k); [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); } }\'',
+    'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuD { public struct RECT { public int L; public int T; public int R; public int B; } public struct POINT { public int X; public int Y; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int cx, int cy, bool r); [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k); [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); ' + LARGEST_WINDOW_CS + ' } }\'',
     `$avd = '${avdName}'`,
     '[DevEmuD.U]::SetProcessDPIAware() | Out-Null',
     `$pill = [IntPtr]([Convert]::ToInt64('${pillHwndHex || '0'}', 16))`,
@@ -244,7 +262,7 @@ export function startPairDrag(
     '$hwnd = [IntPtr]::Zero',
     'for ($i = 0; $i -lt 20 -and $hwnd -eq [IntPtr]::Zero; $i++) {',
     "  $proc = Get-CimInstance Win32_Process -Filter \"Name='qemu-system-x86_64.exe'\" | Where-Object { $_.CommandLine -match ('-avd ' + $avd + '(\\s|$)') } | Select-Object -First 1",
-    '  if ($proc) { $w = Get-Process -Id $proc.ProcessId; if ($w -and $w.MainWindowHandle -ne 0) { $hwnd = $w.MainWindowHandle } }',
+    '  if ($proc) { $hwnd = [DevEmuD.U]::LargestVisibleWindow([uint32]$proc.ProcessId) }',
     '  if ($hwnd -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 500 }',
     '}',
     'if ($hwnd -eq [IntPtr]::Zero) { exit 1 }',

@@ -192,7 +192,9 @@ export async function handleAgentRequest(
         sendJson(res, 404, { error: `设备 ${serial} 不在线` });
         return;
       }
-      await handleDeviceAction(ops, req, res, method, serial, dev.type, action);
+      // 用解析出的 canonical serial：按 AVD 名寻址时操作必须落到真实串号，
+      // 否则 adb/hdc -s <avd名> 全部失败，别名兜底形同虚设
+      await handleDeviceAction(ops, req, res, method, dev.serial, dev.type, action);
       return;
     }
 

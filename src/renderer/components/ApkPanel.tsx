@@ -133,31 +133,35 @@ function InstallModal({
   onClose: () => void;
   onRecorded: () => void;
 }) {
-  const [devices, setDevices] = useState<Device[] | null>(null);
+  const [harmony, setHarmony] = useState<Device[]>([]);
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  // Android 运行中的虚拟机 + HarmonyOS 在线设备，按包类型过滤
-  useEffect(() => {
-    const android: Device[] = emus
-      .filter((e) => e.state === 'device' && e.avdName)
-      .map((e) => ({ type: 'android' as const, serial: e.serial, label: e.avdName! }));
-    const needHarmony = apk.kind === 'hap' || android.length === 0;
-    if (!needHarmony) {
-      setDevices(android);
-      setTarget(android[0]?.serial ?? '');
-      return;
-    }
-    setDevices(android);
-    setTarget(android[0]?.serial ?? '');
-    void api.harmonyTargets().then((r) => {
-      const harmony: Device[] = (r.ok ? r.data : []).map((t) => ({ type: 'harmonyos' as const, serial: t, label: t }));
-      setDevices((cur) => [...(cur ?? []), ...harmony]);
-    });
-  }, [apk, emus]);
+  // Android 运行中的虚拟机直接由 emus 派生（不进 state，避免 3s 轮询
+  // 每轮重置设备列表与选中项）
+  const android: Device[] = emus
+    .filter((e) => e.state === 'device' && e.avdName)
+    .map((e) => ({ type: 'android' as const, serial: e.serial, label: e.avdName! }));
+  const needHarmony = apk.kind === 'hap' || android.length === 0;
+  const androidSig = android.map((d) => d.serial).join(',');
 
-  const usable = (devices ?? []).filter((d) => (apk.kind === 'hap' ? d.type === 'harmonyos' : d.type === 'android'));
+  // HarmonyOS 在线设备按需查询：仅在 APK/HAP 需求或 Android 列表签名变化时拉取，
+  // 不随 emus 每轮轮询重发（hdc spawn 昂贵）
+  useEffect(() => {
+    if (!needHarmony) return;
+    let live = true;
+    void api.harmonyTargets().then((r) => {
+      if (!live) return;
+      setHarmony((r.ok ? r.data : []).map((t) => ({ type: 'harmonyos' as const, serial: t, label: t })));
+    });
+    return () => {
+      live = false;
+    };
+  }, [needHarmony, androidSig]);
+
+  const devices: Device[] = [...android, ...harmony];
+  const usable = devices.filter((d) => (apk.kind === 'hap' ? d.type === 'harmonyos' : d.type === 'android'));
   const selected = usable.find((e) => e.serial === target);
 
   useEffect(() => {
@@ -211,11 +215,7 @@ function InstallModal({
               {apk.packageName ?? ''} {apk.versionName ? `· ${apk.versionName}` : ''}
             </span>
           </div>
-          {devices === null ? (
-            <div className="empty" style={{ padding: '18px 0' }}>
-              <span className="spinner" />
-            </div>
-          ) : usable.length === 0 ? (
+          {usable.length === 0 ? (
             <div className="empty" style={{ padding: '18px 0' }}>
               {apk.kind === 'hap' ? '没有 HarmonyOS 在线设备' : '先启动一台虚拟机'}
             </div>

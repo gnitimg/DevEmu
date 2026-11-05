@@ -571,6 +571,15 @@ async function sendGeo(s: Session): Promise<void> {
     } catch (err) {
       s.lastError = err instanceof Error ? err.message : String(err);
       s.sensorError = s.lastError;
+      // 连接失效前把传感器恢复到注入前原值：否则应用测到的
+      // 加速度计/陀螺仪/罗盘会永久冻结在最后一次注入的数值上
+      for (const [sensor, value] of s.originalSensors) {
+        try {
+          await s.console.send(`sensor set ${sensor} ${value}`);
+        } catch {
+          break;
+        }
+      }
       s.console.close();
       s.console = null;
       s.sensors = [];

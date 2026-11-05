@@ -99,11 +99,12 @@ export async function importHap(appsDir: string, srcPath: string): Promise<ApkMe
   if (!/\.hap$/i.test(fileName)) throw new Error('只支持 .hap 文件');
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const dest = path.join(appsDir, `${id}.hap`);
-  fs.copyFileSync(srcPath, dest);
+  // 大包导入不能同步复制/读取：几百 MB 会冻结整个主进程
+  await fs.promises.copyFile(srcPath, dest);
 
   let meta: ApkMeta = { id, fileName, kind: 'hap', size: stat.size, importedAt: new Date().toISOString() };
   try {
-    const info = parseHapManifest(fs.readFileSync(dest));
+    const info = parseHapManifest(await fs.promises.readFile(dest));
     if (info.bundleName || info.label || info.ability) {
       meta = {
         ...meta,

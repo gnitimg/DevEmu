@@ -16,7 +16,8 @@ export async function stageAsciiPath(filePath: string): Promise<string> {
     dir,
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}${path.extname(filePath)}`,
   );
-  fs.copyFileSync(filePath, staged);
+  // 安装包可能几百 MB：同步复制会冻结主进程
+  await fs.promises.copyFile(filePath, staged);
   return staged;
 }
 
