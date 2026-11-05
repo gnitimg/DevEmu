@@ -485,7 +485,7 @@ export function registerIpc(): void {
   });
 
   // 仅允许删除当前扫描到的组件目录，防止任意路径删除
-  handle('harmony:uninstall', (dir: unknown) => {
+  handle('harmony:uninstall', async (dir: unknown) => {
     if (typeof dir !== 'string' || !dir) return fail('参数错误');
     const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
     if (!harmony) return fail('未检测到 HarmonyOS SDK');
@@ -495,7 +495,8 @@ export function registerIpc(): void {
     const scanned = listHarmonyComponents(setDir);
     if (!scanned.some((c) => path.resolve(c.dir) === resolved))
       return fail('该目录不是已安装的组件');
-    fs.rmSync(resolved, { recursive: true, force: true });
+    // 组件可达数 GB：异步删除，不冻结主进程
+    await fs.promises.rm(resolved, { recursive: true, force: true });
     return ok(true);
   });
 
@@ -1044,7 +1045,7 @@ export function registerIpc(): void {
     (id: string, patch: { name?: string; note?: string }) =>
       ok(updateProject(loadAppSettings().dataRoot, id, patch)),
   );
-  handle('project:delete', (id: string) =>
+  handle('project:delete', async (id: string) =>
     ok(deleteProject(loadAppSettings().dataRoot, id)),
   );
 
@@ -1404,19 +1405,23 @@ export function registerIpc(): void {
           });
         }
       }
-      // 设备已消失但窗口组还在（守卫未生效或崩溃时的兜底）：刷新时同步回收
-      for (const serial of openGroupSerials()) {
-        if (!result.some((r) => r.serial === serial)) {
-          await stopLocation(serial).catch(() => undefined);
-          closePill(serial);
-          closeLocationPanel(serial);
+      // 设备已消失但窗口组还在（守卫未生效或崩溃时的兜底）：刷新时同步回收。
+      // adb 瞬时故障（server 重启/协议错误）可能返回空列表：还有在册实例时视为
+      // adb 异常而非全部下线，跳过回收——否则一次抖动就会杀掉所有定位会话
+      if (devices.length > 0 || listRunning().length === 0) {
+        for (const serial of openGroupSerials()) {
+          if (!result.some((r) => r.serial === serial)) {
+            await stopLocation(serial).catch(() => undefined);
+            closePill(serial);
+            closeLocationPanel(serial);
+          }
         }
-      }
-      // 回收已下线设备的缓存（端口可能被新实例复用）
-      for (const serial of [...avdNameCache.keys(), ...pillRetryAt.keys()]) {
-        if (!result.some((r) => r.serial === serial)) {
-          avdNameCache.delete(serial);
-          pillRetryAt.delete(serial);
+        // 回收已下线设备的缓存（端口可能被新实例复用）
+        for (const serial of [...avdNameCache.keys(), ...pillRetryAt.keys()]) {
+          if (!result.some((r) => r.serial === serial)) {
+            avdNameCache.delete(serial);
+            pillRetryAt.delete(serial);
+          }
         }
       }
     }

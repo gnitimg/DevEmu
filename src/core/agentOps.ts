@@ -113,9 +113,9 @@ async function screenshot(
       mime: 'image/png',
     };
   }
-  // HarmonyOS：设备端截图后经 hdc file recv 取回本机
+  // HarmonyOS：设备端截图后经 hdc file recv 取回本机（远端路径按调用唯一化，防并发互踩）
   const hdc = requireHarmony().hdc;
-  const remote = '/data/local/tmp/devemu_agent_shot.jpeg';
+  const remote = `/data/local/tmp/devemu_agent_shot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpeg`;
   const local = path.join(
     os.tmpdir(),
     `devemu-shot-${Date.now()}-${Math.random().toString(36).slice(2)}.jpeg`,
@@ -322,7 +322,8 @@ async function uiTree(
 ): Promise<{ format: 'xml' | 'json'; content: string }> {
   if (type === 'android') {
     const adb = requireSdk().adb;
-    const remote = '/sdcard/devemu_ui.xml';
+    // agent 并发调用共享固定路径会互相覆盖拿到损坏的 XML：按调用唯一化
+    const remote = `/sdcard/devemu_ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.xml`;
     const dump = await run(
       adb,
       ['-s', serial, 'shell', 'uiautomator', 'dump', remote],
@@ -345,7 +346,7 @@ async function uiTree(
     }
   }
   const hdc = requireHarmony().hdc;
-  const remote = '/data/local/tmp/devemu_ui.json';
+  const remote = `/data/local/tmp/devemu_ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`;
   const local = path.join(
     os.tmpdir(),
     `devemu-ui-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,

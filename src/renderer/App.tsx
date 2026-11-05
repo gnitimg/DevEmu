@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onHuaweiChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onHuaweiChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -100,6 +100,16 @@ export function App() {
         ? Math.round(dlActive.reduce((a, d) => a + d.percent, 0) / dlActive.length)
         : 0;
 
+  // scope 按 deviceScope memoize：内联对象每次渲染都是新身份，
+  // 会把 DeviceDetail 内 useCallback([scope]) 的列表回调每轮重建、反复重拉
+  const detailScope = useMemo<Scope>(
+    () =>
+      deviceScope === 'shared'
+        ? { kind: 'shared' }
+        : { kind: 'project', projectId: deviceScope },
+    [deviceScope],
+  );
+
   // 设备启动完成后的自动补装结果：失败逐个提示，成功汇总一条
   useEffect(
     () =>
@@ -134,10 +144,20 @@ export function App() {
     });
   }, []);
 
+  // 在飞保护：一轮超过 3 秒（PowerShell/hdc 慢）时不叠发起下一轮，
+  // 避免子进程与请求并发堆积
+  const emusInFlight = useRef(false);
   const refreshEmus = useCallback(() => {
-    api.listEmulators().then((r) => {
-      if (r.ok) setEmus(r.data);
-    });
+    if (emusInFlight.current) return;
+    emusInFlight.current = true;
+    api
+      .listEmulators()
+      .then((r) => {
+        if (r.ok) setEmus(r.data);
+      })
+      .finally(() => {
+        emusInFlight.current = false;
+      });
   }, []);
 
   useEffect(() => {
@@ -395,7 +415,7 @@ export function App() {
           {page === 'device-detail' && deviceName !== null && (
             <DeviceDetail
               avdName={deviceName}
-              scope={deviceScope === 'shared' ? { kind: 'shared' } : { kind: 'project', projectId: deviceScope }}
+              scope={detailScope}
               emus={emus}
               refreshEmus={refreshEmus}
               backLabel={deviceScope === 'shared' ? '返回设备池' : `返回 ${deviceScope}`}

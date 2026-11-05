@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { EmuDevice, Scope } from '../api.ts';
 import type { EnvStatus } from '../App.tsx';
 import { VmPanel } from '../components/VmPanel.tsx';
@@ -22,7 +22,8 @@ export function ProjectDetail({
   onOpenSdkManage?: () => void;
   onOpenVm?: (name: string) => void;
 }) {
-  const scope: Scope = { kind: 'project', projectId };
+  // 按项目 id memoize：scope 身份稳定，下游列表回调不随渲染重建
+  const scope = useMemo<Scope>(() => ({ kind: 'project', projectId }), [projectId]);
   const [runsKey, setRunsKey] = useState(0);
 
   return (

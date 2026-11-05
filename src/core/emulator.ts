@@ -86,8 +86,9 @@ function pidAlive(pid: number | undefined): boolean {
   }
 }
 
-/** 开机完成后把该作用域库中的应用补装到设备（已装跳过），结果广播到各窗口。
- *  放在核心启动链路：UI 与 Agent 桥两条启动路径行为一致。 */
+/** 把该作用域库中的应用补装到设备（已装跳过），结果广播到各窗口。
+ *  调用方须保证系统已 boot（挂到启动链路的 waitBooted 就绪点上，
+ *  不再自起第二个轮询循环）。UI 与 Agent 桥两条启动路径行为一致。 */
 function autoInstallAfterBoot(
   sdk: SdkInfo,
   scope: Scope,
@@ -101,7 +102,6 @@ function autoInstallAfterBoot(
         scopeDirs(settings.dataRoot, scope).appsDir,
       ).filter((a) => a.kind !== 'hap');
       if (apps.length === 0) return;
-      if (!(await waitBooted(sdk.adb, serial, 300_000))) return;
       const results: { id: string; label: string; ok: boolean; error?: string }[] =
         [];
       for (const a of apps) {
@@ -278,12 +278,13 @@ async function startOnPort(
           void repositionEmulatorWindow(avdName, x, y).catch(() => undefined);
           startWindowGuard(avdName, entry.serial);
         }
-        autoInstallAfterBoot(sdk, scope, avdName, entry.serial);
         // 开机后就绪链路：药丸只依赖 qemu 窗口（不依赖 adb），先并行开出；
         // 随后去圆角/刘海 overlay（后台监视防翻回）→ 联网验证探测源修正
         void waitBooted(sdk.adb, entry.serial, 300_000)
           .then(async (ok) => {
             if (!ok) return;
+            // 自动补装挂到同一就绪点（不再自起第二个 waitBooted 轮询循环）
+            autoInstallAfterBoot(sdk, scope, avdName, entry.serial);
             if (process.platform === 'win32' && loadAppSettings().pillEnabled !== false) {
               void (async () => {
                 const geom = await getShellGeometry(avdName);

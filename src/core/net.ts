@@ -205,6 +205,8 @@ export interface DlOptions {
 const DL_REDIRECT_LIMIT = 6;
 const DL_IDLE_TIMEOUT_MS = 30_000;
 const DL_STRING_CAP = 64 * 1024 * 1024;
+/** 响应头累计上限：异常服务器无限头发送时防内存膨胀 */
+const DL_HEADER_CAP = 64 * 1024;
 
 function parseHeaders(header: string): { status: number; location?: string; total: number } {
   const status = parseInt(header.split(' ')[1] ?? '0', 10) || 0;
@@ -311,6 +313,10 @@ async function getOnce(
       }
       if (!meta) {
         header += chunk.toString('latin1');
+        if (header.length > DL_HEADER_CAP) {
+          fail(new Error('响应头过大，已中止'));
+          return;
+        }
         const idx = header.indexOf('\r\n\r\n');
         if (idx === -1) return;
         meta = parseHeaders(header.slice(0, idx));

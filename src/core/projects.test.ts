@@ -6,7 +6,7 @@ import os from 'node:os';
 import { createProject, listProjects, updateProject, deleteProject, sanitizeId } from './projects.ts';
 import { recordRun, listRuns } from './runs.ts';
 
-test('项目创建/列表/更新/删除', () => {
+test('项目创建/列表/更新/删除', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-proj-'));
   const p1 = createProject(root, '购物 App', '商城 v2 重构');
   assert.equal(p1.id, '购物 App');
@@ -25,10 +25,10 @@ test('项目创建/列表/更新/删除', () => {
   assert.equal(updated.name, '购物 App 主线');
   assert.equal(updated.note, undefined);
 
-  assert.equal(deleteProject(root, p1.id), true);
+  assert.equal(await deleteProject(root, p1.id), true);
   assert.equal(listProjects(root).length, 1);
   // 不存在的删不掉
-  assert.equal(deleteProject(root, 'nope'), false);
+  assert.equal(await deleteProject(root, 'nope'), false);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

@@ -98,36 +98,42 @@ export class ShapingProxy {
   }
 
   private tunnel(client: net.Socket, host: string, port: number): void {
+    // 上游/目标连接必须带超时：用户代理或目标挂起时（防火墙丢包不回 RST）
+    // 否则下载永久卡死且无任何报错
     const openUpstream = (cb: (sock: net.Socket) => void) => {
+      const bail = (sock: net.Socket, message: string) => {
+        sock.destroy();
+        if (!client.destroyed) {
+          client.write(`HTTP/1.1 502 ${message}\r\n\r\n`);
+          client.destroy();
+        }
+      };
       if (this.upstream) {
         const sock = net.connect(this.upstream.port, '127.0.0.1');
+        sock.setTimeout(10_000, () => bail(sock, 'Upstream timeout'));
         sock.once('connect', () => {
+          sock.setTimeout(10_000, () => bail(sock, 'Upstream timeout'));
           sock.write(`CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n\r\n`);
           let resp = '';
           const onUp = (c: Buffer) => {
             resp += c.toString('latin1');
             if (!/\r\n\r\n/.test(resp)) return;
             sock.removeListener('data', onUp);
+            sock.setTimeout(0);
             if (/^HTTP\/1\.[01] 200/.test(resp)) cb(sock);
-            else {
-              client.write('HTTP/1.1 502 Upstream refused\r\n\r\n');
-              client.destroy();
-              sock.destroy();
-            }
+            else bail(sock, 'Upstream refused');
           };
           sock.on('data', onUp);
         });
-        sock.once('error', () => {
-          client.write('HTTP/1.1 502 Upstream error\r\n\r\n');
-          client.destroy();
-        });
+        sock.once('error', () => bail(sock, 'Upstream error'));
       } else {
         const sock = net.connect(port, host);
-        sock.once('connect', () => cb(sock));
-        sock.once('error', () => {
-          client.write('HTTP/1.1 502 Connect failed\r\n\r\n');
-          client.destroy();
+        sock.setTimeout(10_000, () => bail(sock, 'Connect timeout'));
+        sock.once('connect', () => {
+          sock.setTimeout(0);
+          cb(sock);
         });
+        sock.once('error', () => bail(sock, 'Connect failed'));
       }
     };
 

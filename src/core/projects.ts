@@ -65,12 +65,13 @@ export function updateProject(dataRoot: string, id: string, patch: { name?: stri
   return meta;
 }
 
-export function deleteProject(dataRoot: string, id: string): boolean {
+/** 异步删除：项目内可含数 GB 虚拟机磁盘，同步 rm 会冻结主进程 */
+export async function deleteProject(dataRoot: string, id: string): Promise<boolean> {
   const dir = path.join(projectsDir(dataRoot), id);
   // 只允许删 projects/ 下一级目录，防路径逃逸
   if (path.dirname(dir) !== projectsDir(dataRoot) || !fs.existsSync(path.join(dir, 'project.json'))) {
     return false;
   }
-  fs.rmSync(dir, { recursive: true, force: true });
+  await fs.promises.rm(dir, { recursive: true, force: true });
   return true;
 }

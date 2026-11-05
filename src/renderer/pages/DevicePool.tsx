@@ -13,6 +13,9 @@ const SYSTEMS: { id: System; label: string }[] = [
   { id: 'harmonyos', label: 'HarmonyOS' },
 ];
 
+// 模块级单例：scope 对象身份稳定，下游 useCallback([scope]) 才不会每轮重渲染都重建
+const SHARED_SCOPE: Scope = { kind: 'shared' };
+
 export function DevicePool({
   emus,
   refreshEmus,
@@ -26,7 +29,7 @@ export function DevicePool({
   onOpenSdkManage?: () => void;
   onOpenVm?: (name: string) => void;
 }) {
-  const scope: Scope = { kind: 'shared' };
+  const scope = SHARED_SCOPE;
   const [runsKey, setRunsKey] = useState(0);
   const [system, setSystem] = useState<System>('android');
 
