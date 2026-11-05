@@ -57,6 +57,7 @@ export function loadSettings(dataRoot: string): Settings {
       harmonyDownloadRoute: parsed.harmonyDownloadRoute,
       maxDownloadKbps: parsed.maxDownloadKbps,
       parallelDownloads: parsed.parallelDownloads,
+      autoCheckUpdate: parsed.autoCheckUpdate,
       agentEnabled: parsed.agentEnabled,
       agentPort: parsed.agentPort,
       agentToken: parsed.agentToken,

@@ -57,41 +57,68 @@ const createWindow = () => {
   }
 };
 
-app.whenReady().then(() => {
-  logLine(`应用启动 v${app.getVersion()}（Electron ${process.versions.electron}）`);
-  registerIpc();
-  createWindow();
-
-  // 开发模式提供手动刷新：自绘窗口没有菜单，Ctrl+R/F5 默认不可用，
-  // HMR 断连时渲染层会停在旧代码上无从恢复
-  if (!app.isPackaged) {
-    globalShortcut.register('F5', () => {
-      for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
-    });
-    app.on('will-quit', () => globalShortcut.unregisterAll());
-  }
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+function startMain(): void {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
   });
-});
 
-app.on('window-all-closed', () => {
-  logLine('所有窗口已关闭，应用退出');
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+  app.whenReady().then(() => {
+    logLine(`应用启动 v${app.getVersion()}（Electron ${process.versions.electron}）`);
+    registerIpc();
+    createWindow();
 
-let shutdownStarted = false;
-app.on('before-quit', (event) => {
-  if (shutdownStarted) return;
-  event.preventDefault();
-  shutdownStarted = true;
-  void stopAllLocations().finally(() => {
-    stopWindowGuards();
-    app.quit();
+    // 开发模式提供手动刷新：自绘窗口没有菜单，Ctrl+R/F5 默认不可用，
+    // HMR 断连时渲染层会停在旧代码上无从恢复
+    if (!app.isPackaged) {
+      globalShortcut.register('F5', () => {
+        for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
+      });
+      app.on('will-quit', () => globalShortcut.unregisterAll());
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
   });
-});
+
+  app.on('window-all-closed', () => {
+    logLine('所有窗口已关闭，应用退出');
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+
+  let shutdownStarted = false;
+  app.on('before-quit', (event) => {
+    if (shutdownStarted) return;
+    event.preventDefault();
+    shutdownStarted = true;
+    void stopAllLocations().finally(() => {
+      stopWindowGuards();
+      app.quit();
+    });
+  });
+}
+
+// 单实例锁。更新安装时 Squirrel 可能赶在旧实例退完前启动新版，拿锁失败先
+// 短暂重试等旧实例释放；重试用尽仍失败则照常启动——宁可短暂双开，
+// 不能让刚装好的新版直接闪退
+const LOCK_RETRY_MAX = 20;
+if (app.requestSingleInstanceLock()) {
+  startMain();
+} else {
+  let tries = 0;
+  const retryLock = setInterval(() => {
+    tries += 1;
+    if (app.requestSingleInstanceLock() || tries >= LOCK_RETRY_MAX) {
+      clearInterval(retryLock);
+      startMain();
+    }
+  }, 500);
+}

@@ -31,6 +31,8 @@ export interface Settings {
   maxDownloadKbps?: number;
   /** 并行下载数 1-4 */
   parallelDownloads?: number;
+  /** 启动后与定期自动检查更新，默认启用（缺省视为开启） */
+  autoCheckUpdate?: boolean;
   /** Agent 控制桥：允许本机 AI agent 经 HTTP/MCP 控制在线虚拟设备 */
   agentEnabled?: boolean;
   agentPort?: number;

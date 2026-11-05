@@ -544,10 +544,18 @@ async function sendGeo(s: Session): Promise<void> {
   const t = m.elapsedSec;
   const p = destination(destination(m.pos, 0, s.nLat(t)), 90, s.nLon(t));
   if (s.gps) {
-    await s.gps.set({ ...p, speedMps: m.speedMps, headingDeg: m.courseDeg, altitudeM: s.config.altitudeM ?? 12, passiveUpdate: s.stopped });
-    s.viaConsole = !!s.console;
-    s.lastError = undefined;
-    return;
+    try {
+      await s.gps.set({ ...p, speedMps: m.speedMps, headingDeg: m.courseDeg, altitudeM: s.config.altitudeM ?? 12, passiveUpdate: s.stopped });
+      s.viaConsole = !!s.console;
+      s.lastError = undefined;
+      return;
+    } catch (err) {
+      // gRPC 端点失效（pid ini 过期/模拟器重启）：销毁后回退控制台/adb 通道，
+      // 否则位置注入每秒失败一次且永不恢复
+      s.sensorError = `gps: ${err instanceof Error ? err.message : String(err)}`;
+      s.gps.close();
+      s.gps = null;
+    }
   }
   const now = new Date();
   const frames = [ggaSentence(p, s.config.altitudeM ?? 12, now), rmcSentence(p, m.speedMps, m.courseDeg, now)];

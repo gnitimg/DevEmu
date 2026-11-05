@@ -212,6 +212,57 @@ export function onAutoInstall(
   return fn ? fn((p) => cb(p as AutoInstallPayload)) : () => undefined;
 }
 
+export type UpdateAvailablePayload = {
+  latest: string;
+  current: string;
+  notes: string;
+};
+export type UpdateProgressPayload = { received: number; total: number };
+
+export function onUpdateAvailable(
+  cb: (p: UpdateAvailablePayload) => void,
+): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onUpdateAvailable?: (cb: (p: unknown) => void) => () => void };
+    }
+  ).devemu.onUpdateAvailable;
+  return fn ? fn((p) => cb(p as UpdateAvailablePayload)) : () => undefined;
+}
+
+export function onUpdateProgress(
+  cb: (p: UpdateProgressPayload) => void,
+): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onUpdateProgress?: (cb: (p: unknown) => void) => () => void };
+    }
+  ).devemu.onUpdateProgress;
+  return fn ? fn((p) => cb(p as UpdateProgressPayload)) : () => undefined;
+}
+
+export function onUpdateDownloaded(
+  cb: (p: { version: string }) => void,
+): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onUpdateDownloaded?: (cb: (p: unknown) => void) => () => void };
+    }
+  ).devemu.onUpdateDownloaded;
+  return fn ? fn((p) => cb(p as { version: string })) : () => undefined;
+}
+
+export function onUpdateError(
+  cb: (p: { message: string }) => void,
+): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onUpdateError?: (cb: (p: unknown) => void) => () => void };
+    }
+  ).devemu.onUpdateError;
+  return fn ? fn((p) => cb(p as { message: string })) : () => undefined;
+}
+
 export type RouteId = 'direct' | 'proxy';
 export type RouteProbe = {
   id: RouteId;
@@ -228,14 +279,22 @@ export const api = {
   winClose: () => call<boolean>('winClose'),
   winIsMaximized: () => call<boolean>('winIsMaximized'),
   checkUpdate: () =>
-    call<{ latest: string; current: string; upToDate: boolean; url: string }>(
-      'checkUpdate',
-    ),
+    call<{
+      latest: string;
+      current: string;
+      upToDate: boolean;
+      url: string;
+      notes: string;
+      hasAsset: boolean;
+    }>('checkUpdate'),
+  updateDownload: () => call<boolean>('updateDownload'),
+  updateCancel: () => call<boolean>('updateCancel'),
+  updateInstall: () => call<boolean>('updateInstall'),
   envCheckDir: (kind: EnvKind, dir: string) =>
-    call<{ found: boolean }>('env:checkDir', kind, dir),
+    call<{ found: boolean }>('envCheckDir', kind, dir),
   envInstall: (kind: EnvKind, dir: string) =>
     call<{ manual?: boolean; url?: string; label: string }>(
-      'env:install',
+      'envInstall',
       kind,
       dir,
     ),
@@ -254,7 +313,7 @@ export const api = {
   harmonyTargets: () => call<string[]>('harmonyTargets'),
   harmonyUninstall: (dir: string) => call<boolean>('harmonyUninstall', dir),
   openUrl: (url: string) => call<boolean>('openUrl', url),
-  huaweiState: () => call<{ loggedIn: boolean }>('huawei:state'),
+  huaweiState: () => call<{ loggedIn: boolean }>('huaweiState'),
   huaweiLogin: () => call<boolean>('huaweiLogin'),
   sdkInstalled: () => call<SdkPkg[]>('sdkInstalled'),
   sdkAvailable: () => call<SdkPkg[]>('sdkAvailable'),
@@ -296,7 +355,7 @@ export const api = {
     call<OpResult>('renameAvd', scope, oldName, newName),
   deviceDefs: () =>
     call<{ ok: boolean; defs?: DeviceDef[]; error?: string }>('deviceDefs'),
-  cameraWebcams: () => call<{ id: string; label: string }[]>('camera:webcams'),
+  cameraWebcams: () => call<{ id: string; label: string }[]>('cameraWebcams'),
   launchEmu: (scope: Scope, avdName: string) =>
     call<{ avdName: string; port: number; serial: string }>(
       'launchEmu',

@@ -89,25 +89,21 @@ function avdTool(sdk: SdkInfo, javaPath?: string | null): { exe: string; prefix:
   );
 }
 
-/** 修改 AVD 的 config.ini 键值（存在则替换，不存在则追加） */
+/** 修改 AVD 的 config.ini 键值（存在则替换，不存在则追加）；写入失败会抛出，由调用方决定是否吞掉 */
 export function patchAvdConfig(avdHome: string, name: string, patch: Record<string, string>): void {
   const file = path.join(avdHome, `${name}.avd`, 'config.ini');
-  try {
-    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
-    const out = lines.map((line) => {
-      const m = line.match(/^([^=]+?)\s*=/);
-      const key = m ? m[1]!.trim() : null;
-      return key && key in patch ? `${key} = ${patch[key]}` : line;
-    });
-    for (const [k, v] of Object.entries(patch)) {
-      if (!out.some((l) => new RegExp(`^${k.replace(/\./g, '\\.')}\\s*=`).test(l))) {
-        out.push(`${k} = ${v}`);
-      }
+  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+  const out = lines.map((line) => {
+    const m = line.match(/^([^=]+?)\s*=/);
+    const key = m ? m[1]!.trim() : null;
+    return key && key in patch ? `${key} = ${patch[key]}` : line;
+  });
+  for (const [k, v] of Object.entries(patch)) {
+    if (!out.some((l) => new RegExp(`^${k.replace(/\./g, '\\.')}\\s*=`).test(l))) {
+      out.push(`${k} = ${v}`);
     }
-    fs.writeFileSync(file, out.join('\r\n'), 'utf8');
-  } catch {
-    // config.ini 不存在等问题不阻塞创建流程
   }
+  fs.writeFileSync(file, out.join('\r\n'), 'utf8');
 }
 
 /** 读取 AVD 的 config.ini */
@@ -168,14 +164,19 @@ export async function createAvd(
   }
   // avdmanager 默认 hw.gpu.enabled=no，Windows 上软件渲染会让启动极慢，强制改回宿主 GPU
   // 手机机型模板默认 hw.keyboard=no，宿主键盘不会转发进系统，测试输入全靠软键盘；统一打开
-  patchAvdConfig(dirs.avdHome, name, {
-    'hw.gpu.enabled': 'yes',
-    'hw.gpu.mode': 'auto',
-    'hw.keyboard': 'yes',
-  });
-  // 用户自定义硬件配置；留空项保持 avdmanager 的机型默认值（即推荐配置）
-  const patch = hardwarePatch(hw ?? {});
-  if (Object.keys(patch).length > 0) patchAvdConfig(dirs.avdHome, name, patch);
+  // config.ini 不存在等问题不阻塞创建流程
+  try {
+    patchAvdConfig(dirs.avdHome, name, {
+      'hw.gpu.enabled': 'yes',
+      'hw.gpu.mode': 'auto',
+      'hw.keyboard': 'yes',
+    });
+    // 用户自定义硬件配置；留空项保持 avdmanager 的机型默认值（即推荐配置）
+    const patch = hardwarePatch(hw ?? {});
+    if (Object.keys(patch).length > 0) patchAvdConfig(dirs.avdHome, name, patch);
+  } catch {
+    /* 创建流程不因配置微调失败而失败 */
+  }
   return { ok: true };
 }
 
@@ -221,7 +222,12 @@ export function updateAvdHardware(
   if (!fs.existsSync(configPath)) return { ok: false, error: '虚拟机不存在' };
   const patch = hardwarePatch(hw);
   if (Object.keys(patch).length === 0) return { ok: true };
-  patchAvdConfig(dirs.avdHome, name, patch);
+  try {
+    patchAvdConfig(dirs.avdHome, name, patch);
+  } catch {
+    // 设备运行中 qemu 可能持有该文件，静默成功会让用户误以为已生效（退出时还会被 qemu 回写覆盖）
+    return { ok: false, error: '配置写入失败：文件可能被占用，请停止虚拟机后重试' };
+  }
   return { ok: true };
 }
 

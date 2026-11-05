@@ -65,7 +65,12 @@ npm start
 | `npm test` | core 单元测试（node:test） |
 | `npm run typecheck` | 类型检查 |
 | `npm run package` | 打包（输出 out/DevEmu-win32-x64） |
+| `npm run make` | 构建 Squirrel 安装包（out/make/squirrel.windows/x64/） |
 | `node scripts/e2e.ts` | 真实 SDK 端到端验证（建项目 → 建机 → 启动 → 导入 → 安装 → 启动 → 截图 → 记录 → 关闭） |
+
+## 构建与发布
+
+正式发布经 GitHub Actions：推送 `v*` tag → 构建 Squirrel 安装包与 `checksums.txt` → draft release → 人工冒烟后 publish。发布日操作、SignPath Foundation 代码签名申请与激活、应用内更新机制见 [docs/release.md](docs/release.md)。
 
 ## 架构
 

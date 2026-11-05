@@ -139,9 +139,41 @@ export function closeAllPills(): void {
 
 const locationPanels = new Map<string, import('electron').BrowserWindow>();
 
+/** 物理像素矩形 → 所在显示器的 DIP 矩形：按"包含左上角的显示器"的 scaleFactor 手动换算。
+ *  不用 screenToDipRect(null,…)（按主显示器换算），否则多显示器不同 DPI 时
+ *  与 createPill 初建算法不一致，GEOM 更新后药丸/面板会跳位。 */
+async function physRectToDip(geom: PillGeom): Promise<{ x: number; y: number; width: number; height: number }> {
+  const { screen } = await import('electron');
+  const disp =
+    screen.getAllDisplays().find((d) => {
+      const b = d.bounds;
+      const s = d.scaleFactor || 1;
+      return (
+        geom.x >= b.x * s &&
+        geom.x < (b.x + b.width) * s &&
+        geom.y >= b.y * s &&
+        geom.y < (b.y + b.height) * s
+      );
+    }) ?? screen.getPrimaryDisplay();
+  const s = disp.scaleFactor || 1;
+  return {
+    x: Math.round(geom.x / s),
+    y: Math.round(geom.y / s),
+    width: Math.round(geom.screenW / s),
+    height: Math.round(geom.screenH / s),
+  };
+}
+
 onWindowGroupGeometry((serial, geometry) => {
-  void import('electron').then(({screen}) => {
-    const bounds = screen.screenToDipRect(null, {x:geometry.x,y:geometry.y,width:geometry.screenW,height:geometry.screenH});
+  void (async () => {
+    const bounds = await physRectToDip({
+      serial,
+      avdName: '',
+      x: geometry.x,
+      y: geometry.y,
+      screenW: geometry.screenW,
+      screenH: geometry.screenH,
+    });
     const pill = pills.get(serial);
     const panel = locationPanels.get(serial);
     const setBounds = (win: import('electron').BrowserWindow | undefined, x: number, width: number): void => {
@@ -154,7 +186,7 @@ onWindowGroupGeometry((serial, geometry) => {
     setBounds(pill, pillX, PILL_WIDTH_DIP);
     const pillBounds = pill && !pill.isDestroyed() ? pill.getBounds() : null;
     setBounds(panel, pillBounds ? pillBounds.x + pillBounds.width + VM_GAP_DIP - 10 : bounds.x + bounds.width + VM_GAP_DIP - 6, 392);
-  });
+  })().catch(() => undefined);
 });
 
 function locationPanelHtml(

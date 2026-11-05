@@ -106,6 +106,26 @@ namespace DevEmuGroup {
     static void Raise() {
       DevEmuLayer.Layer.Sync(device, pill, location, true);
     }
+    // -noskin 时 qemu 启动期按整显示器（不含任务栏扣减）适配窗口，时点晚于 app 的一次性启动钳制，
+    // 会原样覆盖掉 75% 规则；常驻守卫必须每轮 Tick 校验收回。等比缩放，比例残差由 qemu 自行修正。
+    public static int[] ClampSize(int w, int h, int workW, int workH) {
+      if (w <= 0 || h <= 0 || workW <= 0 || workH <= 0) return new int[] { w, h };
+      int maxW=workW*3/4, maxH=workH*3/4;
+      if (w <= maxW && h <= maxH) return new int[] { w, h };
+      double s=Math.Min((double)maxW/w, (double)maxH/h);
+      return new int[] { Math.Max(1, (int)Math.Round(w*s)), Math.Max(1, (int)Math.Round(h*s)) };
+    }
+    static void EnsureClamped() {
+      RECT r;
+      if (!GetWindowRect(device, out r)) return;
+      int w=r.R-r.L, ht=r.B-r.T;
+      if (w <= 0 || ht <= 0) return;
+      MONITORINFO info=new MONITORINFO(); info.size=Marshal.SizeOf(info);
+      if (!GetMonitorInfoW(MonitorFromWindow(device, 2), ref info)) return;
+      int[] wh=ClampSize(w, ht, info.work.R-info.work.L, info.work.B-info.work.T);
+      if (wh[0] == w && wh[1] == ht) return;
+      SetWindowPos(device, IntPtr.Zero, 0, 0, wh[0], wh[1], 0x16);
+    }
     // 四角窗口级裁切：屏幕内容保持矩形，只有窗口四角透明。
     // 半径必须大于系统自绘的圆角遮罩（HyperOS 类 ROM 约屏宽 7.8%，Pixel 类约 4.7%），
     // 否则遮罩弧会在透明角内侧露出一圈深色残边。
@@ -182,6 +202,7 @@ namespace DevEmuGroup {
       int style=GetWindowLong(device, -16);
       int fixedStyle=style & ~0x00C00000 & ~0x00040000 & ~0x00010000;
       if (style != fixedStyle) { SetWindowLong(device, -16, fixedStyle); SetWindowPos(device, IntPtr.Zero, 0, 0, 0, 0, 0x37); }
+      EnsureClamped();
       EnsureRegion();
       Align(pill != previousPill || location != previousLocation);
       if (pill != previousPill || location != previousLocation) Fit();

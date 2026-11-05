@@ -8,6 +8,7 @@ import { DeviceDetail } from './pages/DeviceDetail.tsx';
 import { Downloads } from './pages/Downloads.tsx';
 import { Settings } from './pages/Settings.tsx';
 import { Toaster, toast } from './components/Toast.tsx';
+import { UpdatePrompt } from './components/UpdatePrompt.tsx';
 import { FlyLayer } from './components/Fly.tsx';
 import type { AvdInfo, ProjectMeta, Settings as SettingsData } from '../core/types.ts';
 
@@ -184,6 +185,7 @@ export function App() {
     <div className="shell">
       <Toaster />
       <FlyLayer />
+      <UpdatePrompt />
       <header className="topbar">
         <button className="brand" onClick={() => setSideOpen((v) => !v)} title={sideOpen ? '收起侧栏' : '展开侧栏'}>
           <img className="brand-logo" src={logoUrl} alt="DevEmu" draggable={false} />

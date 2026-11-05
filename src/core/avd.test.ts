@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { parseDeviceList, parseConfigIni, listAvds } from './avd.ts';
+import {
+  parseDeviceList,
+  parseConfigIni,
+  listAvds,
+  updateAvdHardware,
+} from './avd.ts';
 import { scopeDirs } from './env.ts';
 
 const DEVICE_OUTPUT = `Available Android devices:
@@ -33,7 +38,10 @@ disk.dataPartition.size=6442450944`;
 test('parseConfigIni 解析键值对', () => {
   const cfg = parseConfigIni(CONFIG_INI);
   assert.equal(cfg['avd.ini.encoding'], 'UTF-8');
-  assert.equal(cfg['image.sysimg.1.dir'], 'C:\\sdk\\system-images\\android-35\\google_apis\\x86_64');
+  assert.equal(
+    cfg['image.sysimg.1.dir'],
+    'C:\\sdk\\system-images\\android-35\\google_apis\\x86_64',
+  );
   assert.equal(cfg['tag.display'], 'Google APIs');
 });
 
@@ -42,7 +50,11 @@ test('listAvds 从作用域目录读出 AVD 并推导镜像包名', () => {
   const { avdHome } = scopeDirs(dataRoot, { kind: 'project', projectId: 'p1' });
   const avdDir = path.join(avdHome, 'TestDevice.avd');
   fs.mkdirSync(avdDir, { recursive: true });
-  fs.writeFileSync(path.join(avdHome, 'TestDevice.ini'), `avd.ini.encoding=UTF-8\npath=${avdDir}\n`, 'utf8');
+  fs.writeFileSync(
+    path.join(avdHome, 'TestDevice.ini'),
+    `avd.ini.encoding=UTF-8\npath=${avdDir}\n`,
+    'utf8',
+  );
   fs.writeFileSync(
     path.join(avdDir, 'config.ini'),
     'hw.device.name=pixel_6\nimage.sysdir.1 = system-images\\android-35\\google_apis\\x86_64\\\n',
@@ -52,13 +64,54 @@ test('listAvds 从作用域目录读出 AVD 并推导镜像包名', () => {
   const avds = listAvds(dataRoot, { kind: 'project', projectId: 'p1' });
   assert.equal(avds.length, 1);
   assert.equal(avds[0]!.name, 'TestDevice');
-  assert.equal(avds[0]!.imagePkg, 'system-images;android-35;google_apis;x86_64');
+  assert.equal(
+    avds[0]!.imagePkg,
+    'system-images;android-35;google_apis;x86_64',
+  );
 
   // 项目隔离：另一个作用域看不到
   const other = listAvds(dataRoot, { kind: 'project', projectId: 'p2' });
   assert.equal(other.length, 0);
   const shared = listAvds(dataRoot, { kind: 'shared' });
   assert.equal(shared.length, 0);
+
+  fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+test('updateAvdHardware 把内存写入 config.ini 并保留其他行', () => {
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-avd-'));
+  const { avdHome } = scopeDirs(dataRoot, { kind: 'shared' });
+  const avdDir = path.join(avdHome, 'TestDevice.avd');
+  fs.mkdirSync(avdDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(avdDir, 'config.ini'),
+    'hw.cpu.ncore=4\nhw.ramSize = 4096M\ntag.display=Google APIs\n',
+    'utf8',
+  );
+
+  const r = updateAvdHardware(dataRoot, { kind: 'shared' }, 'TestDevice', {
+    ramMb: 6144,
+  });
+  assert.deepEqual(r, { ok: true });
+  const text = fs.readFileSync(path.join(avdDir, 'config.ini'), 'utf8');
+  assert.match(text, /hw\.ramSize = 6144M/);
+  assert.match(text, /hw\.cpu\.ncore=4/);
+  assert.match(text, /tag\.display=Google APIs/);
+
+  fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+test('updateAvdHardware 写入失败时返回错误而不是静默成功', () => {
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-avd-'));
+  const { avdHome } = scopeDirs(dataRoot, { kind: 'shared' });
+  const avdDir = path.join(avdHome, 'TestDevice.avd');
+  fs.mkdirSync(path.join(avdDir, 'config.ini'), { recursive: true });
+
+  const r = updateAvdHardware(dataRoot, { kind: 'shared' }, 'TestDevice', {
+    ramMb: 6144,
+  });
+  assert.equal(r.ok, false);
+  assert.ok(r.error);
 
   fs.rmSync(dataRoot, { recursive: true, force: true });
 });

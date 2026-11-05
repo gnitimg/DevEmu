@@ -4,7 +4,8 @@ import type { RunRecord } from './types.ts';
 
 function runId(date = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
+  // 秒级时间戳同一秒会被并发记录互相覆盖：补毫秒+随机后缀保证唯一
+  return `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}-${date.getMilliseconds().toString(36).padStart(3, '0')}${Math.random().toString(36).slice(2, 5)}`;
 }
 
 export function recordRun(
@@ -33,7 +34,7 @@ export function listRuns(runsDir: string): RunRecord[] {
   try {
     return fs
       .readdirSync(runsDir)
-      .filter((f) => /^\d{8}-\d{6}$/.test(f))
+      .filter((f) => /^\d{8}-\d{6}(-[\w]{2,8})?$/.test(f))
       .map((f) => {
         try {
           return JSON.parse(fs.readFileSync(path.join(runsDir, f, 'result.json'), 'utf8')) as RunRecord;

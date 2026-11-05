@@ -30,6 +30,7 @@ import {
   listInstalledPkgs,
   parseSdkmanagerSections,
   SDK_PKG_GROUPS,
+  cmdlineTool,
 } from './core/sdk.ts';
 import { probeSystemRoutes, type RouteProbe } from './core/net.ts';
 import {
@@ -123,6 +124,14 @@ import {
   type LocationPrefs,
 } from './core/locationStore.ts';
 import { getShellGeometry } from './core/win.ts';
+import {
+  cancelUpdateDownload,
+  compareVersions,
+  downloadUpdate,
+  fetchLatestRelease,
+  spawnInstaller,
+  type ReleaseInfo,
+} from './core/updater.ts';
 
 const PILL_ACTIONS: ReadonlySet<string> = new Set<PillAction>([
   'power',
@@ -195,7 +204,8 @@ function broadcastAutoInstall(payload: {
   results: AutoInstallResult[];
 }): void {
   for (const w of BrowserWindow.getAllWindows()) {
-    if (!w.webContents.isDestroyed())
+    // 窗口已销毁时访问 webContents 会抛 Object has been destroyed：先查窗口
+    if (!w.isDestroyed() && !w.webContents.isDestroyed())
       w.webContents.send('apk:autoinstall', payload);
   }
 }
@@ -447,8 +457,15 @@ async function chainAndroidComponents(
       '未检测到 Java：请先在“Java 路径”一行配置或安装 Java，然后重新选择 SDK 目录以补装组件',
     );
   }
+  // 直调 java 而非 .bat：exec 的 cmd /c 分支会把含空格路径（--sdk_root）裂成多个参数
+  const tool = cmdlineTool(
+    sm,
+    java,
+    'sdkmanager-classpath.jar',
+    'com.android.sdklib.tool.sdkmanager.SdkManagerCli',
+  );
   // sdkmanager 首次安装会逐条询问许可；一次性喂入足量 y（已全部接受时立即退出）
-  await runCmd(sm, [`--sdk_root=${dir}`, '--licenses'], {
+  await runCmd(tool.exe, [...tool.prefix, `--sdk_root=${dir}`, '--licenses'], {
     stdin: 'y\n'.repeat(24),
     timeoutMs: 180_000,
   }).catch(() => undefined);
@@ -472,6 +489,28 @@ async function chainAndroidComponents(
     maxBps: dl.maxBps,
     upstreamPort: dl.upstreamPort,
   });
+}
+
+// ---------- emu:list 轮询缓存（UI 每 3 秒拉一次，避免每轮全量 spawn 子进程） ----------
+
+/** serial → avd 名：运行期不变，按 serial 缓存免去每轮 adb 调用 */
+const avdNameCache = new Map<string, string>();
+/** 上次尝试为该设备打开药丸的时间（几何未就绪时的退避） */
+const pillRetryAt = new Map<string, number>();
+const PILL_RETRY_MS = 60_000;
+/** HarmonyOS 在线设备查询结果缓存（hdc 进程 spawn 昂贵） */
+let harmonyTargetsCache: { at: number; targets: string[] } | null = null;
+const HARMONY_TARGETS_CACHE_MS = 5_000;
+
+async function avdNameCached(
+  adb: string,
+  serial: string,
+): Promise<string | undefined> {
+  const hit = avdNameCache.get(serial);
+  if (hit) return hit;
+  const name = await avdNameOf(adb, serial).catch(() => undefined);
+  if (name) avdNameCache.set(serial, name);
+  return name;
 }
 
 export function registerIpc(): void {
@@ -547,6 +586,7 @@ export function registerIpc(): void {
       harmonyDownloadRoute?: string;
       maxDownloadKbps?: number;
       parallelDownloads?: number;
+      autoCheckUpdate?: boolean;
     };
     if (!s.dataRoot || typeof s.dataRoot !== 'string')
       return fail('数据根不能为空');
@@ -627,6 +667,11 @@ export function registerIpc(): void {
         Number.isFinite(parallel) && parallel >= 1 && parallel <= 4
           ? Math.round(parallel)
           : undefined,
+      // 关于页单独传开关；设置页保存不携带该字段时保持现值
+      autoCheckUpdate:
+        typeof s.autoCheckUpdate === 'boolean'
+          ? s.autoCheckUpdate
+          : agent.autoCheckUpdate,
       agentEnabled: agent.agentEnabled,
       agentPort: agent.agentPort,
       agentToken: agent.agentToken,
@@ -859,35 +904,109 @@ export function registerIpc(): void {
     });
   });
 
+  // 最近一次检查到的发布缓存：手动与自动检查共用，下载/安装不重发请求
+  let lastRelease: ReleaseInfo | null = null;
+  let downloading = false;
+
   handle('app:checkUpdate', async () => {
+    const release = await fetchLatestRelease();
+    lastRelease = release;
     const current = app.getVersion();
+    return ok({
+      latest: release.version,
+      current,
+      upToDate: compareVersions(release.version, current) <= 0,
+      url: release.htmlUrl,
+      notes: release.notes,
+      hasAsset: !!release.setupAsset,
+    });
+  });
+
+  let downloadedExePath: string | null = null;
+  let lastProgressAt = 0;
+
+  handle('update:download', async () => {
+    if (downloading) return ok(true);
+    const release = lastRelease;
+    if (!release) return fail('请先检查更新');
+    downloading = true;
+    // “设备网络代理”是本机通用代理入口，更新下载跟随它；限速沿用全局下载限速
+    const settings = loadAppSettings();
+    const viaProxy = settings.proxyEnabled === true && !!settings.proxyPort;
     try {
-      const res = await fetch(
-        'https://api.github.com/repos/gnitimg/DevEmu/releases/latest',
-        {
-          headers: { 'User-Agent': `DevEmu/${current}` },
-          signal: AbortSignal.timeout(12_000),
+      const exePath = await downloadUpdate(release, {
+        viaProxy,
+        proxyPort: viaProxy ? settings.proxyPort : undefined,
+        maxBps:
+          settings.maxDownloadKbps && settings.maxDownloadKbps > 0
+            ? settings.maxDownloadKbps * 1024
+            : undefined,
+        onProgress: (received, total) => {
+          // 进度事件 1 秒节流，收尾一帧必发
+          const now = Date.now();
+          if (now - lastProgressAt < 1000 && received < total) return;
+          lastProgressAt = now;
+          broadcast('update:progress', { received, total });
         },
-      );
-      if (!res.ok)
-        return fail(
-          res.status === 404
-            ? '仓库暂无发布版本'
-            : `检查更新失败（HTTP ${res.status}）`,
-        );
-      const j = (await res.json()) as { tag_name?: string; html_url?: string };
-      if (!j.tag_name) return fail('未获取到发布信息');
-      const latest = j.tag_name.replace(/^v/, '');
-      return ok({
-        latest,
-        current,
-        upToDate: latest === current,
-        url: j.html_url ?? 'https://github.com/gnitimg/DevEmu/releases',
       });
-    } catch {
-      return fail('检查更新失败（无法访问 GitHub）');
+      downloadedExePath = exePath;
+      broadcast('update:downloaded', { version: release.version });
+      return ok(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // 用户主动取消不上报错误（net 层取消统一抛“已取消”）
+      if (msg !== '已取消') broadcast('update:error', { message: msg });
+      return fail(msg);
+    } finally {
+      downloading = false;
     }
   });
+
+  handle('update:cancel', () => {
+    cancelUpdateDownload();
+    return ok(true);
+  });
+
+  handle('update:install', () => {
+    if (!downloadedExePath) return fail('请先下载更新');
+    const exePath = downloadedExePath;
+    // 略等当前 invoke 返回、界面收尾，再交给 Squirrel 安装器；退出走 before-quit 清理
+    setTimeout(() => {
+      spawnInstaller(exePath);
+      setTimeout(() => app.quit(), 1500);
+    }, 300);
+    return ok(true);
+  });
+
+  // 自动检查：仅打包版启用（开发版版本号是 package.json 值，对着线上 release 必然误报）；
+  // 失败与“已是最新”都不打扰，发现新版本才广播弹窗事件
+  const AUTO_CHECK_DELAY = 30_000;
+  const AUTO_CHECK_INTERVAL = 6 * 60 * 60_000;
+  async function autoCheckUpdate(): Promise<void> {
+    if (downloading) return;
+    if (loadAppSettings().autoCheckUpdate === false) return;
+    try {
+      const release = await fetchLatestRelease();
+      lastRelease = release;
+      if (compareVersions(release.version, app.getVersion()) > 0)
+        broadcast('update:available', {
+          latest: release.version,
+          current: app.getVersion(),
+          notes: release.notes,
+        });
+    } catch {
+      // 自动检查静默失败
+    }
+  }
+  if (app.isPackaged) {
+    const timer = setTimeout(() => void autoCheckUpdate(), AUTO_CHECK_DELAY);
+    const interval = setInterval(
+      () => void autoCheckUpdate(),
+      AUTO_CHECK_INTERVAL,
+    );
+    timer.unref();
+    interval.unref();
+  }
 
   handle('sdk:installed', async () => {
     const { sdk, java, settings } = status();
@@ -1021,6 +1140,9 @@ export function registerIpc(): void {
   handle('avd:setHardware', (rawScope: unknown, name: string, hw: unknown) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
+    // qemu 退出时会用启动时的内存值回写 config.ini，运行中修改必被覆盖
+    if (findRunning(scopeKey(scope), name))
+      return fail('请先关闭虚拟机再修改硬件配置');
     return ok(
       updateAvdHardware(
         loadAppSettings().dataRoot,
@@ -1044,6 +1166,8 @@ export function registerIpc(): void {
     const scope = parseScope(rawScope);
     const { sdk, java, settings } = status();
     if (!scope || !sdk) return fail('未检测到 Android SDK');
+    // UI 层按 3 秒轮询状态禁用删除按钮，存在滞后：运行中的磁盘文件被锁，删必失败
+    if (findRunning(scopeKey(scope), name)) return fail('请先关闭虚拟机再删除');
     return ok(await deleteAvd(sdk, settings.dataRoot, scope, name, java));
   });
   handle('avd:deviceDefs', async () => {
@@ -1292,10 +1416,16 @@ export function registerIpc(): void {
       const devices = await adbDevices(sdk.adb);
       for (const d of devices) {
         if (d.serial.startsWith('emulator-')) {
-          const avdName = await avdNameOf(sdk.adb, d.serial);
+          const avdName = await avdNameCached(sdk.adb, d.serial);
           if (process.platform === 'win32' && d.state === 'device' && avdName && loadAppSettings().pillEnabled !== false && !hasPill(d.serial)) {
-            const geom = await getShellGeometry(avdName);
-            if (geom) await openPill({ ...geom, serial: d.serial, avdName });
+            // 开机期窗口几何尚未就绪：失败后 60 秒内不重试，避免 3 秒轮询每次
+            // 都 spawn PowerShell 查询（冷启动期间持续空转拖慢整机）
+            const lastAttempt = pillRetryAt.get(d.serial) ?? 0;
+            if (Date.now() - lastAttempt >= PILL_RETRY_MS) {
+              pillRetryAt.set(d.serial, Date.now());
+              const geom = await getShellGeometry(avdName);
+              if (geom) await openPill({ ...geom, serial: d.serial, avdName });
+            }
           }
           result.push({
             ...d,
@@ -1324,17 +1454,36 @@ export function registerIpc(): void {
           closeLocationPanel(serial);
         }
       }
+      // 回收已下线设备的缓存（端口可能被新实例复用）
+      for (const serial of [...avdNameCache.keys(), ...pillRetryAt.keys()]) {
+        if (!result.some((r) => r.serial === serial)) {
+          avdNameCache.delete(serial);
+          pillRetryAt.delete(serial);
+        }
+      }
     }
     // HarmonyOS 在线设备（hdc）与 adb 设备可并存；查询失败不影响 Android 列表
     const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
     if (harmony) {
       try {
-        for (const t of await harmonyTargets(harmony.hdc)) {
+        // 3 秒轮询下结果缓存 5 秒，避免每轮都 spawn hdc
+        const now = Date.now();
+        if (
+          !harmonyTargetsCache ||
+          now - harmonyTargetsCache.at >= HARMONY_TARGETS_CACHE_MS
+        ) {
+          harmonyTargetsCache = {
+            at: now,
+            targets: await harmonyTargets(harmony.hdc),
+          };
+        }
+        for (const t of harmonyTargetsCache.targets) {
           if (!result.some((r) => r.serial === t)) {
             result.push({ serial: t, state: 'device', type: 'harmonyos' });
           }
         }
       } catch {
+        harmonyTargetsCache = null;
         // hdc 服务未起或无设备：忽略
       }
     }

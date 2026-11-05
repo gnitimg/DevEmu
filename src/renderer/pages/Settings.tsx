@@ -107,6 +107,8 @@ export function Settings({
   const [installing, setInstalling] = useState(false);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [confirmAsk, setConfirmAsk] = useState<ConfirmOp | null>(null);
+  // 数据根迁移（跨盘复制数 GB、期间主进程同步执行）需确认后才执行
+  const [rootAsk, setRootAsk] = useState<{ dir: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const dirty = useRef(false);
   // 只在首次拿到 env 时回填一次；之后一律以用户输入为准，
@@ -288,9 +290,13 @@ export function Settings({
   async function browse(field: PickField, title: string) {
     const r = await api.openDirDialog(title);
     if (!r.ok || !r.data) return;
+    if (field === 'dataRoot') {
+      setRootAsk({ dir: r.data });
+      return;
+    }
     const kind = FIELD_KIND[field];
     // 环境目录：选中后先检测，目录里没有对应环境时弹“浏览其他路径 / 在此安装”
-    if (kind && field !== 'dataRoot') {
+    if (kind) {
       const c = await api.envCheckDir(kind, r.data);
       if (!(c.ok && c.data.found)) {
         setInstallAsk({ kind, field, dir: r.data, title });
@@ -425,6 +431,36 @@ export function Settings({
                 </button>
               </div>
             </div>
+
+            {rootAsk && (
+              <Modal
+                title="更改数据根目录"
+                onClose={() => setRootAsk(null)}
+                footer={
+                  <>
+                    <button className="btn" onClick={() => setRootAsk(null)}>
+                      取消
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => {
+                        const dir = rootAsk.dir;
+                        setRootAsk(null);
+                        applyPick('dataRoot', dir);
+                      }}
+                    >
+                      迁移并切换
+                    </button>
+                  </>
+                }
+              >
+                <p>
+                  将把项目、虚拟机、应用库与测试记录全部迁移到 {rootAsk.dir}
+                  ，并清空原目录。迁移同步执行，数据量大（跨盘搬迁）时应用会
+                  短暂无响应，期间请勿关闭应用或操作虚拟机。
+                </p>
+              </Modal>
+            )}
 
             {confirmAsk && (
               <Modal

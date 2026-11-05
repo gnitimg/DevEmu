@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import logoUrl from '../../../assets/icon.png';
 import usageMd from '../../../assets/docs/usage.md?raw';
 import termsMd from '../../../assets/docs/terms.md?raw';
@@ -9,6 +9,7 @@ import developerMd from '../../../assets/docs/developer.md?raw';
 import changelogMd from '../../../assets/docs/changelog.md?raw';
 import { api } from '../api.ts';
 import { Markdown } from '../components/Markdown.tsx';
+import { toast } from '../components/Toast.tsx';
 import type { EnvStatus } from '../App.tsx';
 
 const DOCS: { id: string; title: string; body: string }[] = [
@@ -49,8 +50,14 @@ const CHANGELOGS = parseChangelog(changelogMd);
 export function About({ env }: { env: EnvStatus | null }) {
   const [doc, setDoc] = useState<{ title: string; body: string } | null>(null);
   const [checking, setChecking] = useState(false);
-  const [update, setUpdate] = useState<{ upToDate: boolean; latest: string; current: string; url: string } | null>(null);
+  const [update, setUpdate] = useState<{ upToDate: boolean; latest: string; current: string; url: string; hasAsset: boolean } | null>(null);
   const [updateError, setUpdateError] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  const [autoOn, setAutoOn] = useState(true);
+
+  useEffect(() => {
+    if (env) setAutoOn(env.settings.autoCheckUpdate !== false);
+  }, [env]);
 
   async function checkUpdate() {
     setChecking(true);
@@ -60,6 +67,28 @@ export function About({ env }: { env: EnvStatus | null }) {
     setChecking(false);
     if (r.ok) setUpdate(r.data);
     else setUpdateError(r.error);
+  }
+
+  async function toggleAutoCheck(on: boolean) {
+    if (!env) return;
+    setAutoOn(on);
+    const r = await api.saveSettings({ ...env.settings, autoCheckUpdate: on });
+    if (!r.ok) {
+      toast(r.error);
+      setAutoOn(!on);
+    }
+  }
+
+  async function downloadUpdate() {
+    setDownloading(true);
+    const r = await api.updateDownload();
+    setDownloading(false);
+    if (!r.ok) {
+      toast(r.error);
+      return;
+    }
+    // 成功后进度与安装就绪由全局更新弹窗接管
+    toast('已开始下载新版本', 'ok');
   }
 
   return (
@@ -90,6 +119,18 @@ export function About({ env }: { env: EnvStatus | null }) {
                 </button>
               </div>
             </div>
+            <div className="settings-row">
+              <span className="settings-row-label">自动检查更新</span>
+              <label className="switch-wrap">
+                <input
+                  type="checkbox"
+                  checked={autoOn}
+                  disabled={!env}
+                  onChange={(e) => void toggleAutoCheck(e.target.checked)}
+                />
+                启用
+              </label>
+            </div>
             {update && (
               <div className="about-body">
                 {update.upToDate ? (
@@ -97,13 +138,24 @@ export function About({ env }: { env: EnvStatus | null }) {
                 ) : (
                   <p>
                     发现新版本 <span className="mono">v{update.latest}</span>（当前 v{update.current}）
-                    <button
-                      className="link-btn"
-                      style={{ marginLeft: 10 }}
-                      onClick={() => void api.openUrl(update.url)}
-                    >
-                      打开下载页
-                    </button>
+                    {update.hasAsset ? (
+                      <button
+                        className="btn"
+                        style={{ marginLeft: 10 }}
+                        disabled={downloading}
+                        onClick={() => void downloadUpdate()}
+                      >
+                        {downloading ? '已开始下载' : '下载并安装'}
+                      </button>
+                    ) : (
+                      <button
+                        className="link-btn"
+                        style={{ marginLeft: 10 }}
+                        onClick={() => void api.openUrl(update.url)}
+                      >
+                        打开下载页
+                      </button>
+                    )}
                   </p>
                 )}
               </div>

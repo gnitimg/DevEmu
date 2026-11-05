@@ -45,7 +45,7 @@ test('测试记录写入与列出', () => {
     { avdName: 'Pixel6', apkLabel: '示例应用', packageName: 'com.example.demo', result: 'ok' },
     { screenshot: Buffer.from([0x89, 0x50, 0x4e, 0x47]), logcat: '10-25 00:00:00.000 I/tag: hello' },
   );
-  assert.match(rec.id, /^\d{8}-\d{6}$/);
+  assert.match(rec.id, /^\d{8}-\d{6}-[\w]{2,8}$/);
   assert.equal(rec.screenshot, 'screenshot.png');
   assert.equal(rec.logcat, 'logcat.txt');
 
@@ -53,5 +53,10 @@ test('测试记录写入与列出', () => {
   assert.equal(runs.length, 1);
   assert.equal(runs[0]!.result, 'ok');
   assert.ok(fs.existsSync(path.join(runsDir, rec.id, 'screenshot.png')));
+
+  // 同一秒并发记录不得互相覆盖（旧秒级 ID 会丢记录）
+  const again = recordRun(runsDir, { avdName: 'Pixel6', result: 'ok' });
+  assert.notEqual(again.id, rec.id);
+  assert.equal(listRuns(runsDir).length, 2);
   fs.rmSync(root, { recursive: true, force: true });
 });

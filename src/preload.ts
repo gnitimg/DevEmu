@@ -35,6 +35,29 @@ contextBridge.exposeInMainWorld('devemu', {
   saveSettings: invoke('settings:save'),
   probeRoutes: invoke('settings:probe'),
   checkUpdate: invoke('app:checkUpdate'),
+  updateDownload: invoke('update:download'),
+  updateCancel: invoke('update:cancel'),
+  updateInstall: invoke('update:install'),
+  onUpdateAvailable: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('update:available', listener);
+    return () => ipcRenderer.removeListener('update:available', listener);
+  },
+  onUpdateProgress: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('update:progress', listener);
+    return () => ipcRenderer.removeListener('update:progress', listener);
+  },
+  onUpdateDownloaded: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('update:downloaded', listener);
+    return () => ipcRenderer.removeListener('update:downloaded', listener);
+  },
+  onUpdateError: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('update:error', listener);
+    return () => ipcRenderer.removeListener('update:error', listener);
+  },
   harmonyTargets: invoke('harmony:targets'),
   harmonyUninstall: invoke('harmony:uninstall'),
   openUrl: invoke('open:url'),

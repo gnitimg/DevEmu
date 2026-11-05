@@ -386,9 +386,10 @@ async function launchEmulatorOp(
     parseScopeArg(scope),
     avdName,
     {
+      // 与 emu:launch 同一缺省：swiftshader_indirect 在 API 35+ 镜像上整屏全黑
       gpu:
         settings.gpuMode ??
-        (process.platform === 'win32' ? 'swiftshader_indirect' : undefined),
+        (process.platform === 'win32' ? 'angle_indirect' : undefined),
       httpProxy:
         settings.proxyEnabled && settings.proxyPort
           ? `http://127.0.0.1:${settings.proxyPort}`

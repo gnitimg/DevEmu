@@ -247,9 +247,12 @@ export async function wmSize(adb: string, serial: string): Promise<{ w: number; 
   return res ? parseWmSize(res.stdout) : undefined;
 }
 
-/** 等待系统启动完成且包管理服务就绪（boot_completed 置 1 后 package 服务可能仍未发布） */
+/** 等待系统启动完成且包管理服务就绪（boot_completed 置 1 后 package 服务可能仍未发布）。
+ *  前期 2 秒一探，30 秒后放缓到 4 秒：冷启动可达数分钟，启动链路与自动补装
+ *  两个并发等待循环共用本函数，高频轮询会持续 spawn adb。 */
 export async function waitBooted(adb: string, serial: string, timeoutMs = 120_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
   let booted = false;
   while (Date.now() < deadline) {
     try {
@@ -264,7 +267,7 @@ export async function waitBooted(adb: string, serial: string, timeoutMs = 120_00
     } catch {
       // 设备还没上线，继续等
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, Date.now() - startedAt < 30_000 ? 2000 : 4000));
   }
   return false;
 }

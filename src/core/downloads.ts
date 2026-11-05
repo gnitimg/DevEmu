@@ -125,10 +125,10 @@ function feedLine(entry: Entry, line: string): void {
     }
   }
 
-  // sdkmanager 自报速度 "20 MiB/s"
+  // sdkmanager 自报速度 "20 MiB/s"：跟随最新值刷新，避免显示停留在首次读数
   if (!sizes) {
     const speed = line.match(/(\d+(?:\.\d+)?)\s*([KMGT]?i?B|[KMGT]?B)\s*\/\s*s/i);
-    if (speed && entry.speedBps === 0) entry.speedBps = toBytes(speed[1]!, speed[2]!);
+    if (speed) entry.speedBps = toBytes(speed[1]!, speed[2]!);
   }
 
   // 字节任务记字节；百分比任务把显示进度当样本（供 ETA 估算）

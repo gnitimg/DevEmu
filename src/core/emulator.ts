@@ -216,26 +216,29 @@ async function startOnPort(
           void repositionEmulatorWindow(avdName, x, y).catch(() => undefined);
           startWindowGuard(avdName, entry.serial);
         }
-        // 开机后就绪链路：去圆角/刘海 overlay（后台监视防翻回）→ 联网验证探测源修正 → 药丸窗口（可在设置关闭）
+        // 开机后就绪链路：药丸只依赖 qemu 窗口（不依赖 adb），先并行开出；
+        // 随后去圆角/刘海 overlay（后台监视防翻回）→ 联网验证探测源修正
         void waitBooted(sdk.adb, entry.serial, 300_000)
           .then(async (ok) => {
             if (!ok) return;
+            if (process.platform === 'win32' && loadAppSettings().pillEnabled !== false) {
+              void (async () => {
+                const geom = await getShellGeometry(avdName);
+                if (!geom) return;
+                const { openPill } = await import('./shell.ts');
+                await openPill({
+                  serial: entry.serial,
+                  avdName,
+                  x: geom.x,
+                  y: geom.y,
+                  screenW: geom.screenW,
+                  screenH: geom.screenH,
+                });
+              })().catch(() => undefined);
+            }
             await disableDeviceDecorations(sdk.adb, entry.serial);
             startDecorWatch(sdk.adb, entry.serial);
             await applyPortalProbes(sdk.adb, entry.serial);
-            if (process.platform !== 'win32') return;
-            if (loadAppSettings().pillEnabled === false) return;
-            const geom = await getShellGeometry(avdName);
-            if (!geom) return;
-            const { openPill } = await import('./shell.ts');
-            await openPill({
-              serial: entry.serial,
-              avdName,
-              x: geom.x,
-              y: geom.y,
-              screenW: geom.screenW,
-              screenH: geom.screenH,
-            });
           })
           .catch(() => undefined);
         resolve(entry);
@@ -244,11 +247,13 @@ async function startOnPort(
   });
 }
 
-/** 关闭（强制）：2.5 秒优雅期后强杀进程树 */
+/** 关闭（优先优雅）：emu kill 后等待 qemu 自行退出（快照保存大内存 AVD 可超 20 秒），
+ *  超时才强杀进程树——强杀会截断快照，下次启动只能冷启动（表现为黑屏时间大幅变长） */
 export async function stopEmulator(
   sdk: SdkInfo,
   entry: RunningEmu,
 ): Promise<boolean> {
+  const key = `${entry.avdName}@${entry.scopeKey}`;
   try {
     await run(sdk.adb, ['-s', entry.serial, 'emu', 'kill'], {
       timeoutMs: 8000,
@@ -256,8 +261,10 @@ export async function stopEmulator(
   } catch {
     // adb 不通就直接杀进程
   }
-  await new Promise((r) => setTimeout(r, 2500));
-  if (!running.has(`${entry.avdName}@${entry.scopeKey}`)) return true;
+  for (let i = 0; i < 40; i++) {
+    if (!running.has(key)) return true;
+    await new Promise((r) => setTimeout(r, 500));
+  }
   if (entry.pid !== undefined) {
     if (process.platform === 'win32') {
       await run('taskkill.exe', ['/PID', String(entry.pid), '/T', '/F'], {
@@ -271,7 +278,7 @@ export async function stopEmulator(
   }
   // 等注册表清掉（exit 事件），最多 10 秒
   for (let i = 0; i < 20; i++) {
-    if (!running.has(`${entry.avdName}@${entry.scopeKey}`)) return true;
+    if (!running.has(key)) return true;
     await new Promise((r) => setTimeout(r, 500));
   }
   return true;

@@ -1,0 +1,87 @@
+name: Release
+
+# 发布构建：打 v* tag 或手动触发，产出 Squirrel 安装包 + checksums.txt，
+# 以 draft release 收口，人工冒烟验证后再 publish（发布流程见 docs/release.md）
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and test
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build installer
+        run: npx electron-forge make --platform win32
+
+      # 安装包统一改名 DevEmu-Setup-<version>.exe：应用内更新按这个固定资产名
+      # 在 release 资产里匹配下载地址，与 forge 本地产物命名解耦
+      - name: Collect artifacts
+        id: collect
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $exe = Get-ChildItem "out/make/squirrel.windows/x64/*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "未找到 Squirrel 安装包产物" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe.FullName "dist/DevEmu-Setup-$version.exe"
+          node scripts/checksums.mjs "dist/DevEmu-Setup-$version.exe" > dist/checksums.txt
+          Get-Content dist/checksums.txt
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # SignPath Foundation 签名（免费开源项目签名，申请与激活见 docs/release.md）。
+      # secrets 未配置（尚未获批）时整段跳过，发布未签名构建。
+      - name: Sign with SignPath
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: 'devemu'
+          signing-policy-slug: 'release-signing'
+          artifact-configuration-slug: 'windows-setup'
+          input-artifact-path: 'dist/DevEmu-Setup-${{ steps.collect.outputs.version }}.exe'
+          output-artifact-directory: 'dist-signed'
+
+      - name: Replace with signed artifact
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        shell: pwsh
+        run: |
+          $version = "${{ steps.collect.outputs.version }}"
+          $signed = Get-ChildItem "dist-signed" -Recurse -Filter "DevEmu-Setup-$version.exe" | Select-Object -First 1
+          if (-not $signed) { throw "签名产物缺失" }
+          $sig = Get-AuthenticodeSignature $signed.FullName
+          if ($sig.Status -ne 'Valid') { throw "签名无效：$($sig.Status)（SignPath Foundation 证书经链校验可能显示 UnknownError，需人工确认）" }
+          Move-Item $signed.FullName "dist/DevEmu-Setup-$version.exe" -Force
+          node scripts/checksums.mjs "dist/DevEmu-Setup-$version.exe" > dist/checksums.txt
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $version = "${{ steps.collect.outputs.version }}"
+          $md = Get-Content assets/docs/changelog.md -Raw
+          $m = [regex]::Match($md, "(?s)## v$version\r?\n(.*?)(?=\r?\n## |$)")
+          $notes = if ($m.Success -and $m.Groups[1].Value.Trim()) { $m.Groups[1].Value } else { "DevEmu v$version" }
+          $notes | Set-Content release-notes.md -Encoding utf8
+          gh release create "v$version" "dist/DevEmu-Setup-$version.exe" dist/checksums.txt `
+            --draft --title "DevEmu v$version" --notes-file release-notes.md
