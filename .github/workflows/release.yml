@@ -13,6 +13,9 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      # secrets 不能出现在 step 级 if 表达式里：先落成 job 级环境变量再判断
+      SIGNPATH_READY: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +53,7 @@ jobs:
       # SignPath Foundation 签名（免费开源项目签名，申请与激活见 docs/release.md）。
       # secrets 未配置（尚未获批）时整段跳过，发布未签名构建。
       - name: Sign with SignPath
-        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        if: env.SIGNPATH_READY == 'true'
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
@@ -62,7 +65,7 @@ jobs:
           output-artifact-directory: 'dist-signed'
 
       - name: Replace with signed artifact
-        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        if: env.SIGNPATH_READY == 'true'
         shell: pwsh
         run: |
           $version = "${{ steps.collect.outputs.version }}"
