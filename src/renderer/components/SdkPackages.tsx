@@ -153,7 +153,7 @@ export function SdkPackages({
         disabled={busy}
         onClick={(ev) => install(pkg, ev.currentTarget.getBoundingClientRect())}
       >
-        {!st ? '安装' : st.state === 'queued' ? '排队中' : st.total > 0 ? `${st.percent}%` : '安装中'}
+        {!st ? '安装' : st.state === 'queued' ? '排队中' : st.percent > 0 ? `${st.percent}%` : '安装中'}
       </button>
     );
   }

@@ -30,12 +30,14 @@ async function main(): Promise<void> {
   const java = detectJava(settings.javaPath);
   log('Java:', java);
 
-  // 清理历史残留的 e2e/dbg 项目
+  // 清理历史残留的 e2e/dbg 项目：deleteProject 已异步化，必须 await
+  // 清理完成再建，否则重名递增且残留无限累积
   for (const p of listProjects(settings.dataRoot)) {
-    if (/^e2e-|^dbg-/.test(p.id)) deleteProject(settings.dataRoot, p.id);
+    if (/^e2e|^dbg-/.test(p.id)) await deleteProject(settings.dataRoot, p.id);
   }
 
-  const project = createProject(settings.dataRoot, 'e2e-验证', '端到端验证自动创建，可在应用中查看');
+  // 项目名保持 ASCII：目录 id 经 ASCII 白名单清洗，中文名会得到不稳定 id
+  const project = createProject(settings.dataRoot, 'e2e-verify', '端到端验证自动创建，可在应用中查看');
   const scope: Scope = { kind: 'project', projectId: project.id };
   log('项目:', project.id);
 

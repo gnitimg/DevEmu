@@ -74,14 +74,14 @@ export function Downloads() {
                 {d.state === 'downloading' && d.phase === 'unzip' && <span className="chip">解压安装中</span>}
                 <button
                   className="btn btn-sm btn-danger"
-                  disabled={cancelling !== ''}
+                  disabled={cancelling === d.pkg + d.startedAt}
                   onClick={async () => {
-                    setCancelling(d.pkg);
+                    setCancelling(d.pkg + d.startedAt);
                     await api.downloadsCancel(d.pkg);
                     setCancelling('');
                   }}
                 >
-                  {cancelling === d.pkg ? '取消中' : '取消'}
+                  {cancelling === d.pkg + d.startedAt ? '取消中' : '取消'}
                 </button>
               </div>
               <div className="dl-bar">

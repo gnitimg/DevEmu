@@ -386,6 +386,16 @@ textarea:focus {
   width: var(--side-w-collapsed);
 }
 
+/* 分组容器：仅作为子项堆叠与收起动画的定位上下文 */
+.side-group {
+  position: relative;
+}
+
+.side-group.group-active {
+  background: rgba(138, 180, 255, 0.06);
+  border-radius: var(--radius);
+}
+
 .side-item {
   width: 100%;
   height: 32px;
@@ -1570,6 +1580,12 @@ table.tbl {
 
 /* ---------- 更新弹窗 ---------- */
 
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .update-bar {
   height: 6px;
   border-radius: 3px;
@@ -1585,7 +1601,6 @@ table.tbl {
 }
 
 .update-progress-text {
-  margin-top: 6px;
   font-size: 11.5px;
   color: var(--text-2);
 }
