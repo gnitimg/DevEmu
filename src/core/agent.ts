@@ -340,5 +340,9 @@ export async function stopAgentBridge(): Promise<void> {
   const b = bridge;
   bridge = null;
   if (!b) return;
+  // server.close 只停止接受新连接，回调要等存量 keep-alive 连接全部结束；
+  // MCP 客户端的长连接会让它永不返回，而数据根迁移/换令牌路径会 await 这里——
+  // 必须主动掐掉存量连接
+  b.server.closeAllConnections();
   await new Promise<void>((resolve) => b.server.close(() => resolve()));
 }

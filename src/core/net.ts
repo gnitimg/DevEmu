@@ -77,6 +77,9 @@ function connect(
       }
       sock.removeAllListeners('data');
       sock.removeAllListeners('error');
+      // raw socket 的连接超时必须清除：否则升级后空闲 timeoutMs 即被切断，
+      // 与消费方（下载 30s 空闲）的节奏冲突
+      sock.setTimeout(0);
       const s = tls.connect({ socket: sock, servername: target.host, rejectUnauthorized: false });
       s.setTimeout(timeoutMs, () => {
         s.destroy();
@@ -353,7 +356,13 @@ async function getOnce(
       done(() => resolve({ status: meta!.status, bytes, total: meta!.total }));
     });
     s.on('close', () => {
-      if (!settled && meta) done(() => resolve({ status: meta!.status, bytes, total: meta!.total }));
+      const m = meta;
+      if (settled || !m) return;
+      // 带 Content-Length 却未收满即断开：残缺文件不能按"下载成功"返回，
+      // 否则解压/校验阶段报出的错误会掩盖真正的中断原因
+      if (m.total > 0 && bytes < m.total)
+        return fail(new Error(`下载被中断（${bytes}/${m.total} 字节）`));
+      done(() => resolve({ status: m.status, bytes, total: m.total }));
     });
   });
 }

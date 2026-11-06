@@ -3,9 +3,17 @@ import path from 'node:path';
 import type { ProjectMeta } from './types.ts';
 
 const INVALID = /[\\/:*?"<>|]/g;
+/** 项目目录即 AVD 作用域路径：工具链（aapt/adb/qemu）对非 ASCII 路径支持不稳，
+ *  目录 id 只保留 ASCII 安全字符；显示名仍存 project.json 不受影响 */
+const UNSAFE_ID = /[^A-Za-z0-9._-]+/g;
 
 export function sanitizeId(name: string): string {
-  const cleaned = name.replace(INVALID, '_').trim();
+  const cleaned = name
+    .replace(INVALID, '_')
+    .replace(UNSAFE_ID, '_')
+    .replace(/^[._-]+/, '')
+    .replace(/[._-]+$/, '')
+    .trim();
   return cleaned || `project-${Date.now().toString(36)}`;
 }
 

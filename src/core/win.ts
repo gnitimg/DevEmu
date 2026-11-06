@@ -31,6 +31,12 @@ const LARGEST_WINDOW_CS = String.raw`
       return best;
     }`;
 
+/** 三个脚本各自 Add-Type 的 C#：导出给编译回归测试——运行时脚本
+ *  （SilentlyContinue）会吞掉 Add-Type 编译失败，此处必须单独验证 */
+export const REPOSITION_CS = String.raw`using System; using System.Runtime.InteropServices; namespace DevEmuWin { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i); [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int i, int v); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); ${LARGEST_WINDOW_CS} } }`;
+export const GEOMETRY_CS = String.raw`using System; using System.Runtime.InteropServices; namespace DevEmuS { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); ${LARGEST_WINDOW_CS} } }`;
+export const DRAG_CS = String.raw`using System; using System.Runtime.InteropServices; namespace DevEmuD { public struct RECT { public int L; public int T; public int R; public int B; } public struct POINT { public int X; public int Y; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int cx, int cy, bool r); [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k); [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); ${LARGEST_WINDOW_CS} } }`;
+
 /** 按 AVD 名强杀 qemu 进程树（注册表丢失时的兜底关闭） */
 export async function killEmulatorProcess(avdName: string): Promise<void> {
   assertAvdName(avdName);
@@ -79,7 +85,7 @@ export function repositionEmulatorWindow(
       "$ErrorActionPreference='SilentlyContinue'",
       `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
       'if (-not $proc) { exit 1 }',
-      'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuWin { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i); [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int i, int v); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); ' + LARGEST_WINDOW_CS + ' } }\'',
+      'Add-Type -TypeDefinition \'' + REPOSITION_CS + '\'',
       '$h = [DevEmuWin.U]::LargestVisibleWindow([uint32]$proc.ProcessId)',
       'if ($h -eq [IntPtr]::Zero) { exit 1 }',
       `$move = { [DevEmuWin.U]::SetWindowPos($h, [IntPtr]::Zero, ${String(x)}, ${String(y)}, 0, 0, 5) | Out-Null }`,
@@ -214,7 +220,7 @@ export async function getShellGeometry(
     "$ErrorActionPreference='SilentlyContinue'",
     `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
     'if (-not $proc) { exit 1 }',
-    'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuS { public struct RECT { public int L; public int T; public int R; public int B; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); ' + LARGEST_WINDOW_CS + ' } }\'',
+    'Add-Type -TypeDefinition \'' + GEOMETRY_CS + '\'',
     '$h = [DevEmuS.U]::LargestVisibleWindow([uint32]$proc.ProcessId)',
     'if ($h -eq [IntPtr]::Zero) { exit 1 }',
     '[DevEmuS.U]::SetProcessDPIAware() | Out-Null',
@@ -256,7 +262,7 @@ export function startPairDrag(
   assertAvdName(avdName);
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
-    'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; namespace DevEmuD { public struct RECT { public int L; public int T; public int R; public int B; } public struct POINT { public int X; public int Y; } public static class U { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r); [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int cx, int cy, bool r); [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k); [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); ' + LARGEST_WINDOW_CS + ' } }\'',
+    'Add-Type -TypeDefinition \'' + DRAG_CS + '\'',
     `$avd = '${avdName}'`,
     '[DevEmuD.U]::SetProcessDPIAware() | Out-Null',
     `$pill = [IntPtr]([Convert]::ToInt64('${pillHwndHex || '0'}', 16))`,

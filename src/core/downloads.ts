@@ -439,6 +439,16 @@ async function spawnTaskImpl(
   }
 
   const args = [...tool.prefix, `--sdk_root=${sdk.root}`, ...proxyArgs, pkg];
+  // shaping.start 的 await 窗口里可能已被取消：child 尚未存在时 cancelDownload
+  // 是空操作，必须在 spawn 前补一次检查，否则任务照常跑完
+  if (entry.cancelRequested) {
+    shaping?.close();
+    entry.state = 'cancelled';
+    entry.error = '已取消';
+    finish(entry);
+    resolve({ ok: false, error: '已取消' });
+    return;
+  }
   const child = spawn(tool.exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   entry.child = child;
 

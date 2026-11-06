@@ -120,7 +120,11 @@ export class ShapingProxy {
           let resp = '';
           const onUp = (c: Buffer) => {
             resp += c.toString('latin1');
-            if (!/\r\n\r\n/.test(resp)) return;
+            if (!/\r\n\r\n/.test(resp)) {
+              // 与客户端路径 8KB 头上限对称：异常上游无限头会撑爆内存
+              if (resp.length > 8192) bail(sock, 'Upstream header too large');
+              return;
+            }
             sock.removeListener('data', onUp);
             sock.setTimeout(0);
             if (/^HTTP\/1\.[01] 200/.test(resp)) cb(sock);

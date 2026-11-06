@@ -51,7 +51,8 @@ const createWindow = () => {
   mainWindow.on('closed', () => {
     // 药丸/定位面板也是 BrowserWindow：只关主窗时 window-all-closed 不触发，
     // 应用会带着无边框小窗继续存活且没有找回主窗的入口——此时直接退出
-    // （模拟器进程不受影响，与全部窗口关闭的行为一致）
+    // （模拟器进程不受影响，与全部窗口关闭的行为一致）。macOS 惯例关窗留应用。
+    if (process.platform === 'darwin') return;
     const rest = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
     if (rest.every((w) => w.getTitle().startsWith('devemu-'))) app.quit();
   });

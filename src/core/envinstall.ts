@@ -135,12 +135,15 @@ export async function resolveEnvPlan(kind: EnvKind, dl: DlOptions): Promise<EnvP
   throw new Error('HarmonyOS SDK 需登录华为开发者账号后从官方下载');
 }
 
-/** 用系统自带 bsdtar 解压 zip（Windows 10 1803+ 自带 tar.exe） */
+/** 用系统自带 bsdtar 解压 zip（Windows 10 1803+ 自带 tar.exe）。
+ *  必须带超时：tar 卡住会让环境安装任务永久停在解压阶段。 */
 async function extractZip(zipPath: string, destDir: string): Promise<void> {
   fs.mkdirSync(destDir, { recursive: true });
   let res;
   try {
-    res = await run('tar.exe', ['-xf', zipPath, '-C', destDir]);
+    res = await run('tar.exe', ['-xf', zipPath, '-C', destDir], {
+      timeoutMs: 600_000,
+    });
   } catch {
     throw new Error('解压失败：系统缺少 tar.exe（Windows 10 1803+ 自带）');
   }

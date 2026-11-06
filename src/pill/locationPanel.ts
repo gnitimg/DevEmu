@@ -241,15 +241,16 @@ export function renderLocationPanel(): void {
     const str = (state ? state.strideM : numeric('stride')).toFixed(2);
     const pills = q('#info-pills');
     pills.replaceChildren();
-    const mkPill = (html: string): void => {
+    // modeText（路线名，可来自导入文件名）必须走文本节点：innerHTML 会被名称里的 HTML 注入
+    const mkPill = (build: (d: HTMLElement) => void): void => {
       const d = document.createElement('div');
       d.className = 'info-pill';
-      d.innerHTML = html;
+      build(d);
       pills.append(d);
     };
-    mkPill(modeText);
-    mkPill(`<b>${spd}</b> m/s`);
-    mkPill(`<b>${cad}</b> 步/分 · <b>${str}</b>m`);
+    mkPill(d => { d.textContent = modeText; });
+    mkPill(d => { d.innerHTML = `<b>${spd}</b> m/s`; });
+    mkPill(d => { d.innerHTML = `<b>${cad}</b> 步/分 · <b>${str}</b>m`; });
     if (state) {
       const stop = document.createElement('button');
       stop.className = 'info-pill stop';
