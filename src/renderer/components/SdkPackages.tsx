@@ -34,6 +34,29 @@ export function SdkPackages({
   const [dl, setDl] = useState<Record<string, DownloadItem>>({});
   // 华为账号登录态：null 表示查询中；驱动空态按钮文案（登录 vs 打开下载中心）
   const [huaweiIn, setHuaweiIn] = useState<boolean | null>(null);
+  // 命令行工具 zip 导入落位进行中（选包 → 选目录 → 解压）
+  const [importingZip, setImportingZip] = useState(false);
+
+  /** 导入从官方下载中心手动下载的 commandline-tools zip：解压到所选目录并写
+   *  HarmonyOS SDK 路径，解决"登录了也没法下载"的最后一步落位 */
+  async function importDownloadedZip(): Promise<void> {
+    setImportingZip(true);
+    try {
+      const zip = await api.openZipDialog();
+      if (!zip.ok || !zip.data) return;
+      const dir = await api.openDirDialog('选择解压目标目录');
+      if (!dir.ok || !dir.data) return;
+      const r = await api.harmonyImportZip(zip.data, dir.data);
+      if (!r.ok) {
+        toast(r.error);
+        return;
+      }
+      toast(`HarmonyOS 命令行工具已落位（hdc：${r.data.hdc}）`, 'ok');
+      onChanged();
+    } finally {
+      setImportingZip(false);
+    }
+  }
 
   useEffect(() => {
     api
@@ -201,6 +224,9 @@ export function SdkPackages({
                       {huaweiIn === null ? '查询登录状态…' : '打开下载中心'}
                     </button>
                   ))}
+                <button className="btn btn-sm" disabled={importingZip} onClick={() => void importDownloadedZip()}>
+                  {importingZip ? '导入中…' : '导入已下载的压缩包'}
+                </button>
               </div>
             </div>
           )}

@@ -142,6 +142,33 @@ function findSdkSet(root: string): { root: string; set: string } | null {
   return null;
 }
 
+/** 在目录下递归找 hdc.exe（限深、跳过常见噪音目录）。
+ *  命令行工具 zip 解压出的布局（commandline-tools/...）不在标准 SDK 集
+ *  （<set>/openharmony/toolchains）结构里，标准探测找不到，导入落位后靠它兜底。 */
+export function findHdcAny(root: string, maxDepth = 4): string | undefined {
+  const SKIP = new Set(['node_modules', '.git']);
+  const walk = (dir: string, depth: number): string | undefined => {
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return undefined;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isFile() && e.name.toLowerCase() === 'hdc.exe') return full;
+    }
+    if (depth >= maxDepth) return undefined;
+    for (const e of entries) {
+      if (!e.isDirectory() || SKIP.has(e.name)) continue;
+      const hit = walk(path.join(dir, e.name), depth + 1);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
+  return walk(root, 0);
+}
+
 function findHdc(set: string, deveco?: string): string | undefined {
   const cands = [path.join(set, 'openharmony', 'toolchains', 'hdc.exe')];
   if (deveco) {
@@ -190,7 +217,8 @@ export function detectHarmony(explicitPath?: string): HarmonyInfo | null {
   }
 
   const roots: string[] = [];
-  if (explicitPath && explicitPath.trim()) roots.push(explicitPath.trim());
+  const explicit = explicitPath?.trim();
+  if (explicit) roots.push(explicit);
   for (const env of [process.env.DEVECO_SDK_HOME, process.env.HOS_SDK_HOME]) {
     if (env) roots.push(env);
   }
@@ -203,7 +231,21 @@ export function detectHarmony(explicitPath?: string): HarmonyInfo | null {
     if (seen.has(key)) continue;
     seen.add(key);
     const found = findSdkSet(root);
-    if (!found) continue;
+    if (!found) {
+      // 用户显式指定的路径允许兜底：命令行工具 zip 落位后的布局
+      // （commandline-tools/...）不是标准 SDK 集结构，但里面有 hdc 就能用
+      if (explicit && path.resolve(root) === path.resolve(explicit)) {
+        const hdc = findHdcAny(root);
+        if (hdc)
+          return {
+            sdkRoot: root,
+            hdc,
+            apiVersion: readUniVersion(root),
+            components: listHarmonyComponents(root),
+          };
+      }
+      continue;
+    }
     const hdc = findHdc(found.set, develcos.find((d) => key.startsWith(path.resolve(d))));
     if (!hdc) continue;
     const deveco = develcos.find((d) => key.startsWith(path.resolve(d)));

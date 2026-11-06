@@ -102,6 +102,8 @@ contextBridge.exposeInMainWorld('devemu', {
   listEmulators: invoke('emu:list'),
   openApkDialog: invoke('dialog:openApk'),
   openDirDialog: invoke('dialog:openDir'),
+  openZipDialog: invoke('dialog:openZip'),
+  harmonyImportZip: invoke('harmony:importZip'),
   importApk: invoke('apk:import'),
   listApps: invoke('apk:list'),
   removeApk: invoke('apk:remove'),

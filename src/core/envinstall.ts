@@ -137,7 +137,7 @@ export async function resolveEnvPlan(kind: EnvKind, dl: DlOptions): Promise<EnvP
 
 /** 用系统自带 bsdtar 解压 zip（Windows 10 1803+ 自带 tar.exe）。
  *  必须带超时：tar 卡住会让环境安装任务永久停在解压阶段。 */
-async function extractZip(zipPath: string, destDir: string): Promise<void> {
+export async function extractZip(zipPath: string, destDir: string): Promise<void> {
   fs.mkdirSync(destDir, { recursive: true });
   let res;
   try {

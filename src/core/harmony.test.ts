@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { detectHarmony, listHarmonyComponents, parseHdcTargets } from './harmony.ts';
+import { detectHarmony, findHdcAny, listHarmonyComponents, parseHdcTargets } from './harmony.ts';
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-harmony-'));
@@ -85,5 +85,18 @@ test('detectHarmony 识别版本号目录布局', () => {
 test('detectHarmony 无效目录返回 null', () => {
   const root = tmpDir();
   assert.equal(detectHarmony(root), null);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('commandline-tools 布局：显式路径经 findHdcAny 兜底检出', () => {
+  const root = tmpDir();
+  // 下载中心 zip 解压出的布局：不是 <set>/openharmony/toolchains 结构
+  const bin = path.join(root, 'commandline-tools', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'hdc.exe'), 'hdc', 'utf8');
+  const info = detectHarmony(root);
+  assert.ok(info, '显式路径即使无标准 SDK 集结构也应经 hdc 兜底检出');
+  assert.equal(info!.hdc, path.join(bin, 'hdc.exe'));
+  assert.equal(findHdcAny(root), path.join(bin, 'hdc.exe'));
   fs.rmSync(root, { recursive: true, force: true });
 });

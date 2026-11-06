@@ -1514,6 +1514,71 @@ export function registerIpc(): void {
     return ok(r.canceled ? null : (r.filePaths[0] ?? null));
   });
 
+  handle('dialog:openZip', async () => {
+    const r = await dialog.showOpenDialog({
+      title: '选择下载的 HarmonyOS 命令行工具压缩包',
+      filters: [
+        { name: '压缩包', extensions: ['zip'] },
+        { name: '全部文件', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    });
+    return ok(r.canceled ? null : (r.filePaths[0] ?? null));
+  });
+
+  // 华为命令行工具无匿名直链：用户从下载中心手动下载 zip，这里解压落位并写
+  // harmonySdkPath。包内布局（commandline-tools/...）不是标准 SDK 集结构，
+  // 落位后递归找 hdc 验证，detectHarmony 对显式路径有同款兜底。
+  handle('harmony:importZip', async (zipPath: unknown, rawDir: unknown) => {
+    if (
+      typeof zipPath !== 'string' ||
+      !zipPath ||
+      !/\.zip$/i.test(zipPath) ||
+      !fs.existsSync(zipPath)
+    ) {
+      return fail('请选择下载的 .zip 压缩包');
+    }
+    const dir =
+      typeof rawDir === 'string' && path.isAbsolute(rawDir) ? rawDir : '';
+    if (!dir || !fs.existsSync(dir)) return fail('请选择解压目标目录');
+    const staging = path.join(dir, `.devemu-hms-staging-${Date.now()}`);
+    const { extractZip } = await import('./core/envinstall.ts');
+    try {
+      await extractZip(zipPath, staging);
+      // staging 可能是单根目录（commandline-tools/）或直接散开：合并搬入目标目录
+      for (const entry of fs.readdirSync(staging)) {
+        const dest = path.join(dir, entry);
+        await fs.promises
+          .rm(dest, { recursive: true, force: true })
+          .catch(() => undefined);
+        try {
+          await fs.promises.rename(path.join(staging, entry), dest);
+        } catch {
+          // 同卷 rename 失败（目标被占用等）：退回复制
+          await fs.promises.cp(path.join(staging, entry), dest, {
+            recursive: true,
+            force: true,
+          });
+        }
+      }
+      const { findHdcAny } = await import('./core/harmony.ts');
+      const hdc = findHdcAny(dir);
+      if (!hdc) {
+        return fail(
+          '压缩包内未找到 hdc，请确认下载的是 HarmonyOS 命令行工具（commandline-tools）压缩包',
+        );
+      }
+      saveAppSettings({ ...loadAppSettings(), harmonySdkPath: dir });
+      broadcast('env:changed', { kind: 'harmonyos' });
+      appendLog(loadAppSettings().dataRoot, `HarmonyOS 工具包导入落位：${dir}（hdc：${hdc}）`);
+      return ok({ hdc });
+    } finally {
+      await fs.promises
+        .rm(staging, { recursive: true, force: true })
+        .catch(() => undefined);
+    }
+  });
+
   handle('apk:import', async (rawScope: unknown, filePath: string) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');

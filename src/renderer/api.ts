@@ -84,6 +84,10 @@ export function tagLabel(tag: string): string {
 }
 export type OpResult = { ok: boolean; error?: string };
 
+/** 华为命令行工具官方下载页（需登录；无匿名直链，应用内提供 zip 导入落位） */
+export const HARMONY_DOWNLOAD_URL =
+  'https://developer.huawei.com/consumer/cn/download/command-line-tools-for-hmos';
+
 interface RawApi {
   [channel: string]: (...args: unknown[]) => Promise<unknown>;
 }
@@ -368,6 +372,9 @@ export const api = {
   openApkDialog: () => call<string | null>('openApkDialog'),
   openDirDialog: (title?: string) =>
     call<string | null>('openDirDialog', title),
+  openZipDialog: () => call<string | null>('openZipDialog'),
+  harmonyImportZip: (zipPath: string, dir: string) =>
+    call<{ hdc: string }>('harmonyImportZip', zipPath, dir),
   importApk: (scope: Scope, filePath: string) =>
     call<ApkMeta>('importApk', scope, filePath),
   listApps: (scope: Scope) => call<ApkMeta[]>('listApps', scope),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onHuaweiChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onHuaweiChanged, onWinMaximized, HARMONY_DOWNLOAD_URL, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -331,7 +331,7 @@ export function App() {
             {sharedAvds.length === 0 && <div className="side-child side-child-empty">暂无设备</div>}
           </SideItem>
           </div>
-          {huaweiLogin === false && (
+          {env && !env.harmony && huaweiLogin !== null && (
             <div className="side-notice">
               <div className="side-notice-head">
                 <svg
@@ -349,10 +349,21 @@ export function App() {
                 </svg>
                 <span>需要注意</span>
               </div>
-              <p className="side-notice-text">如果要使用 HarmonyOS SDK 进行开发，你必须登录你的华为账号</p>
-              <button className="side-notice-link" onClick={() => void api.huaweiLogin()}>
-                点击跳转登录 ›
-              </button>
+              {huaweiLogin ? (
+                <>
+                  <p className="side-notice-text">HarmonyOS SDK 未检测到。已登录华为账号，可从官方下载中心获取命令行工具压缩包，再到 SDK 页导入落位</p>
+                  <button className="side-notice-link" onClick={() => void api.openUrl(HARMONY_DOWNLOAD_URL)}>
+                    打开下载中心 ›
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="side-notice-text">如果要使用 HarmonyOS SDK 进行开发，你必须登录你的华为账号</p>
+                  <button className="side-notice-link" onClick={() => void api.huaweiLogin()}>
+                    点击跳转登录 ›
+                  </button>
+                </>
+              )}
             </div>
           )}
           <div className="side-footer">
