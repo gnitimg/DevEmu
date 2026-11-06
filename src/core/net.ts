@@ -70,7 +70,14 @@ function connect(
     let head = '';
     sock.on('data', (chunk: Buffer) => {
       head += chunk.toString('latin1');
-      if (!/\r\n\r\n/.test(head)) return;
+      if (!/\r\n\r\n/.test(head)) {
+        // 异常代理无限头发送会撑爆内存：与下载路径头上限一致
+        if (head.length > 8192) {
+          sock.destroy();
+          reject(new Error('proxy header too large'));
+        }
+        return;
+      }
       if (!/^HTTP\/1\.[01] 200/.test(head)) {
         sock.destroy();
         return reject(new Error('proxy refused'));

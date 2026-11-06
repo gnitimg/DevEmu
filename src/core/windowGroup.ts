@@ -219,6 +219,8 @@ export function buildWindowGuardScript(
 ): string {
   if (!/^[\w.-]+$/.test(avdName) || !/^emulator-\d{1,5}$/.test(serial))
     throw new Error('非法窗口组');
+  // avd 名嵌入正则：允许字符里只有 '.' 是元字符，不转义会匹配到同前缀的其他实例
+  const avdMatcher = avdName.replace(/\./g, '\\.');
   return String.raw`
 $ErrorActionPreference='Stop'
 Add-Type -TypeDefinition @'
@@ -228,7 +230,7 @@ $ownerId=(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessI
 [DevEmuGroup.Native]::Init([uint32]$ownerId, '${serial}')
 $qemuId=0
 for ($i=0; $i -lt 120 -and -not $qemuId; $i++) {
-  $p=Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\s|$)' } | Select-Object -First 1
+  $p=Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdMatcher}(\s|$)' } | Select-Object -First 1
   if ($p) { $qemuId=$p.ProcessId } else { Start-Sleep -Seconds 1 }
 }
 if (-not $qemuId) { exit 1 }

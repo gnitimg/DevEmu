@@ -8,6 +8,11 @@ function assertAvdName(avdName: string): void {
   if (!/^[\w.-]{1,50}$/.test(avdName)) throw new Error('非法的虚拟机名称');
 }
 
+/** 进程匹配正则里的 avd 名：允许字符中只有 '.' 是正则元字符，
+ *  不转义会让 `pixel.6` 匹配到 `pixelx6` 的进程（taskkill 误杀） */
+const avdMatcher = (avdName: string): string =>
+  avdName.replace(/\./g, '\\.');
+
 /** qemu 有多个顶层窗口（设备屏/工具窗），MainWindowHandle 会随 Z 序跳变；
  *  设备屏窗必然面积最大。各脚本按此口径枚举选定，避免作用于错误窗口。 */
 const LARGEST_WINDOW_CS = String.raw`
@@ -42,7 +47,7 @@ export async function killEmulatorProcess(avdName: string): Promise<void> {
   assertAvdName(avdName);
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
-    `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
+    `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdMatcher(avdName)}(\\s|$)' } | Select-Object -First 1`,
     'if ($proc) { & taskkill.exe /PID $proc.ProcessId /T /F | Out-Null; Write-Output KILLED } else { Write-Output NONE }',
   ].join('\n');
   await run(
@@ -83,7 +88,7 @@ export function repositionEmulatorWindow(
   const script = (force: boolean) =>
     [
       "$ErrorActionPreference='SilentlyContinue'",
-      `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
+      `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdMatcher(avdName)}(\\s|$)' } | Select-Object -First 1`,
       'if (-not $proc) { exit 1 }',
       'Add-Type -TypeDefinition \'' + REPOSITION_CS + '\'',
       '$h = [DevEmuWin.U]::LargestVisibleWindow([uint32]$proc.ProcessId)',
@@ -218,7 +223,7 @@ export async function getShellGeometry(
   assertAvdName(avdName);
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
-    `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdName}(\\s|$)' } | Select-Object -First 1`,
+    `$proc = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdMatcher(avdName)}(\\s|$)' } | Select-Object -First 1`,
     'if (-not $proc) { exit 1 }',
     'Add-Type -TypeDefinition \'' + GEOMETRY_CS + '\'',
     '$h = [DevEmuS.U]::LargestVisibleWindow([uint32]$proc.ProcessId)',
@@ -269,7 +274,7 @@ export function startPairDrag(
     `$panel = [IntPtr]([Convert]::ToInt64('${panelHwndHex || '0'}', 16))`,
     '$hwnd = [IntPtr]::Zero',
     'for ($i = 0; $i -lt 20 -and $hwnd -eq [IntPtr]::Zero; $i++) {',
-    "  $proc = Get-CimInstance Win32_Process -Filter \"Name='qemu-system-x86_64.exe'\" | Where-Object { $_.CommandLine -match ('-avd ' + $avd + '(\\s|$)') } | Select-Object -First 1",
+    "  $proc = Get-CimInstance Win32_Process -Filter \"Name='qemu-system-x86_64.exe'\" | Where-Object { $_.CommandLine -match ('-avd ' + $avd.Replace('.','\\.') + '(\\s|$)') } | Select-Object -First 1",
     '  if ($proc) { $hwnd = [DevEmuD.U]::LargestVisibleWindow([uint32]$proc.ProcessId) }',
     '  if ($hwnd -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 500 }',
     '}',

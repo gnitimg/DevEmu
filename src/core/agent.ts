@@ -65,14 +65,18 @@ export function agentScriptFile(dataRoot: string): string {
 }
 
 /**
- * 把打包资源里的 MCP 桥脚本复制到数据目录。
- * 打包后脚本位于 asar 内，Electron 主进程可读而外部 node 进程不可读，
- * 必须落到普通磁盘路径供 `node agent-mcp.mjs` 启动。
+ * 把 MCP 桥脚本复制到数据目录。
+ * 打包后脚本经 extraResource 位于 resources/ 根（asar 外）；
+ * 必须落到普通磁盘路径供外部 `node agent-mcp.mjs` 启动。
+ * sourceFile 为桥脚本的完整源路径（开发版在仓库 resources/ 下）。
  */
-export function ensureAgentScript(dataRoot: string, sourceDir: string): string {
+export function ensureAgentScript(
+  dataRoot: string,
+  sourceFile: string,
+): string {
   const dest = agentScriptFile(dataRoot);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(path.join(sourceDir, 'resources', 'agent-mcp.mjs'), dest);
+  fs.copyFileSync(sourceFile, dest);
   return dest;
 }
 
@@ -142,6 +146,19 @@ function str(o: Record<string, unknown>, key: string): string {
   return v;
 }
 
+/** 设备列表缓存：MCP 自动化连续调用（tap×N）时每个动作都全量列设备
+ *  （adb devices + 每模拟器 console 查询 + hdc），进程开销随动作数线性放大。
+ *  1.5 秒内复用；设备刚上线的可见延迟不超过一轮轮询节奏。 */
+let deviceCache: { at: number; devices: AgentDevice[] } | null = null;
+
+async function listDevicesCached(ops: AgentOps): Promise<AgentDevice[]> {
+  const now = Date.now();
+  if (deviceCache && now - deviceCache.at < 1_500) return deviceCache.devices;
+  const devices = await ops.listDevices();
+  deviceCache = { at: now, devices };
+  return devices;
+}
+
 /** 单次请求的路由与鉴权；token 为空时除 health 外全部拒绝 */
 export async function handleAgentRequest(
   ops: AgentOps,
@@ -177,7 +194,7 @@ export async function handleAgentRequest(
         sendJson(res, 400, { error: '非法的设备序列号' });
         return;
       }
-      const devices = await ops.listDevices();
+      const devices = await listDevicesCached(ops);
       // serial 优先精确匹配；AVD 名兜底（同名多台时拒绝，要求用 serial）
       let dev = devices.find((d) => d.serial === serial);
       if (!dev) {
@@ -203,7 +220,7 @@ export async function handleAgentRequest(
         sendJson(res, 405, { error: '方法不允许' });
         return;
       }
-      sendJson(res, 200, { devices: await ops.listDevices() });
+      sendJson(res, 200, { devices: await listDevicesCached(ops) });
       return;
     }
 

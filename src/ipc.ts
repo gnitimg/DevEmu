@@ -167,7 +167,7 @@ import {
   stopAgentBridge,
 } from './core/agent.ts';
 import { createAgentOps } from './core/agentOps.ts';
-import type { Scope, Settings } from './core/types.ts';
+import type { HarmonyInfo, Scope, Settings } from './core/types.ts';
 
 function ok<T>(data: T) {
   return { ok: true as const, data };
@@ -277,11 +277,20 @@ function agentStatus() {
   };
 }
 
+/** MCP 桥脚本源：打包版经 extraResource 落在 resources/ 根（asar 外）；
+ *  开发版在仓库 resources/ 目录。 */
+function agentMcpSource(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'agent-mcp.mjs');
+  }
+  return path.join(app.getAppPath(), 'resources', 'agent-mcp.mjs');
+}
+
 /** 按当前设置同步控制桥：落盘桥脚本、按需启停；返回启动失败原因（无则 undefined） */
 async function syncAgentBridge(): Promise<string | undefined> {
   try {
     const settings = loadAppSettings();
-    ensureAgentScript(settings.dataRoot, app.getAppPath());
+    ensureAgentScript(settings.dataRoot, agentMcpSource());
     if (!settings.agentEnabled) {
       if (agentBridgeRunning()) await stopAgentBridge();
       return undefined;
@@ -458,6 +467,29 @@ async function avdNameCached(
   const name = await avdNameOf(adb, serial).catch(() => undefined);
   if (name) avdNameCache.set(serial, name);
   return name;
+}
+
+/** HarmonyOS 环境探测结果缓存：detectHarmony 全量扫描组件目录并逐个读
+ *  uni-package.json，3 秒轮询下不能每轮都来一遍；路径变更即失效 */
+let harmonyInfoCache: {
+  at: number;
+  path: string;
+  info: HarmonyInfo | null;
+} | null = null;
+
+function harmonyInfoCached(): HarmonyInfo | null {
+  const p = loadAppSettings().harmonySdkPath;
+  const now = Date.now();
+  if (
+    harmonyInfoCache &&
+    harmonyInfoCache.path === (p ?? '') &&
+    now - harmonyInfoCache.at < 5_000
+  ) {
+    return harmonyInfoCache.info;
+  }
+  const info = detectHarmony(p);
+  harmonyInfoCache = { at: now, path: p ?? '', info };
+  return info;
 }
 
 export function registerIpc(): void {
@@ -1430,7 +1462,7 @@ export function registerIpc(): void {
       }
     }
     // HarmonyOS 在线设备（hdc）与 adb 设备可并存；查询失败不影响 Android 列表
-    const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
+    const harmony = harmonyInfoCached();
     if (harmony) {
       // 3 秒轮询下结果缓存 5 秒（失败同样缓存）：hdc 服务挂起时每次 list targets
       // 都要等满 10s 超时，不能让每轮轮询都排队 spawn 一次

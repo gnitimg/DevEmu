@@ -35,7 +35,10 @@ const createWindow = () => {
     backgroundColor: '#f6f7f8',
     title: 'DevEmu',
     frame: false,
-    icon: path.join(app.getAppPath(), 'assets', 'icon.png'),
+    // 打包版图标经 extraResource 落在 resources/ 根；开发版取仓库 assets
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.png')
+      : path.join(app.getAppPath(), 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
     },

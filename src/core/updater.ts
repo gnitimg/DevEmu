@@ -193,7 +193,12 @@ export async function downloadUpdate(
 
   cancelled = false;
   const dir = updateDir();
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  fs.rmSync(dir, {
+    recursive: true,
+    force: true,
+    maxRetries: 3,
+    retryDelay: 300,
+  });
   fs.mkdirSync(dir, { recursive: true });
   const exePath = path.join(dir, release.setupAsset.name);
 

@@ -8,6 +8,9 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    // forge-vite 插件只把 .vite 产物打进 asar：MCP 桥脚本与窗口图标
+    // 经 extraResource 落在 resources/ 根（asar 外），运行时按 process.resourcesPath 取
+    extraResource: ['resources/agent-mcp.mjs', 'assets/icon.png'],
   },
   rebuildConfig: {},
   makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin'])],

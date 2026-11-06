@@ -98,9 +98,9 @@ test('snippet 包含端口、令牌与脚本路径', () => {
 test('ensureAgentScript 复制桥脚本到数据目录', () => {
   const src = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-agent-src-'));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-agent-root-'));
-  fs.mkdirSync(path.join(src, 'resources'));
-  fs.writeFileSync(path.join(src, 'resources', 'agent-mcp.mjs'), '// bridge');
-  const dest = ensureAgentScript(root, src);
+  const sourceFile = path.join(src, 'agent-mcp.mjs');
+  fs.writeFileSync(sourceFile, '// bridge');
+  const dest = ensureAgentScript(root, sourceFile);
   assert.equal(dest, agentScriptFile(root));
   assert.equal(fs.readFileSync(dest, 'utf8'), '// bridge');
   fs.rmSync(src, { recursive: true, force: true });
