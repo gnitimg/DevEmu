@@ -10,6 +10,43 @@ test('守卫保留 Qt 设备皮肤的透明轮廓，不二次裁剪屏幕', () =
   assert.match(script, /~0x00010000/);
 });
 
+test('右键拖动的钩子回调不阻塞输入：移动交给独立线程执行', () => {
+  const script = buildWindowGuardScript('test', 'emulator-5554');
+  const hookBody = script.match(/static IntPtr OnMouse\([^]*?\n    \}/)?.[0];
+  assert.ok(hookBody, '钩子回调必须存在');
+  // 全局低级鼠标钩子同步等 qemu 的 UI 线程会拖住整机输入：回调里不得做跨进程移动或输出
+  assert.doesNotMatch(hookBody, /SetWindowPos|Console\.WriteLine|Layer\.Sync/);
+  assert.match(script, /GetCursorPos\(out p\)/);
+  // 按下事件被钩子吞掉后系统按键态不会变为按下，依赖 GetAsyncKeyState() 会让拖动立即中止
+  assert.doesNotMatch(script, /GetAsyncKeyState\s*\(/);
+  assert.match(script, /static void MoverLoop\(\)/);
+  // 跨进程等待只允许发生在移动线程；异步投递会堆积过期位置
+  assert.match(script, /const uint moveFlags=0x15/);
+  assert.doesNotMatch(script, /SWP_ASYNCWINDOWPOS|0x4015/);
+  assert.match(script, /MsgWaitForMultipleObjects/);
+  // 拖动期间守卫主循环不再做 Z 序修复/钳制
+  assert.match(script, /if \(dragging\) return;/);
+});
+
+test(
+  '原生搬窗由位置变化事件即时跟随，不靠 25ms Tick 采样',
+  () => {
+    const script = buildWindowGuardScript('test', 'emulator-5554');
+    assert.match(script, /public static void Watch\(uint qpid\)/);
+    assert.match(
+      script,
+      /SetWinEventHook\(0x800B, 0x800B, IntPtr\.Zero, locationCallback, qpid, 0, 0x0002\)/,
+    );
+    // qemu 进程确定后才能按 pid 装钩子
+    assert.match(script, /\[DevEmuGroup\.Native\]::Watch\(\[uint32\]\$qemuId\)/);
+    const body = script.match(/locationCallback=delegate\([^]*?\n      \};/)?.[0];
+    assert.ok(body, '位置事件回调必须存在');
+    // 拖动期间由移动线程同步三窗，事件回调再对齐会与之抢窗口
+    assert.match(body, /!dragging/);
+    assert.match(body, /Align\(\)/);
+  },
+);
+
 test(
   '守卫把超出工作区 75% 的设备窗口按当前比例钳回',
   {

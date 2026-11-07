@@ -45,27 +45,46 @@ namespace DevEmuGroup {
     [DllImport("user32.dll")] public static extern bool PeekMessageW(out MSG msg, IntPtr h, uint min, uint max, uint remove);
     [DllImport("user32.dll")] public static extern bool TranslateMessage(ref MSG msg);
     [DllImport("user32.dll")] public static extern IntPtr DispatchMessageW(ref MSG msg);
+    [DllImport("user32.dll")] public static extern uint MsgWaitForMultipleObjects(uint count, IntPtr handles, bool waitAll, uint ms, uint wakeMask);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc callback, uint pid, uint tid, uint flags);
     static uint owner;
     static string serial;
     static IntPtr device, pill, location, previousPill, previousLocation, hook;
     static MouseProc callback;
     static WinEventProc layerCallback;
-    static IntPtr foregroundHook, reorderHook;
-    static bool dragging;
-    static int startX, startY, left, top, width, height, pillDX, pillDY, locDX, locDY;
+    static WinEventProc locationCallback;
+    static IntPtr foregroundHook, reorderHook, locationHook;
+    static volatile bool dragging;
+    static bool raisePending;
+    static int startX, startY, left, top, pillDX, pillDY, locDX, locDY;
     static bool pillFollows, locFollows;
     static RECT lastGeometry;
     static readonly HashSet<IntPtr> hiddenWindows = new HashSet<IntPtr>();
+    // 拖动热路径：钩子只记录状态，跨进程移动由独立线程按最新光标位置合并执行。
+    static IntPtr dragDevice, dragPill, dragLocation;
+    static int targetX, targetY;
+    static readonly AutoResetEvent dragSignal = new AutoResetEvent(false);
     public static void Init(uint pid, string id) {
       owner=pid; serial=id; SetProcessDPIAware();
       callback=OnMouse;
       hook=SetWindowsHookExW(14, callback, GetModuleHandleW(null), 0);
       layerCallback=delegate(IntPtr eventHook, uint kind, IntPtr win, int objectId, int childId, uint threadId, uint time) {
-        DevEmuLayer.Layer.Sync(device, pill, location);
+        if (!dragging) DevEmuLayer.Layer.Sync(device, pill, location);
       };
       foregroundHook=SetWinEventHook(3, 3, IntPtr.Zero, layerCallback, 0, 0, 0);
       reorderHook=SetWinEventHook(0x8004, 0x8004, IntPtr.Zero, layerCallback, 0, 0, 0);
+      var mover=new Thread(MoverLoop) { IsBackground=true, Name="devemu-window-mover" };
+      mover.Start();
+    }
+    // 原生搬窗（Qt 皮肤拖动/系统移动）只靠 25ms Tick 采样会稳定拖尾：位置变化事件直接触发对齐，
+    // 事件在守卫线程的消息泵上派发，与 Tick 共用 lastGeometry 去重，不会重复下发 GEOM。
+    public static void Watch(uint qpid) {
+      if (locationHook != IntPtr.Zero) return;
+      locationCallback=delegate(IntPtr eventHook, uint kind, IntPtr win, int objectId, int childId, uint threadId, uint time) {
+        if (objectId == 0 && childId == 0 && !dragging && win == device) Align();
+      };
+      locationHook=SetWinEventHook(0x800B, 0x800B, IntPtr.Zero, locationCallback, qpid, 0, 0x0002);
     }
     static bool Contains(RECT r, int x, int y) { return x >= r.L && x < r.R && y >= r.T && y < r.B; }
     static IntPtr OnMouse(int code, uint msg, IntPtr data) {
@@ -74,29 +93,45 @@ namespace DevEmuGroup {
       POINT point=new POINT(); point.X=m.x; point.Y=m.y;
       IntPtr target=GetAncestor(WindowFromPoint(point), 2);
       RECT r;
-      if ((msg == 0x204 && GetWindowRect(device, out r) && Contains(r, m.x, m.y) && target == device) ||
-          (msg == 0x201 && pill != IntPtr.Zero && GetWindowRect(pill, out r) && Contains(r, m.x, m.y) && m.y >= r.B-(int)(48*Scale()) && target == pill)) {
+      bool onDevice = msg == 0x204 && GetWindowRect(device, out r) && Contains(r, m.x, m.y) && target == device;
+      bool onPill = msg == 0x201 && pill != IntPtr.Zero && GetWindowRect(pill, out r) && Contains(r, m.x, m.y) && m.y >= r.B-(int)(48*Scale()) && target == pill;
+      if (onDevice || onPill) {
         GetWindowRect(device, out r);
-        startX=m.x; startY=m.y; left=r.L; top=r.T; width=r.R-r.L; height=r.B-r.T;
-        // 跟手关键：药丸/面板与设备同循环原生移动，不走 Electron 异步 setBounds（会滞后）
+        startX=m.x; startY=m.y; left=r.L; top=r.T;
+        // 跟手关键：药丸/面板与设备同偏移移动，但绝不能在这个全局钩子里同步等 qemu 的 UI 线程，
+        // 否则每个鼠标事件都阻塞整机输入，事件积压后表现为光标和窗口 1-2 秒后才追上来。
         RECT f = new RECT();
         pillFollows = pill != IntPtr.Zero && GetWindowRect(pill, out f);
         if (pillFollows) { pillDX=f.L-r.L; pillDY=f.T-r.T; }
         locFollows = location != IntPtr.Zero && GetWindowRect(location, out f);
         if (locFollows) { locDX=f.L-r.L; locDY=f.T-r.T; }
+        dragDevice=device; dragPill=pill; dragLocation=location;
+        targetX=left; targetY=top;
+        raisePending=true;
         dragging=true;
-        Raise();
+        dragSignal.Set();
         return (IntPtr)1;
       }
-      if (dragging && msg == 0x200) {
-        int nx=left+m.x-startX, ny=top+m.y-startY;
-        SetWindowPos(device, IntPtr.Zero, nx, ny, width, height, 0x14);
-        if (pillFollows) SetWindowPos(pill, IntPtr.Zero, nx+pillDX, ny+pillDY, 0, 0, 0x15);
-        if (locFollows) SetWindowPos(location, IntPtr.Zero, nx+locDX, ny+locDY, 0, 0, 0x15);
-        Align();
-      }
+      // 按下事件被本钩子吞掉，系统不会把该键置为按下态，GetAsyncKeyState 恒为 0：
+      // 拖动只能靠钩子收到的抬键消息结束（全局钩子能看到所有抬键）。
       if (dragging && (msg == 0x202 || msg == 0x205)) { dragging=false; return (IntPtr)1; }
       return CallNextHookEx(hook, code, msg, data);
+    }
+    static void MoverLoop() {
+      while (true) {
+        if (!dragging) { dragSignal.WaitOne(100); continue; }
+        POINT p;
+        if (!GetCursorPos(out p)) { Thread.Sleep(5); continue; }
+        int nx=left+p.X-startX, ny=top+p.Y-startY;
+        if (nx == targetX && ny == targetY) { Thread.Sleep(4); continue; }
+        targetX=nx; targetY=ny;
+        // 这里是独立线程，跨进程等待由它吸收：同步移动让三窗同帧落位，且永远只处理最新光标，
+        // 异步投递在 qemu UI 线程繁忙时会堆积过期位置，松手后反而出现追赶式滑动。
+        const uint moveFlags=0x15;
+        SetWindowPos(dragDevice, IntPtr.Zero, nx, ny, 0, 0, moveFlags);
+        if (pillFollows) SetWindowPos(dragPill, IntPtr.Zero, nx+pillDX, ny+pillDY, 0, 0, moveFlags);
+        if (locFollows) SetWindowPos(dragLocation, IntPtr.Zero, nx+locDX, ny+locDY, 0, 0, moveFlags);
+      }
     }
     static double Scale() { uint dpi=GetDpiForWindow(device); return dpi > 0 ? dpi/96.0 : 1; }
     static void Raise() {
@@ -144,6 +179,9 @@ namespace DevEmuGroup {
       if (x != r.L || y != r.T) { SetWindowPos(device, IntPtr.Zero, x, y, 0, 0, 0x15); Align(); }
     }
     public static void Tick(IntPtr h, uint qpid) {
+      if (raisePending) { raisePending=false; Raise(); }
+      // 拖动期间移动线程独占窗口位移；这里若再做 Z 序修复/尺寸钳制，会在输入钩子线程上同步等 qemu。
+      if (dragging) return;
       // qemu 有多个顶层窗口（设备屏/工具窗），MainWindowHandle 会随 Z 序跳变：
       // 设备屏窗必然面积最大，枚举选定，避免圆角/拖动/层级作用到错误窗口。
       IntPtr bestDevice=IntPtr.Zero; long bestArea=0;
@@ -216,18 +254,31 @@ for ($i=0; $i -lt 120 -and -not $qemuId; $i++) {
   if ($p) { $qemuId=$p.ProcessId } else { Start-Sleep -Seconds 1 }
 }
 if (-not $qemuId) { exit 1 }
+# qemu 进程确定后再装位置事件钩子（按 pid 过滤，系统级事件不进入回调）
+[DevEmuGroup.Native]::Watch([uint32]$qemuId)
 $msg=New-Object DevEmuGroup.MSG
+$lastProbe=[DateTime]::MinValue
+$lastTick=[DateTime]::MinValue
+$h=[IntPtr]::Zero
 while ($true) {
-  if (-not (Get-Process -Id $ownerId -ErrorAction SilentlyContinue)) { exit 0 }
   while ([DevEmuGroup.Native]::PeekMessageW([ref]$msg, [IntPtr]::Zero, 0, 0, 1)) {
     [DevEmuGroup.Native]::TranslateMessage([ref]$msg) | Out-Null
     [DevEmuGroup.Native]::DispatchMessageW([ref]$msg) | Out-Null
   }
-  $p=Get-Process -Id $qemuId -ErrorAction SilentlyContinue
-  if (-not $p) { Write-Output 'QEMU-GONE'; exit 0 }
-  # 退出竞态：进程对象仍在但主窗口句柄已回收（null/0），绝不能让 Tick 异常杀死循环，QEMU-GONE 必须可达
-  $h=$p.MainWindowHandle
-  if ($null -ne $h -and "$h" -ne "0") { try { [DevEmuGroup.Native]::Tick($h, [uint32]$qemuId) } catch {} }
-  Start-Sleep -Milliseconds 25
+  $now=[DateTime]::Now
+  # 低级鼠标钩子回调走消息泵；轮询进程和 Tick 不能再用 Start-Sleep 把输入一起压住。
+  if (($now-$lastProbe).TotalMilliseconds -ge 250) {
+    $lastProbe=$now
+    if (-not (Get-Process -Id $ownerId -ErrorAction SilentlyContinue)) { exit 0 }
+    $p=Get-Process -Id $qemuId -ErrorAction SilentlyContinue
+    if (-not $p) { Write-Output 'QEMU-GONE'; exit 0 }
+    $h=$p.MainWindowHandle
+  }
+  if (($now-$lastTick).TotalMilliseconds -ge 25) {
+    $lastTick=$now
+    # 退出竞态：进程对象仍在但主窗口句柄已回收（null/0），绝不能让 Tick 异常杀死循环，QEMU-GONE 必须可达
+    if ($null -ne $h -and "$h" -ne "0") { try { [DevEmuGroup.Native]::Tick($h, [uint32]$qemuId) } catch {} }
+  }
+  [DevEmuGroup.Native]::MsgWaitForMultipleObjects(0, [IntPtr]::Zero, $false, 10, 0x04FF) | Out-Null
 }`;
 }
