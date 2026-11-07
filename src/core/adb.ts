@@ -136,53 +136,26 @@ export async function uninstall(adb: string, serial: string, pkg: string): Promi
   return /Success/.test(res.stdout);
 }
 
-/** 从 `cmd overlay list` 输出解析已启用的机型外观 overlay（Pixel 圆角/刘海装饰的来源） */
-export function parseDecorOverlays(stdout: string): string[] {
+export function parseDecorOverlays(stdout: string, deviceName: string): string[] {
+  const packages = new Set([
+    `com.android.internal.emulation.${deviceName}`,
+    `com.android.systemui.emulation.${deviceName}`,
+  ]);
   return stdout
     .split(/\r?\n/)
-    .map((l) => l.match(/^\[x\]\s+(com\.android\.(?:internal|systemui)\.emulation\.\S+)$/)?.[1])
-    .filter((p): p is string => !!p);
+    .map((l) => l.match(/^\[ \]\s+(\S+)$/)?.[1])
+    .filter((p): p is string => !!p && packages.has(p));
 }
 
-/** 禁用机型外观 overlay，屏幕恢复为无黑角、无刘海胶囊的矩形。
- *  返回本次是否执行了禁用。开关持久化在 /data，但模拟器可能在开机后
- *  按设备档案重新启用，因此由 startDecorWatch 在后台持续校验。 */
-export async function disableDeviceDecorations(adb: string, serial: string): Promise<boolean> {
-  const res = await run(adb, ['-s', serial, 'shell', 'cmd', 'overlay', 'list'], { timeoutMs: 15_000 }).catch(
-    () => undefined,
-  );
-  if (!res) return false;
-  const enabled = parseDecorOverlays(res.stdout);
-  for (const pkg of enabled) {
-    await run(adb, ['-s', serial, 'shell', 'cmd', 'overlay', 'disable', '--user', '0', pkg], {
+export async function restoreDeviceDecorations(adb: string, serial: string, deviceName: string): Promise<void> {
+  if (!deviceName) return;
+  const res = await run(adb, ['-s', serial, 'shell', 'cmd', 'overlay', 'list'], { timeoutMs: 15_000 });
+  if (res.code !== 0) return;
+  for (const pkg of parseDecorOverlays(res.stdout, deviceName)) {
+    await run(adb, ['-s', serial, 'shell', 'cmd', 'overlay', 'enable', '--user', '0', pkg], {
       timeoutMs: 15_000,
-    }).catch(() => undefined);
+    });
   }
-  return enabled.length > 0;
-}
-
-/** 后台监视：约 5 分钟内每 15 秒复查 overlay，被翻回就再禁并重启 SystemUI
- *  （镜像为 userdebug，am crash 即安全重启）。常态下首轮已净，不会触发重启。 */
-export function startDecorWatch(adb: string, serial: string): void {
-  void (async () => {
-    const deadline = Date.now() + 300_000;
-    let restarts = 0;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 15_000));
-      try {
-        if (await disableDeviceDecorations(adb, serial)) {
-          if (restarts < 3) {
-            restarts += 1;
-            await run(adb, ['-s', serial, 'shell', 'am', 'crash', 'com.android.systemui'], {
-              timeoutMs: 15_000,
-            }).catch(() => undefined);
-          }
-        }
-      } catch {
-        // 设备可能已关闭，静默
-      }
-    }
-  })();
 }
 
 /** 联网验证探测源。AOSP 默认 HTTPS 探测指向 www.google.com/generate_204，直连超时导致

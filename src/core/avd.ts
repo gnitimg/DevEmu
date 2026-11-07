@@ -111,6 +111,32 @@ export function readAvdConfig(avdHome: string, name: string): Record<string, str
   return parseConfigIni(fs.readFileSync(path.join(avdHome, `${name}.avd`, 'config.ini'), 'utf8'));
 }
 
+export function prepareEmulatorSkin(
+  sdkRoot: string,
+  avdHome: string,
+  avdName: string,
+  config: Record<string, string>,
+): string[] {
+  const candidates = [config['skin.path']];
+  for (const name of [config['skin.name'], config['hw.device.name']]) {
+    if (name && /^[\w.-]+$/.test(name) && name !== '.' && name !== '..')
+      candidates.push(path.join(sdkRoot, 'skins', name));
+  }
+  for (const dir of candidates) {
+    if (!dir || !path.isAbsolute(dir)) continue;
+    try {
+      if (!fs.statSync(path.join(dir, 'layout')).isFile()) continue;
+    } catch {
+      // SDK 迁移后旧 skin.path 可能失效，继续按机型查找。
+      continue;
+    }
+    // Qt 的轮廓与屏幕遮罩另读 AVD 配置，单传 -skin 只会加载机身背景。
+    if (config['skin.path'] !== dir) patchAvdConfig(avdHome, avdName, { 'skin.path': dir });
+    return ['-skin', path.basename(dir), '-skindir', path.dirname(dir)];
+  }
+  return [];
+}
+
 export interface AvdHardware {
   ramMb?: number;
   cores?: number;

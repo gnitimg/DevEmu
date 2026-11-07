@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { run } from './exec.ts';
 import { buildWindowGuardScript } from './windowGroup.ts';
 
+test('守卫保留 Qt 设备皮肤的透明轮廓，不二次裁剪屏幕', () => {
+  const script = buildWindowGuardScript('test', 'emulator-5554');
+  assert.doesNotMatch(script, /CreateRoundRectRgn|SetWindowRgn|EnsureRegion/);
+  assert.match(script, /~0x00040000/);
+  assert.match(script, /~0x00010000/);
+});
+
 test(
   '守卫把超出工作区 75% 的设备窗口按当前比例钳回',
   {

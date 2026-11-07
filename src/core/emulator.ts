@@ -7,11 +7,11 @@ import { scopeDirs, scopeEnv } from './env.ts';
 import { loadAppSettings } from './settings.ts';
 import { cameraArgs } from './camera.ts';
 import { stopLocation } from './location.ts';
+import { prepareEmulatorSkin, readAvdConfig } from './avd.ts';
 import {
   applyPortalProbes,
-  disableDeviceDecorations,
   installApk,
-  startDecorWatch,
+  restoreDeviceDecorations,
   waitBooted,
 } from './adb.ts';
 import { apkFilePath, listApps } from './apk.ts';
@@ -179,14 +179,14 @@ async function startOnPort(
   opts: LaunchOptions,
 ): Promise<RunningEmu> {
   // 运行期提速参数；硬件（内存/核数）以各虚拟机 config.ini 为准，不再命令行覆盖
+  const config = readAvdConfig(dirs.avdHome, avdName);
   const args = [
     '-avd',
     avdName,
     '-port',
     String(port),
     '-no-boot-anim',
-    // skin 边框只在部分启动状态下出现，出现时窗口含 bezel 导致药丸对位与外观不一致：统一不画
-    '-noskin',
+    ...prepareEmulatorSkin(sdk.root, dirs.avdHome, avdName, config),
     '-netdelay',
     'none',
     '-netspeed',
@@ -279,11 +279,9 @@ async function startOnPort(
           void repositionEmulatorWindow(avdName, x, y).catch(() => undefined);
           startWindowGuard(avdName, entry.serial);
         }
-        // 开机后就绪链路：药丸只依赖 qemu 窗口（不依赖 adb），先并行开出；
-        // 随后去圆角/刘海 overlay（后台监视防翻回）→ 联网验证探测源修正
         void waitBooted(sdk.adb, entry.serial, 300_000)
           .then(async (ok) => {
-            if (!ok) return;
+            if (!ok || running.get(`${avdName}@${sKey}`) !== entry) return;
             // 自动补装挂到同一就绪点（不再自起第二个 waitBooted 轮询循环）
             autoInstallAfterBoot(sdk, scope, avdName, entry.serial);
             if (process.platform === 'win32' && loadAppSettings().pillEnabled !== false) {
@@ -301,8 +299,8 @@ async function startOnPort(
                 });
               })().catch(() => undefined);
             }
-            await disableDeviceDecorations(sdk.adb, entry.serial);
-            startDecorWatch(sdk.adb, entry.serial);
+            await restoreDeviceDecorations(sdk.adb, entry.serial, config['hw.device.name'] ?? '')
+              .catch(() => undefined);
             await applyPortalProbes(sdk.adb, entry.serial);
           })
           .catch(() => undefined);

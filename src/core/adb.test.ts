@@ -22,20 +22,24 @@ test('parseDevices 空输出', () => {
   assert.deepEqual(parseDevices('adb server is out of date'), []);
 });
 
-test('parseDecorOverlays 解析已启用的机型外观 overlay', () => {
+test('parseDecorOverlays 只恢复当前机型被禁用的原生圆角和显示装饰', () => {
   const out = [
     '[x] com.google.android.overlay.pixelconfigcommon',
     '[ ] com.android.internal.emulation.pixel_8_pro',
-    '[x] com.android.internal.emulation.pixel_9_pro',
-    '[x] com.android.systemui.emulation.pixel_9_pro',
-    '[x] com.android.internal.display.cutout.emulation.corner',
+    '[ ] com.android.internal.emulation.pixel_9_pro',
+    '[ ] com.android.systemui.emulation.pixel_9_pro',
+    '[x] com.android.internal.emulation.pixel_9',
+    '[ ] com.android.internal.display.cutout.emulation.corner',
     '[] com.android.internal.emulation.pixel_3',
   ].join('\r\n');
-  assert.deepEqual(parseDecorOverlays(out), [
+  assert.deepEqual(parseDecorOverlays(out, 'pixel_9_pro'), [
     'com.android.internal.emulation.pixel_9_pro',
     'com.android.systemui.emulation.pixel_9_pro',
   ]);
-  assert.deepEqual(parseDecorOverlays(''), []);
+  assert.deepEqual(parseDecorOverlays(out, 'pixel_9'), []);
+  assert.deepEqual(parseDecorOverlays(out, ''), []);
+  assert.deepEqual(parseDecorOverlays('', 'pixel_9_pro'), []);
+  assert.deepEqual(parseDecorOverlays('[x] com.android.internal.emulation.pixel_9_pro', 'pixel_9_pro'), []);
 });
 
 test('parseWmSize 解析物理分辨率', () => {

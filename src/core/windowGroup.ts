@@ -23,8 +23,6 @@ namespace DevEmuGroup {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int ht, uint flags);
-    [DllImport("gdi32.dll")] public static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int w, int h);
-    [DllImport("user32.dll")] public static extern bool SetWindowRgn(IntPtr h, IntPtr rgn, bool redraw);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
     [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
@@ -58,8 +56,6 @@ namespace DevEmuGroup {
     static int startX, startY, left, top, width, height, pillDX, pillDY, locDX, locDY;
     static bool pillFollows, locFollows;
     static RECT lastGeometry;
-    static IntPtr regionHwnd;
-    static int regionW, regionH;
     static readonly HashSet<IntPtr> hiddenWindows = new HashSet<IntPtr>();
     public static void Init(uint pid, string id) {
       owner=pid; serial=id; SetProcessDPIAware();
@@ -126,20 +122,6 @@ namespace DevEmuGroup {
       if (wh[0] == w && wh[1] == ht) return;
       SetWindowPos(device, IntPtr.Zero, 0, 0, wh[0], wh[1], 0x16);
     }
-    // 四角窗口级裁切：屏幕内容保持矩形，只有窗口四角透明。
-    // 半径必须大于系统自绘的圆角遮罩（HyperOS 类 ROM 约屏宽 7.8%，Pixel 类约 4.7%），
-    // 否则遮罩弧会在透明角内侧露出一圈深色残边。
-    // qemu 可能原尺寸重建窗口（开机阶段/模式切换），区域随句柄丢失：每轮 Tick 按句柄+尺寸校验重应用。
-    static void EnsureRegion() {
-      RECT r;
-      if (!GetWindowRect(device, out r)) return;
-      int w=r.R-r.L, ht=r.B-r.T;
-      if (w <= 0 || ht <= 0) return;
-      if (device == regionHwnd && w == regionW && ht == regionH) return;
-      regionHwnd=device; regionW=w; regionH=ht;
-      int rad=Math.Max(16, Math.Min(120, (int)(w*0.085)));
-      SetWindowRgn(device, CreateRoundRectRgn(0, 0, w+1, ht+1, rad*2, rad*2), true);
-    }
     static void Align(bool force=false) {
       RECT r;
       if (!GetWindowRect(device, out r)) return;
@@ -203,7 +185,7 @@ namespace DevEmuGroup {
       int fixedStyle=style & ~0x00C00000 & ~0x00040000 & ~0x00010000;
       if (style != fixedStyle) { SetWindowLong(device, -16, fixedStyle); SetWindowPos(device, IntPtr.Zero, 0, 0, 0, 0, 0x37); }
       EnsureClamped();
-      EnsureRegion();
+      // 透明轮廓由 Qt 的设备皮肤提供，不能覆盖为统一圆角区域。
       Align(pill != previousPill || location != previousLocation);
       if (pill != previousPill || location != previousLocation) Fit();
       DevEmuLayer.Layer.Sync(device, pill, location);
