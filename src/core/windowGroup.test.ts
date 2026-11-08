@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { run } from './exec.ts';
-import { buildWindowGuardScript } from './windowGroup.ts';
+import { hosPillSerial } from './hosemu.ts';
+import { buildHosWindowGuardScript, buildWindowGuardScript } from './windowGroup.ts';
 
 test('守卫保留 Qt 设备皮肤的透明轮廓，不二次裁剪屏幕', () => {
   const script = buildWindowGuardScript('test', 'emulator-5554');
@@ -26,6 +27,25 @@ test('右键拖动的钩子回调不阻塞输入：移动交给独立线程执�
   assert.match(script, /MsgWaitForMultipleObjects/);
   // 拖动期间守卫主循环不再做 Z 序修复/钳制
   assert.match(script, /if \(dragging\) return;/);
+});
+
+test('HarmonyOS 守卫按 pid 定位窗口，实例名不进入脚本', () => {
+  const serial = hosPillSerial('Pura 90 测试');
+  const script = buildHosWindowGuardScript(4321, serial);
+  // 实例名可含空格/中文/引号：守卫只接收 pid 与 base64url 标识
+  assert.doesNotMatch(script, /Pura 90/);
+  assert.match(script, /\$qemuId=4321/);
+  assert.match(script, /\[DevEmuGroup\.Native\]::Watch\(\[uint32\]\$qemuId\)/);
+  assert.match(script, /static void MoverLoop\(\)/);
+  // Qt 模拟器自己定尺寸；守卫再钳制会与 Qt 互相改回，表现为窗口持续抽搐
+  assert.match(script, /::Init\(\[uint32\]\$ownerId, '[^']+', \$false\)/);
+  assert.throws(() => buildHosWindowGuardScript(0, serial), /非法窗口组/);
+  assert.throws(() => buildHosWindowGuardScript(4321, "a'; exit 0; #"), /非法窗口组/);
+});
+
+test('Android 守卫保留 75% 尺寸钳制', () => {
+  const script = buildWindowGuardScript('test', 'emulator-5554');
+  assert.match(script, /::Init\(\[uint32\]\$ownerId, '[^']+', \$true\)/);
 });
 
 test(

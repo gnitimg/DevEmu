@@ -69,6 +69,32 @@ export interface HarmonyInfo {
   components: HarmonyComponent[];
 }
 
+/** 一台 HarmonyOS 模拟器实例（Emulator.exe -list -details 归一化） */
+export interface HosAvd {
+  name: string;
+  deviceType: string;
+  osVersion: string;
+  apiVersion?: string;
+  softwareVersion?: string;
+  productModel?: string;
+  deviceModel?: string;
+  ramMb?: number;
+  storageMb?: number;
+  cpuCores?: number;
+  instancePath?: string;
+  resolution?: string;
+  running: boolean;
+}
+
+/** HarmonyOS 模拟器镜像（Emulator.exe -imageList） */
+export interface HosImage {
+  deviceType: string;
+  osVersion: string;
+  softwareVersion: string;
+  releaseType?: string;
+  downloaded: boolean;
+}
+
 export interface SystemImage {
   pkg: string; // system-images;android-35;google_apis;x86_64
   api: number;

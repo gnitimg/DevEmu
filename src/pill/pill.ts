@@ -85,6 +85,13 @@ body.pill-body { user-select: none; font-family: 'Segoe UI Variable', 'Segoe UI'
   padding: 14px 0 12px;
   box-sizing: border-box;
 }
+/* HarmonyOS：药丸窗口与模拟器窗口内右侧原生操作条条带等宽，壳铺满整宽盖住它；
+   底色必须完全不透明，否则白色原生条会透出来 */
+.pill-body.hos .pill-shell {
+  margin-left: 0;
+  margin-right: 0;
+  background: rgb(16, 18, 24);
+}
 .pill-col {
   display: flex;
   flex-direction: column;
@@ -140,6 +147,8 @@ body.pill-body { user-select: none; font-family: 'Segoe UI Variable', 'Segoe UI'
 export function renderPill(): void {
   const params = new URLSearchParams(location.hash.includes('?') ? location.hash.slice(location.hash.indexOf('?') + 1) : '');
   const serial = params.get('serial') ?? '';
+  const kind = params.get('kind') === 'hos' ? 'hos' : 'android';
+  const buttons = BUTTONS;
 
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -150,7 +159,7 @@ export function renderPill(): void {
 
   const col = document.createElement('div');
   col.className = 'pill-col';
-  for (const b of BUTTONS) {
+  for (const b of buttons) {
     const btn = document.createElement('button');
     btn.className = 'pill-btn';
     btn.title = b.id === 'power' ? '电源（长按 3 秒关机）' : b.title;
@@ -232,6 +241,6 @@ export function renderPill(): void {
   });
   shell.appendChild(grip);
 
-  document.body.className = 'pill-body';
+  document.body.className = kind === 'hos' ? 'pill-body hos' : 'pill-body';
   document.body.appendChild(shell);
 }

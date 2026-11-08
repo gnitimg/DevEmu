@@ -2,11 +2,20 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { run } from './exec.ts';
 import { screenshot } from './adb.ts';
-import { getShellGeometry, startPairDrag, startWindowGuard, onWindowGroupGeometry, onQemuGone } from './win.ts';
+import {
+  getShellGeometry,
+  startPairDrag,
+  startPairDragByPid,
+  startHosWindowGuard,
+  startWindowGuard,
+  onWindowGroupGeometry,
+  onQemuGone,
+} from './win.ts';
 import { listRunning } from './emulator.ts';
 import type { SdkInfo } from './types.ts';
 import { VM_GAP_DIP } from './windowGroup.ts';
 import { releaseLocationKeys, stopLocation } from './location.ts';
+import { runHosScenario } from './hosemu.ts';
 
 /**
  * 药丸窗口：模拟器屏幕右侧的竖向胶囊操作条（Electron 无边框小窗）。
@@ -19,6 +28,15 @@ export const PILL_WIDTH_DIP = 60;
 export interface PillGeom {
   serial: string;
   avdName: string;
+  kind?: 'android' | 'hos';
+  /** HarmonyOS：已解析的 Emulator.exe 主进程 pid */
+  pid?: number;
+  /** HarmonyOS：Emulator.exe 路径 */
+  hosEmu?: string;
+  /** HarmonyOS：hdc.exe 路径（多任务手势需要设备端 uitest） */
+  hosHdc?: string;
+  /** HarmonyOS：guest 原生分辨率（竖屏基准，旋转只影响手势坐标换算） */
+  resolution?: { width: number; height: number };
   /** qemu 屏幕区几何（物理像素），来自 applyShellGeometry */
   x: number;
   y: number;
@@ -26,8 +44,19 @@ export interface PillGeom {
   screenH: number;
 }
 
+interface HosPillTarget {
+  name: string;
+  emu: string;
+  hdc?: string;
+  pid: number;
+  width: number;
+  height: number;
+  portrait: boolean;
+}
+
 const pills = new Map<string, import('electron').BrowserWindow>();
 const openingPills = new Map<string, Promise<void>>();
+const hosTargets = new Map<string, HosPillTarget>();
 
 export function hasPill(serial: string): boolean {
   return !!pills.get(serial) && !pills.get(serial)!.isDestroyed();
@@ -42,16 +71,19 @@ export function pillTitle(serial: string): string {
   return `devemu-pill ${serial}`;
 }
 
-function pillHtml(win: import('electron').BrowserWindow, serial: string): void {
+function pillHtml(
+  win: import('electron').BrowserWindow,
+  serial: string,
+  kind: 'android' | 'hos',
+): void {
+  const query = `serial=${encodeURIComponent(serial)}${kind === 'hos' ? '&kind=hos' : ''}`;
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    void win.loadURL(
-      `${MAIN_WINDOW_VITE_DEV_SERVER_URL}/#pill?serial=${encodeURIComponent(serial)}`,
-    );
+    void win.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}/#pill?${query}`);
   } else {
     void win.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
       {
-        hash: `pill?serial=${encodeURIComponent(serial)}`,
+        hash: `pill?${query}`,
       },
     );
   }
@@ -70,6 +102,18 @@ export async function openPill(geom: PillGeom): Promise<void> {
 async function createPill(geom: PillGeom): Promise<void> {
   const { BrowserWindow, screen } = await import('electron');
   closePill(geom.serial);
+  const kind = geom.kind === 'hos' ? 'hos' : 'android';
+  if (kind === 'hos' && geom.pid && geom.hosEmu) {
+    hosTargets.set(geom.serial, {
+      name: geom.avdName,
+      emu: geom.hosEmu,
+      hdc: geom.hosHdc,
+      pid: geom.pid,
+      width: geom.resolution?.width ?? 0,
+      height: geom.resolution?.height ?? 0,
+      portrait: !geom.resolution || geom.resolution.height >= geom.resolution.width,
+    });
+  }
   // 物理像素 → 所在显示器的 DIP
   const displays = screen.getAllDisplays();
   const disp =
@@ -82,8 +126,11 @@ async function createPill(geom: PillGeom): Promise<void> {
       return geom.x >= x && geom.x < x + w && geom.y >= y && geom.y < y + h;
     }) ?? screen.getPrimaryDisplay();
   const s = disp.scaleFactor || 1;
+  // HarmonyOS 模拟器把原生操作条画在窗口内右侧条带里：药丸压在条带上替代它，
+  // 窗口保持 Qt 自己的尺寸（不再钳制），否则会与 Qt 抢尺寸导致持续抖动。
+  const right = Math.round((geom.x + geom.screenW) / s);
   const win = new BrowserWindow({
-    x: Math.round((geom.x + geom.screenW) / s) + VM_GAP_DIP - 4,
+    x: kind === 'hos' ? right - PILL_WIDTH_DIP : right + VM_GAP_DIP - 4,
     y: Math.round(geom.y / s),
     width: PILL_WIDTH_DIP,
     height: Math.round(geom.screenH / s),
@@ -118,15 +165,17 @@ async function createPill(geom: PillGeom): Promise<void> {
     // 主帧加载失败则永远等不到 ready-to-show：关窗让 emu:list 轮询重建
     if (isMainFrame && !win.isDestroyed()) win.close();
   });
-  pillHtml(win, geom.serial);
+  pillHtml(win, geom.serial, kind);
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) win.show();
   });
   pills.set(geom.serial, win);
-  startWindowGuard(geom.avdName, geom.serial);
+  if (kind === 'hos' && geom.pid) startHosWindowGuard(geom.pid, geom.serial);
+  else startWindowGuard(geom.avdName, geom.serial);
 }
 
 export function closePill(serial: string): void {
+  hosTargets.delete(serial);
   const win = pills.get(serial);
   if (!win) return;
   pills.delete(serial);
@@ -191,7 +240,9 @@ onWindowGroupGeometry((serial, geometry) => {
       const old = win.getBounds();
       if (Object.keys(next).some(key => old[key as keyof typeof old] !== next[key as keyof typeof next])) win.setBounds(next);
     };
-    const pillX = bounds.x + bounds.width + VM_GAP_DIP - 4;
+    const pillX = hosTargets.has(serial)
+      ? bounds.x + bounds.width - PILL_WIDTH_DIP
+      : bounds.x + bounds.width + VM_GAP_DIP - 4;
     setBounds(pill, pillX, PILL_WIDTH_DIP);
     const pillBounds = pill && !pill.isDestroyed() ? pill.getBounds() : null;
     setBounds(panel, pillBounds ? pillBounds.x + pillBounds.width + VM_GAP_DIP - 10 : bounds.x + bounds.width + VM_GAP_DIP - 6, 392);
@@ -423,6 +474,154 @@ export function startPillMove(serial: string): boolean {
     panel && !panel.isDestroyed() ? nativeHandleHex(panel) : '',
   );
   return true;
+}
+
+/** HarmonyOS 药丸把手拖动：按已解析 pid 找设备窗口，药丸同偏移跟随 */
+export function startHosPillMove(serial: string): boolean {
+  const target = hosTargets.get(serial);
+  const win = pills.get(serial);
+  if (!target || !win || win.isDestroyed()) return false;
+  const panel = locationPanels.get(serial);
+  startPairDragByPid(
+    target.pid,
+    nativeHandleHex(win),
+    panel && !panel.isDestroyed() ? nativeHandleHex(panel) : '',
+  );
+  return true;
+}
+
+/** HarmonyOS 药丸动作：走 Emulator.exe 场景模拟（电源/音量/旋转/截图/手势） */
+export async function handleHosPillAction(
+  dataRoot: string,
+  serial: string,
+  action: PillAction,
+): Promise<{ ok: boolean; savedTo?: string; error?: string }> {
+  const target = hosTargets.get(serial);
+  if (!target) return { ok: false, error: '虚拟机未在运行' };
+  const { emu, name } = target;
+  if (action === 'powerLong') {
+    const res = await run(emu, ['-stop', name], { timeoutMs: 60_000 }).catch(
+      () => undefined,
+    );
+    return {
+      ok: !!res && res.code === 0,
+      error: res && res.code !== 0 ? res.stderr.trim() : undefined,
+    };
+  }
+  if (action === 'screenshot') {
+    return captureHosScreenshot(target, dataRoot);
+  }
+  const nativeW = target.width || 1256;
+  const nativeH = target.height || 2760;
+  const w = target.portrait ? nativeW : nativeH;
+  const h = target.portrait ? nativeH : nativeW;
+  const round = Math.round;
+  if (action === 'recents') {
+    // 场景命令的 -slide 不会触发多任务：改走设备端 uitest 的慢速上滑
+    const hdcTarget = target.hdc ? await hdcTargetOfPid(target.pid, target.hdc) : undefined;
+    if (!target.hdc || !hdcTarget) return { ok: false, error: '未找到模拟器的 hdc 通道' };
+    const res = await run(
+      target.hdc,
+      [
+        '-t',
+        hdcTarget,
+        'shell',
+        'uitest',
+        'uiInput',
+        'swipe',
+        String(round(w * 0.5)),
+        String(h - 2),
+        String(round(w * 0.5)),
+        String(round(h * 0.45)),
+        '250',
+      ],
+      { timeoutMs: 30_000 },
+    ).catch(() => undefined);
+    return {
+      ok: !!res && res.code === 0,
+      error: res && res.code !== 0 ? res.stderr.trim() || res.stdout.trim() : undefined,
+    };
+  }
+  // back/home 用系统手势（场景命令内部按实例找 hdc 通道）；分辨率按当前旋转状态换算
+  const args: string[] =
+    action === 'power'
+      ? ['-power']
+      : action === 'volup'
+        ? ['-volume', 'up']
+        : action === 'voldown'
+          ? ['-volume', 'down']
+          : action === 'rotate'
+            ? ['-rotation', 'left']
+            : action === 'back'
+              ? ['-slide', `${round(w * 0.01)} ${round(h * 0.5)} ${round(w * 0.45)} ${round(h * 0.5)}`]
+              : action === 'home'
+                ? ['-slide', `${round(w * 0.5)} ${h - 2} ${round(w * 0.5)} ${round(h * 0.6)}`]
+                : [];
+  if (args.length === 0) return { ok: false, error: '该操作暂不支持 HarmonyOS' };
+  const res = await runHosScenario(emu, name, args);
+  if (res.ok && action === 'rotate') target.portrait = !target.portrait;
+  return { ok: res.ok, error: res.error };
+}
+
+/** HarmonyOS 模拟器自身的 hdc TCP 端口：netstat 取该 pid 的 LISTENING 端口，
+ *  再与 hdc 目标列表交叉，避免多实例并存时把手势发到别的设备 */
+async function hdcTargetOfPid(pid: number, hdc: string): Promise<string | undefined> {
+  const netstat = process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, 'System32', 'netstat.exe')
+    : 'netstat';
+  const net = await run(netstat, ['-ano', '-p', 'TCP'], { timeoutMs: 8000 }).catch(() => undefined);
+  if (!net || net.code !== 0) return undefined;
+  const ports = new Set<number>();
+  for (const line of net.stdout.split(/\r?\n/)) {
+    const m = /^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/i.exec(line);
+    if (m && Number(m[2]) === pid) ports.add(Number(m[1]));
+  }
+  if (ports.size === 0) return undefined;
+  const list = await run(hdc, ['list', 'targets'], { timeoutMs: 8000 }).catch(() => undefined);
+  if (!list || list.code !== 0) return undefined;
+  for (const raw of list.stdout.split(/\r?\n/)) {
+    const target = raw.trim();
+    const m = /^(\S+):(\d+)$/.exec(target);
+    if (m && ports.has(Number(m[2]))) return target;
+  }
+  return undefined;
+}
+
+async function captureHosScreenshot(
+  target: HosPillTarget,
+  dataRoot: string,
+): Promise<{ ok: boolean; savedTo?: string; error?: string }> {
+  const dir = path.join(dataRoot, 'screenshots');
+  fs.mkdirSync(dir, { recursive: true });
+  const isPng = (f: string) => /\.png$/i.test(f);
+  // 直接写截图目录：用独立临时目录时模拟器会长期占用目录句柄，删不掉只能泄漏
+  const before = new Set(fs.readdirSync(dir).filter(isPng));
+  const res = await runHosScenario(target.emu, target.name, [
+    '-screenshot',
+    '-screenshotPath',
+    dir,
+  ]);
+  if (!res.ok) return { ok: false, error: res.error };
+  const png = fs
+    .readdirSync(dir)
+    .filter((f) => isPng(f) && !before.has(f))
+    .map((f) => path.join(dir, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+  if (!png) return { ok: false, error: '模拟器未生成截图（可能尚未完成启动）' };
+  const file = path.join(
+    dir,
+    `${target.name}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
+  );
+  // 截图子进程退出后仍会短暂占用文件：Windows 下改名要等句柄释放
+  for (let i = 0; i < 20; i++) {
+    try {
+      fs.renameSync(png, file);
+      return { ok: true, savedTo: file };
+    } catch {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  return { ok: false, error: '截图文件被占用，未能保存' };
 }
 
 function nativeHandleHex(win: import('electron').BrowserWindow): string {

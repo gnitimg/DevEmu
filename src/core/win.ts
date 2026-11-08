@@ -1,6 +1,6 @@
 import { run, stream } from './exec.ts';
-import { buildWindowGuardScript } from './windowGroup.ts';
-export { buildWindowGuardScript } from './windowGroup.ts';
+import { buildWindowGuardScript, buildHosWindowGuardScript } from './windowGroup.ts';
+export { buildWindowGuardScript, buildHosWindowGuardScript } from './windowGroup.ts';
 
 /** avd 名会嵌入 WQL/正则/PowerShell 字符串（进程匹配、窗口查找），
  *  这些函数可能收到渲染层或 console 回显来的名字，入口统一校验 */
@@ -179,6 +179,17 @@ export function onQemuGone(listener: (serial: string) => void): () => void {
 export function startWindowGuard(avdName: string, serial: string): void {
   if (guards.has(serial)) return;
   const script = buildWindowGuardScript(avdName, serial);
+  runGuard(serial, script);
+}
+
+/** HarmonyOS 模拟器按已解析的进程 pid 起守卫（实例名不参与脚本拼接） */
+export function startHosWindowGuard(pid: number, serial: string): void {
+  if (guards.has(serial)) return;
+  const script = buildHosWindowGuardScript(pid, serial);
+  runGuard(serial, script);
+}
+
+function runGuard(serial: string, script: string): void {
   const child = stream(
     'powershell.exe',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
@@ -243,7 +254,39 @@ export async function getShellGeometry(
       timeoutMs: 30_000,
     },
   ).catch(() => undefined);
-  const line = res?.stdout.split(/\r?\n/).find((l) => l.startsWith('GEOM '));
+  return parseGeom(res?.stdout);
+}
+
+/** HarmonyOS 模拟器主窗口几何（pid 已知时跳过进程匹配） */
+export async function getShellGeometryByPid(
+  pid: number,
+): Promise<ShellGeom | undefined> {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  const script = [
+    "$ErrorActionPreference='SilentlyContinue'",
+    'Add-Type -TypeDefinition \'' + GEOMETRY_CS + '\'',
+    `$h = [DevEmuS.U]::LargestVisibleWindow([uint32]${String(pid)})`,
+    'if ($h -eq [IntPtr]::Zero) { exit 1 }',
+    '[DevEmuS.U]::SetProcessDPIAware() | Out-Null',
+    '$r = New-Object DevEmuS.RECT',
+    '[DevEmuS.U]::GetWindowRect($h, [ref]$r) | Out-Null',
+    '$sw = $r.R - $r.L',
+    '$sh = $r.B - $r.T',
+    'if ($sw -lt 80 -or $sh -lt 80) { exit 1 }',
+    "Write-Output ('GEOM ' + $r.L + ' ' + $r.T + ' ' + $sw + ' ' + $sh)",
+  ].join('\n');
+  const res = await run(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    {
+      timeoutMs: 30_000,
+    },
+  ).catch(() => undefined);
+  return parseGeom(res?.stdout);
+}
+
+function parseGeom(stdout: string | undefined): ShellGeom | undefined {
+  const line = stdout?.split(/\r?\n/).find((l) => l.startsWith('GEOM '));
   if (!line) return undefined;
   const parts = line
     .slice(5)
@@ -265,19 +308,46 @@ export function startPairDrag(
   panelHwndHex = '',
 ): void {
   assertAvdName(avdName);
-  const script = [
-    "$ErrorActionPreference='SilentlyContinue'",
-    'Add-Type -TypeDefinition \'' + DRAG_CS + '\'',
-    `$avd = '${avdName}'`,
-    '[DevEmuD.U]::SetProcessDPIAware() | Out-Null',
-    `$pill = [IntPtr]([Convert]::ToInt64('${pillHwndHex || '0'}', 16))`,
-    `$panel = [IntPtr]([Convert]::ToInt64('${panelHwndHex || '0'}', 16))`,
+  const resolve = [
     '$hwnd = [IntPtr]::Zero',
     'for ($i = 0; $i -lt 20 -and $hwnd -eq [IntPtr]::Zero; $i++) {',
     "  $proc = Get-CimInstance Win32_Process -Filter \"Name='qemu-system-x86_64.exe'\" | Where-Object { $_.CommandLine -match ('-avd ' + $avd.Replace('.','\\.') + '(\\s|$)') } | Select-Object -First 1",
     '  if ($proc) { $hwnd = [DevEmuD.U]::LargestVisibleWindow([uint32]$proc.ProcessId) }',
     '  if ($hwnd -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 500 }',
     '}',
+  ];
+  runPairDrag([`$avd = '${avdName}'`, ...resolve], pillHwndHex, panelHwndHex);
+}
+
+/** HarmonyOS 模拟器双窗拖动：pid 由主进程解析，避免把实例名拼进脚本 */
+export function startPairDragByPid(
+  pid: number,
+  pillHwndHex: string,
+  panelHwndHex = '',
+): void {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  const resolve = [
+    `$hwnd = [DevEmuD.U]::LargestVisibleWindow([uint32]${String(pid)})`,
+    'for ($i = 0; $i -lt 20 -and $hwnd -eq [IntPtr]::Zero; $i++) {',
+    '  Start-Sleep -Milliseconds 500',
+    `  $hwnd = [DevEmuD.U]::LargestVisibleWindow([uint32]${String(pid)})`,
+    '}',
+  ];
+  runPairDrag(resolve, pillHwndHex, panelHwndHex);
+}
+
+function runPairDrag(
+  resolve: string[],
+  pillHwndHex: string,
+  panelHwndHex: string,
+): void {
+  const script = [
+    "$ErrorActionPreference='SilentlyContinue'",
+    'Add-Type -TypeDefinition \'' + DRAG_CS + '\'',
+    '[DevEmuD.U]::SetProcessDPIAware() | Out-Null',
+    `$pill = [IntPtr]([Convert]::ToInt64('${pillHwndHex || '0'}', 16))`,
+    `$panel = [IntPtr]([Convert]::ToInt64('${panelHwndHex || '0'}', 16))`,
+    ...resolve,
     'if ($hwnd -eq [IntPtr]::Zero) { exit 1 }',
     // 等待左键按下（正常情况下调用即已按下），最多 3 秒
     'for ($i = 0; $i -lt 30; $i++) {',

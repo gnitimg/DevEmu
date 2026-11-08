@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onEnvInstallResult, onHuaweiChanged, onWinMaximized, HARMONY_DOWNLOAD_URL, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
 import { DeviceDetail } from './pages/DeviceDetail.tsx';
+import { HosDeviceDetail } from './pages/HosDeviceDetail.tsx';
 import { Downloads } from './pages/Downloads.tsx';
 import { Settings } from './pages/Settings.tsx';
 import { Toaster, toast } from './components/Toast.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
 import { FlyLayer } from './components/Fly.tsx';
-import type { AvdInfo, ProjectMeta, Settings as SettingsData } from '../core/types.ts';
+import type { AvdInfo, HosAvd, ProjectMeta, Settings as SettingsData } from '../core/types.ts';
+
+type DeviceSystem = 'android' | 'harmonyos';
 
 type Page = 'projects' | 'devices' | 'device-detail' | 'downloads' | 'settings';
 
@@ -29,6 +32,8 @@ const ss = {
   del: (k: string) => sessionStorage.removeItem(k),
 };
 
+const dlId = (d: DownloadItem) => `${d.pkg}#${d.startedAt}`;
+
 export function App() {
   // 导航状态持久化：刷新/整页重载后回到原页面，不跳首页
   const [page, setPage] = useState<Page>(() => ss.get('de.page', 'projects') as Page);
@@ -36,10 +41,15 @@ export function App() {
   const [deviceName, setDeviceName] = useState<string | null>(() => sessionStorage.getItem('de.deviceName'));
   // 详情页所属作用域：'shared' 或项目 id
   const [deviceScope, setDeviceScope] = useState<'shared' | string>(() => ss.get('de.deviceScope', 'shared'));
+  // 详情页所属系统：决定渲染 Android 还是 HarmonyOS 详情，同时记忆设备池页签
+  const [deviceSystem, setDeviceSystem] = useState<DeviceSystem>(() =>
+    ss.get('de.deviceSystem', 'android') === 'harmonyos' ? 'harmonyos' : 'android',
+  );
   const [env, setEnv] = useState<EnvStatus | null>(null);
   const [emus, setEmus] = useState<EmuDevice[]>([]);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [sharedAvds, setSharedAvds] = useState<AvdInfo[]>([]);
+  const [hosAvds, setHosAvds] = useState<HosAvd[]>([]);
   const [sideOpen, setSideOpen] = useState(() => sessionStorage.getItem('de.sideOpen') !== '0');
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [devicesOpen, setDevicesOpen] = useState(true);
@@ -49,6 +59,8 @@ export function App() {
     return saved === 'download' ? 'network' : saved;
   });
   const [maximized, setMaximized] = useState(false);
+  // SDK 设置页默认展示的系统页签：从 HarmonyOS 设备池进入时直达 HarmonyOS
+  const [sdkSystem, setSdkSystem] = useState<'android' | 'harmonyos'>('android');
   const [dlActive, setDlActive] = useState<DownloadItem[]>([]);
   // null 表示尚未查完登录状态，避免闪卡片
   const [huaweiLogin, setHuaweiLogin] = useState<boolean | null>(null);
@@ -56,13 +68,14 @@ export function App() {
   useEffect(() => {
     ss.set('de.page', page);
     ss.set('de.deviceScope', deviceScope);
+    ss.set('de.deviceSystem', deviceSystem);
     ss.set('de.settingsSection', settingsSection);
     ss.set('de.sideOpen', sideOpen ? '1' : '0');
     if (projectId) ss.set('de.projectId', projectId);
     else ss.del('de.projectId');
     if (deviceName) ss.set('de.deviceName', deviceName);
     else ss.del('de.deviceName');
-  }, [page, projectId, deviceName, deviceScope, settingsSection, sideOpen]);
+  }, [page, projectId, deviceName, deviceScope, deviceSystem, settingsSection, sideOpen]);
 
   useEffect(() => {
     api.winIsMaximized().then((r) => {
@@ -83,10 +96,29 @@ export function App() {
   }, []);
 
   // 侧栏胶囊总进度：所有进行中任务（含排队）已下载 / 总大小
+  // 下载状态统一在此提示：开始（含排队）、完成、失败、取消；首帧只建立基线，
+  // 否则重放历史会重复弹窗
+  const seenActiveRef = useRef<Set<string> | null>(null);
+  const seenFinishedRef = useRef<Set<string> | null>(null);
   useEffect(
     () =>
       onDownloadsChanged((s) => {
         setDlActive(s.active);
+        const prevActive = seenActiveRef.current;
+        seenActiveRef.current = new Set(s.active.map(dlId));
+        const prevFinished = seenFinishedRef.current;
+        seenFinishedRef.current = new Set(s.finished.map(dlId));
+        if (!prevActive || !prevFinished) return;
+        for (const d of s.active) {
+          if (prevActive.has(dlId(d))) continue;
+          toast(`${d.desc} ${d.state === 'queued' ? '已加入下载队列' : '开始下载'}`, 'ok');
+        }
+        for (const d of s.finished) {
+          if (prevFinished.has(dlId(d))) continue;
+          if (d.state === 'done') toast(`${d.desc} 下载完成`, 'ok');
+          else if (d.state === 'failed') toast(`${d.desc} 失败：${d.error ?? '未知错误'}`);
+          else toast(`${d.desc} 已取消`, 'ok');
+        }
       }),
     [],
   );
@@ -127,14 +159,20 @@ export function App() {
     if (p === 'projects') setProjectId(null);
   };
 
-  const openSdkManage = () => {
+  const openSdkManage = (system: 'android' | 'harmonyos' = 'android') => {
+    setSdkSystem(system);
     setSettingsSection('sdk');
     goto('settings');
   };
 
-  const openDevice = (name: string, scope: 'shared' | string) => {
+  const openDevice = (
+    name: string,
+    scope: 'shared' | string,
+    system: DeviceSystem = 'android',
+  ) => {
     setDeviceName(name);
     setDeviceScope(scope);
+    setDeviceSystem(system);
     setPage('device-detail');
   };
 
@@ -167,17 +205,8 @@ export function App() {
     return () => clearInterval(timer);
   }, [refreshEnv, refreshEmus]);
 
-  // 环境安装完成：刷新环境探测，并以右上角弹窗告知结果
+  // 环境安装完成：刷新环境探测（结果提示由下载状态统一弹窗）
   useEffect(() => onEnvChanged(() => refreshEnv()), [refreshEnv]);
-  useEffect(
-    () =>
-      onEnvInstallResult((r) => {
-        if (r.cancelled) toast(`${r.label} 下载已取消`, 'ok');
-        else if (r.ok) toast(`${r.label} 安装完成`, 'ok');
-        else toast(`${r.label} 安装失败：${r.error ?? '未知错误'}`);
-      }),
-    [],
-  );
 
   // 侧栏项目列表跟随数据变化（新建/删除后自动同步）
   useEffect(() => {
@@ -200,6 +229,26 @@ export function App() {
     const timer = setInterval(refresh, 4000);
     return () => clearInterval(timer);
   }, []);
+
+  // 侧栏 HarmonyOS 虚拟机同步：SDK 未就绪时不调用（每次都要 spawn Emulator.exe）
+  const hasHos = env?.harmony !== null && env?.harmony !== undefined;
+  useEffect(() => {
+    if (!hasHos) {
+      setHosAvds([]);
+      return;
+    }
+    let live = true;
+    const refresh = () =>
+      api.hosList().then((r) => {
+        if (live && r.ok) setHosAvds(r.data);
+      });
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [hasHos]);
 
   return (
     <div className="shell">
@@ -320,15 +369,39 @@ export function App() {
               <button
                 key={a.name}
                 className={`side-child${
-                  page === 'device-detail' && deviceScope === 'shared' && deviceName === a.name ? ' active' : ''
+                  page === 'device-detail' &&
+                  deviceScope === 'shared' &&
+                  deviceSystem === 'android' &&
+                  deviceName === a.name
+                    ? ' active'
+                    : ''
                 }`}
-                onClick={() => openDevice(a.name, 'shared')}
+                onClick={() => openDevice(a.name, 'shared', 'android')}
                 title={a.name}
               >
                 {a.name}
               </button>
             ))}
-            {sharedAvds.length === 0 && <div className="side-child side-child-empty">暂无设备</div>}
+            {hosAvds.map((a) => (
+              <button
+                key={`hos:${a.name}`}
+                className={`side-child${
+                  page === 'device-detail' &&
+                  deviceScope === 'shared' &&
+                  deviceSystem === 'harmonyos' &&
+                  deviceName === a.name
+                    ? ' active'
+                    : ''
+                }`}
+                onClick={() => openDevice(a.name, 'shared', 'harmonyos')}
+                title={`${a.name}（HarmonyOS）`}
+              >
+                {a.name}
+              </button>
+            ))}
+            {sharedAvds.length === 0 && hosAvds.length === 0 && (
+              <div className="side-child side-child-empty">暂无设备</div>
+            )}
           </SideItem>
           </div>
           {env && !env.harmony && huaweiLogin !== null && (
@@ -351,9 +424,19 @@ export function App() {
               </div>
               {huaweiLogin ? (
                 <>
-                  <p className="side-notice-text">HarmonyOS SDK 未检测到。已登录华为账号，可从官方下载中心获取命令行工具压缩包，再到 SDK 页导入落位</p>
-                  <button className="side-notice-link" onClick={() => void api.openUrl(HARMONY_DOWNLOAD_URL)}>
-                    打开下载中心 ›
+                  <p className="side-notice-text">HarmonyOS SDK 未检测到。已登录华为账号，可下载命令行工具并自动落位</p>
+                  <button
+                    className="side-notice-link"
+                    onClick={() => {
+                      void api.huaweiDownloadCenter().then((d) => {
+                        if (!d.ok) toast(d.error);
+                        else if (d.data.started) toast('正在获取官方下载地址，进度见“下载管理”', 'ok');
+                        else if (d.data.reason === 'window') toast('官方下载页已打开', 'ok');
+                        else toast('已有下载任务在进行中');
+                      });
+                    }}
+                  >
+                    下载并自动落位 ›
                   </button>
                 </>
               ) : (
@@ -419,28 +502,48 @@ export function App() {
               emus={emus}
               refreshEmus={refreshEmus}
               env={env}
+              system={deviceSystem}
+              onSystem={setDeviceSystem}
               onOpenSdkManage={openSdkManage}
-              onOpenVm={(name) => openDevice(name, 'shared')}
+              onOpenVm={(name, system) => openDevice(name, 'shared', system)}
             />
           )}
           {page === 'device-detail' && deviceName !== null && (
-            <DeviceDetail
-              avdName={deviceName}
-              scope={detailScope}
-              emus={emus}
-              refreshEmus={refreshEmus}
-              backLabel={deviceScope === 'shared' ? '返回设备池' : `返回 ${deviceScope}`}
-              onRenamed={(n) => setDeviceName(n)}
-              onBack={() => {
-                setPage(deviceScope === 'shared' ? 'devices' : 'projects');
-                if (deviceScope !== 'shared') setProjectId(deviceScope);
-                setDeviceName(null);
-              }}
-            />
+            deviceSystem === 'harmonyos' && deviceScope === 'shared' ? (
+              <HosDeviceDetail
+                name={deviceName}
+                emus={emus}
+                backLabel="返回设备池"
+                onBack={() => {
+                  setPage('devices');
+                  setDeviceName(null);
+                }}
+              />
+            ) : (
+              <DeviceDetail
+                avdName={deviceName}
+                scope={detailScope}
+                emus={emus}
+                refreshEmus={refreshEmus}
+                backLabel={deviceScope === 'shared' ? '返回设备池' : `返回 ${deviceScope}`}
+                onRenamed={(n) => setDeviceName(n)}
+                onBack={() => {
+                  setPage(deviceScope === 'shared' ? 'devices' : 'projects');
+                  if (deviceScope !== 'shared') setProjectId(deviceScope);
+                  setDeviceName(null);
+                }}
+              />
+            )
           )}
           {page === 'downloads' && <Downloads />}
           {page === 'settings' && (
-            <Settings env={env} refreshEnv={refreshEnv} section={settingsSection} onSection={setSettingsSection} />
+            <Settings
+              env={env}
+              refreshEnv={refreshEnv}
+              section={settingsSection}
+              onSection={setSettingsSection}
+              sdkSystem={sdkSystem}
+            />
           )}
         </main>
       </div>

@@ -50,6 +50,7 @@ namespace DevEmuGroup {
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc callback, uint pid, uint tid, uint flags);
     static uint owner;
     static string serial;
+    static bool clampWindow;
     static IntPtr device, pill, location, previousPill, previousLocation, hook;
     static MouseProc callback;
     static WinEventProc layerCallback;
@@ -65,8 +66,8 @@ namespace DevEmuGroup {
     static IntPtr dragDevice, dragPill, dragLocation;
     static int targetX, targetY;
     static readonly AutoResetEvent dragSignal = new AutoResetEvent(false);
-    public static void Init(uint pid, string id) {
-      owner=pid; serial=id; SetProcessDPIAware();
+    public static void Init(uint pid, string id, bool clamp) {
+      owner=pid; serial=id; clampWindow=clamp; SetProcessDPIAware();
       callback=OnMouse;
       hook=SetWindowsHookExW(14, callback, GetModuleHandleW(null), 0);
       layerCallback=delegate(IntPtr eventHook, uint kind, IntPtr win, int objectId, int childId, uint threadId, uint time) {
@@ -222,7 +223,8 @@ namespace DevEmuGroup {
       int style=GetWindowLong(device, -16);
       int fixedStyle=style & ~0x00C00000 & ~0x00040000 & ~0x00010000;
       if (style != fixedStyle) { SetWindowLong(device, -16, fixedStyle); SetWindowPos(device, IntPtr.Zero, 0, 0, 0, 0, 0x37); }
-      EnsureClamped();
+      // HarmonyOS 的 Qt 模拟器按自身规则设定尺寸，强行钳制会与 Qt 互相改回（窗口每 25ms 抖一次）。
+      if (clampWindow) EnsureClamped();
       // 透明轮廓由 Qt 的设备皮肤提供，不能覆盖为统一圆角区域。
       Align(pill != previousPill || location != previousLocation);
       if (pill != previousPill || location != previousLocation) Fit();
@@ -233,29 +235,15 @@ namespace DevEmuGroup {
 }
 ${WINDOW_LAYER_NATIVE}`;
 
-export function buildWindowGuardScript(
-  avdName: string,
-  serial: string,
-): string {
-  if (!/^[\w.-]+$/.test(avdName) || !/^emulator-\d{1,5}$/.test(serial))
-    throw new Error('非法窗口组');
-  // avd 名嵌入正则：允许字符里只有 '.' 是元字符，不转义会匹配到同前缀的其他实例
-  const avdMatcher = avdName.replace(/\./g, '\\.');
-  return String.raw`
+const guardPrelude = (serial: string, clamp: boolean): string => String.raw`
 $ErrorActionPreference='Stop'
 Add-Type -TypeDefinition @'
 ${NATIVE}
 '@
 $ownerId=(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
-[DevEmuGroup.Native]::Init([uint32]$ownerId, '${serial}')
-$qemuId=0
-for ($i=0; $i -lt 120 -and -not $qemuId; $i++) {
-  $p=Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdMatcher}(\s|$)' } | Select-Object -First 1
-  if ($p) { $qemuId=$p.ProcessId } else { Start-Sleep -Seconds 1 }
-}
-if (-not $qemuId) { exit 1 }
-# qemu 进程确定后再装位置事件钩子（按 pid 过滤，系统级事件不进入回调）
-[DevEmuGroup.Native]::Watch([uint32]$qemuId)
+[DevEmuGroup.Native]::Init([uint32]$ownerId, '${serial}', ${clamp ? '$true' : '$false'})`;
+
+const GUARD_LOOP = String.raw`
 $msg=New-Object DevEmuGroup.MSG
 $lastProbe=[DateTime]::MinValue
 $lastTick=[DateTime]::MinValue
@@ -281,4 +269,38 @@ while ($true) {
   }
   [DevEmuGroup.Native]::MsgWaitForMultipleObjects(0, [IntPtr]::Zero, $false, 10, 0x04FF) | Out-Null
 }`;
+
+export function buildWindowGuardScript(
+  avdName: string,
+  serial: string,
+): string {
+  if (!/^[\w.-]+$/.test(avdName) || !/^emulator-\d{1,5}$/.test(serial))
+    throw new Error('非法窗口组');
+  // avd 名嵌入正则：允许字符里只有 '.' 是元字符，不转义会匹配到同前缀的其他实例
+  const avdMatcher = avdName.replace(/\./g, '\\.');
+  return String.raw`
+${guardPrelude(serial, true)}
+$qemuId=0
+for ($i=0; $i -lt 120 -and -not $qemuId; $i++) {
+  $p=Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdMatcher}(\s|$)' } | Select-Object -First 1
+  if ($p) { $qemuId=$p.ProcessId } else { Start-Sleep -Seconds 1 }
+}
+if (-not $qemuId) { exit 1 }
+# qemu 进程确定后再装位置事件钩子（按 pid 过滤，系统级事件不进入回调）
+[DevEmuGroup.Native]::Watch([uint32]$qemuId)
+${GUARD_LOOP}`;
+}
+
+/** HarmonyOS 模拟器没有与实例名稳定的进程匹配串（名字可含空格/中文），
+ *  由主进程先解析出 Emulator.exe 的 pid 再交给守卫。 */
+export function buildHosWindowGuardScript(pid: number, serial: string): string {
+  if (!Number.isInteger(pid) || pid <= 0 || pid > 0xffffffff)
+    throw new Error('非法窗口组');
+  if (!/^hos-[A-Za-z0-9_-]{1,120}$/.test(serial)) throw new Error('非法窗口组');
+  return String.raw`
+${guardPrelude(serial, false)}
+$qemuId=${String(pid)}
+if (-not (Get-Process -Id $qemuId -ErrorAction SilentlyContinue)) { exit 1 }
+[DevEmuGroup.Native]::Watch([uint32]$qemuId)
+${GUARD_LOOP}`;
 }

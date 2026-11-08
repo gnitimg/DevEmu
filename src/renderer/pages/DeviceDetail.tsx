@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, osFromImagePkg, prettyModel, type EmuDevice, type Scope } from '../api.ts';
 import { RunsPanel } from '../components/RunsPanel.tsx';
+import { decimalInput, gbFromMb } from '../components/VmEdit.tsx';
+import { displayedStorageGb } from '../../core/storageUnits.ts';
 import { toast } from '../components/Toast.tsx';
 import { fmtTime } from '../components/Modal.tsx';
 import type { ApkMeta, AvdInfo } from '../../core/types.ts';
@@ -29,7 +31,7 @@ export function DeviceDetail({
   const [starting, setStarting] = useState<number | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [runsKey, setRunsKey] = useState(0);
+  const [runsKey] = useState(0);
   const [editing, setEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [ram, setRam] = useState('');
@@ -103,47 +105,105 @@ export function DeviceDetail({
 
   function startEdit() {
     setNameDraft(avdName);
-    setRam(hw?.ramMb ? String(hw.ramMb) : '');
+    setRam(hw?.ramMb ? gbFromMb(hw.ramMb) : '');
     setCores(hw?.cores ? String(hw.cores) : '');
     setStorage(hw?.storageGb ? String(Math.round(hw.storageGb)) : '');
     setEditing(true);
   }
 
+  function relaunch(name: string) {
+    setStarting(Date.now());
+    void api.launchEmu(scope, name).then((r) => {
+      if (!r.ok) {
+        setError(`重启失败：${r.error}`);
+        setStarting(null);
+      }
+      refreshEmus();
+    });
+  }
+
   async function saveEdit() {
-    setSaving(true);
     setError('');
     const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setError('名称不能为空');
+      return;
+    }
+    if (trimmed !== avdName && run) {
+      setError('请先关闭虚拟机再重命名');
+      return;
+    }
+
+    const ramGb = ram ? Number(ram) : NaN;
+    const next = {
+      ramMb: Number.isFinite(ramGb) && ramGb > 0 ? Math.round(ramGb * 1024) : undefined,
+      cores: cores ? Number(cores) : undefined,
+      storageGb: storage ? Number(storage) : undefined,
+    };
+    const currentStorage = hw?.storageGb !== undefined ? Math.round(hw.storageGb) : undefined;
+    const changed =
+      next.ramMb !== hw?.ramMb ||
+      next.cores !== hw?.cores ||
+      next.storageGb !== currentStorage;
+    if (trimmed === avdName && !changed) {
+      setEditing(false);
+      return;
+    }
+    // 开机时改配置必须先停机；缩小数据分区会截断镜像里的已用数据，任何状态都只允许扩容
+    if (next.storageGb !== undefined && currentStorage !== undefined && next.storageGb < currentStorage) {
+      setError(`硬盘容量只能扩容（当前 ${currentStorage} GB）`);
+      return;
+    }
+    const restart = !!run && changed;
+    const grow = next.storageGb !== undefined && currentStorage !== undefined && next.storageGb > currentStorage;
+    const confirmText = grow
+      ? '扩容可能需要重建数据分区；修改硬件配置需要重启虚拟机才能生效，是否继续？'
+      : '修改硬件配置需要重启虚拟机才能生效，是否立即重启？';
+    if (restart && !window.confirm(confirmText)) return;
+
+    setSaving(true);
+    if (restart) {
+      const sr = await api.stopEmu(scope, avdName);
+      if (!sr.ok) {
+        setError(sr.error);
+        setSaving(false);
+        return;
+      }
+      refreshEmus();
+    }
+
     if (trimmed !== avdName) {
-      if (!trimmed) {
-        setError('名称不能为空');
-        setSaving(false);
-        return;
-      }
-      if (run) {
-        setError('请先关闭虚拟机再重命名');
-        setSaving(false);
-        return;
-      }
       const rr = await api.renameAvd(scope, avdName, trimmed);
       if (!rr.ok || !rr.data.ok) {
         setError(rr.ok ? rr.data.error ?? '重命名失败' : rr.error);
         setSaving(false);
+        if (restart) relaunch(avdName);
         return;
       }
       onRenamed?.(trimmed);
     }
-    const r = await api.setAvdHardware(scope, trimmed, {
-      ramMb: ram ? Number(ram) : undefined,
-      cores: cores ? Number(cores) : undefined,
-      storageGb: storage ? Number(storage) : undefined,
-    });
+
+    let r = await api.setAvdHardware(scope, trimmed, next);
+    if (!r.ok && r.needsWipe) {
+      const approve = window.confirm(
+        `该虚拟机镜像的数据分区已加密，无法在不丢失数据的前提下扩容。继续将清空虚拟机内的全部数据，并按 ${next.storageGb} GB 重建，是否继续？`,
+      );
+      if (!approve) {
+        setSaving(false);
+        if (restart) relaunch(trimmed);
+        return;
+      }
+      r = await api.setAvdHardware(scope, trimmed, next, { wipeData: true });
+    }
     setSaving(false);
     if (!r.ok || !r.data.ok) {
       setError(r.ok ? r.data.error ?? '保存失败' : r.error);
+      if (restart) relaunch(trimmed);
       return;
     }
     setEditing(false);
     reload();
+    if (restart) relaunch(trimmed);
   }
 
   async function doImport() {
@@ -277,9 +337,12 @@ export function DeviceDetail({
                 <th>内存</th>
                 <td>
                   {editing ? (
-                    <input className="cell-input" value={ram} onChange={(e) => setRam(e.target.value.replace(/[^\d]/g, ''))} placeholder="MB" />
+                    <div className="cell-input-row">
+                      <input className="cell-input" value={ram} onChange={(e) => setRam(decimalInput(e.target.value))} inputMode="decimal" />
+                      <span className="cell-unit">GB</span>
+                    </div>
                   ) : (
-                    <span className="num">{hw?.ramMb ? `${hw.ramMb} MB` : '—'}</span>
+                    <span className="num">{hw?.ramMb ? `${gbFromMb(hw.ramMb)} GB` : '—'}</span>
                   )}
                 </td>
               </tr>
@@ -287,20 +350,20 @@ export function DeviceDetail({
                 <th>CPU 核数</th>
                 <td>
                   {editing ? (
-                    <input className="cell-input" value={cores} onChange={(e) => setCores(e.target.value.replace(/[^\d]/g, ''))} />
+                    <div className="cell-input-row">
+                      <input className="cell-input" value={cores} onChange={(e) => setCores(e.target.value.replace(/[^\d]/g, ''))} inputMode="numeric" />
+                      <span className="cell-unit">核</span>
+                    </div>
                   ) : (
-                    <span className="num">{hw?.cores ?? '—'}</span>
+                    <span className="num">{hw?.cores ? `${hw.cores} 核` : '—'}</span>
                   )}
                 </td>
               </tr>
               <tr>
-                <th>数据分区</th>
+                <th>硬盘容量</th>
                 <td>
-                  {editing ? (
-                    <input className="cell-input" value={storage} onChange={(e) => setStorage(e.target.value.replace(/[^\d]/g, ''))} placeholder="GB" />
-                  ) : (
-                    <span className="num">{hw?.storageGb ? `${hw.storageGb} GB` : '—'}</span>
-                  )}
+                  {/* 扩容入口暂缓开放：核心扩容/重建逻辑保留在 avd.ts 与主进程，恢复时还原此输入框 */}
+                  <span className="num">{hw?.storageGb ? `${displayedStorageGb(hw.storageGb)} GB` : '—'}</span>
                 </td>
               </tr>
             </tbody>

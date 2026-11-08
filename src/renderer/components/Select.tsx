@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
-export type SelectOption<T extends string> = { value: T; label: string; hint?: string };
+export type SelectOption<T extends string> = {
+  value: T;
+  label: string;
+  hint?: string;
+  /** 行尾形态标签（如 直板/折叠屏） */
+  tag?: string;
+};
 
 
 /** 自绘下拉：与应用风格一致（原生 select 的弹出列表无法定制） */
@@ -133,6 +139,7 @@ export function Select<T extends string>({
                   <path d="M3 8.5 6.5 12 13 4.5" />
                 </svg>
               )}
+              {o.tag && <span className="sel-tag">{o.tag}</span>}
             </button>
           ))}
           {options.length === 0 && <div className="sel-empty">无选项</div>}

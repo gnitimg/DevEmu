@@ -143,17 +143,24 @@ export interface AvdHardware {
   storageGb?: number;
 }
 
-const HW_RE = { ram: /^(\d+)([GM])?$/i };
+// 容量值有两种写法：ram 用 4096M，disk.dataPartition.size 既有字节数也有 avdmanager 的 10G。
+// 直接 parseInt 会把 "10G" 截成 10 字节，详情页的数据分区因此显示为空。
+const SIZE_RE = /^(\d+)([GM])?$/i;
 
 /** 解析 config.ini 中的硬件配置（供编辑弹窗回显） */
 export function hardwareOf(config: Record<string, string>): AvdHardware {
   const hw: AvdHardware = {};
-  const ram = config['hw.ramSize']?.match(HW_RE.ram);
+  const ram = config['hw.ramSize']?.match(SIZE_RE);
   if (ram) hw.ramMb = ram[2]?.toUpperCase() === 'G' ? parseInt(ram[1]!, 10) * 1024 : parseInt(ram[1]!, 10);
   const cores = parseInt(config['hw.cpu.ncore'] ?? '', 10);
   if (cores > 0) hw.cores = cores;
-  const disk = parseInt(config['disk.dataPartition.size'] ?? '', 10);
-  if (disk > 0) hw.storageGb = Math.round((disk / 1024 ** 3) * 10) / 10;
+  const disk = config['disk.dataPartition.size']?.match(SIZE_RE);
+  if (disk) {
+    const n = parseInt(disk[1]!, 10);
+    const unit = disk[2]?.toUpperCase();
+    const gb = unit === 'G' ? n : unit === 'M' ? n / 1024 : n / 1024 ** 3;
+    if (gb > 0) hw.storageGb = Math.round(gb * 10) / 10;
+  }
   return hw;
 }
 
@@ -248,6 +255,24 @@ export function updateAvdHardware(
   if (!fs.existsSync(configPath)) return { ok: false, error: '虚拟机不存在' };
   const patch = hardwarePatch(hw);
   if (Object.keys(patch).length === 0) return { ok: true };
+  // 缩小数据分区会在开机时截断镜像，落在新容量之外的已用数据直接丢失，故只允许扩容
+  let current: AvdHardware = {};
+  try {
+    current = hardwareOf(readAvdConfig(dirs.avdHome, name));
+  } catch {
+    // 读不到配置时跳过校验，交给下方写入分支报错
+  }
+  if (
+    hw.storageGb !== undefined &&
+    hw.storageGb >= 1 &&
+    current.storageGb !== undefined &&
+    Math.round(hw.storageGb) < current.storageGb
+  ) {
+    return {
+      ok: false,
+      error: `硬盘容量只能扩容（当前 ${current.storageGb} GB）`,
+    };
+  }
   try {
     patchAvdConfig(dirs.avdHome, name, patch);
   } catch {
@@ -284,6 +309,234 @@ export function renameAvd(
     return { ok: true };
   } catch (e) {
     return { ok: false, error: `重命名失败：${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+// Play Store 镜像的 userdata 底层是 qcow2，运行时再叠一层 qcow2 覆盖层；模拟器只在
+// 底层是裸 ext4 时才会在开机时扩容，覆盖层存在时改 config 不会让 guest 看到变化。
+// 下面直接拍平覆盖层、扩大文件并调用 SDK 自带的 resize2fs，避免依赖开机路径。
+const QCOW2_MAGIC = Buffer.from([0x51, 0x46, 0x49, 0xfb]);
+const EXT4_MAGIC = [0x53, 0xef];
+
+function readAt(file: string, offset: number, length: number): Buffer | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(length);
+    const read = fs.readSync(fd, buf, 0, length, offset);
+    return read === length ? buf : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function isQcow2Image(file: string): boolean {
+  const head = readAt(file, 0, 4);
+  return !!head && head.equals(QCOW2_MAGIC);
+}
+
+/** ext4 超级块魔数位于镜像偏移 1080（0x438）处 */
+function isExt4Image(file: string): boolean {
+  const magic = readAt(file, 1080, 2);
+  return !!magic && magic[0] === EXT4_MAGIC[0] && magic[1] === EXT4_MAGIC[1];
+}
+
+/** 模拟器目录下的工具（qemu-img 在根目录，e2fsprogs 在 bin64） */
+function emulatorTool(sdk: SdkInfo, ...parts: string[]): string | null {
+  const file = path.join(path.dirname(sdk.emulator), ...parts) + (process.platform === 'win32' ? '.exe' : '');
+  return fs.existsSync(file) ? file : null;
+}
+
+function tailError(r: { stdout: string; stderr: string }, fallback: string): string {
+  return (r.stderr || r.stdout).trim().split(/\r?\n/).filter(Boolean).pop()?.slice(0, 200) || fallback;
+}
+
+async function growExt4Image(
+  sdk: SdkInfo,
+  file: string,
+  targetBytes: number,
+  allowRepair: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const resize2fs = emulatorTool(sdk, 'bin64', 'resize2fs');
+  if (!resize2fs) return { ok: false, error: '当前模拟器缺少 resize2fs，无法扩容' };
+  let res = await run(resize2fs, [file], { timeoutMs: 10 * 60_000 });
+  if (res.code !== 0 && allowRepair) {
+    // quickboot 保存的是运行中的内存状态，文件系统通常没有干净卸载，回放日志后才能扩容
+    const e2fsck = emulatorTool(sdk, 'bin64', 'e2fsck');
+    if (e2fsck) {
+      const chk = await run(e2fsck, ['-f', '-y', file], { timeoutMs: 30 * 60_000 });
+      // e2fsck 退出码 0/1/2 都表示已修复，4 及以上才是无法修复
+      if (chk.code < 4) res = await run(resize2fs, [file], { timeoutMs: 10 * 60_000 });
+    }
+  }
+  if (res.code !== 0) return { ok: false, error: `扩容文件系统失败：${tailError(res, '未知错误')}` };
+  // resize2fs 退出成功但容量没变时不能静默成功，否则界面显示的容量依旧是假的
+  const tune2fs = emulatorTool(sdk, 'bin64', 'tune2fs');
+  if (tune2fs) {
+    const info = await run(tune2fs, ['-l', file], { timeoutMs: 60_000 });
+    const blocks = Number(/Block count:\s+(\d+)/.exec(info.stdout)?.[1]);
+    const blockSize = Number(/Block size:\s+(\d+)/.exec(info.stdout)?.[1]);
+    const bytes = blocks * blockSize;
+    if (info.code === 0 && bytes > 0 && bytes < targetBytes - 64 * 1024 ** 2) {
+      return { ok: false, error: '文件系统扩容未生效' };
+    }
+  }
+  return { ok: true };
+}
+
+/** 下次启动由模拟器以 -wipe-data 重建数据分区（加密镜像扩容的唯一可行路径） */
+export const WIPE_FLAG = '.wipe-data-required';
+
+/**
+ * 确保数据分区至少为 targetGb。调用方必须保证虚拟机已停止。
+ * 已是裸 ext4 时原地扩文件与文件系统；qcow2 覆盖层存在时先拍平再扩容，
+ * 原镜像改名保留为 `.resize-bak-*`，失败自动回滚。
+ * Play Store 等镜像的 /data 经 dm-default-key 加密，宿主机读不到 ext4 超级块，
+ * guest 用户版又没有 root，无法原地扩容；此时返回 needsWipe，由调用方征得用户同意后重建。
+ */
+export async function ensureAvdStorage(
+  sdk: SdkInfo,
+  dataRoot: string,
+  scope: Scope,
+  name: string,
+  targetGb: number,
+): Promise<{ ok: boolean; error?: string; needsWipe?: boolean }> {
+  if (!/^[\w.-]{1,50}$/.test(name)) return { ok: false, error: '非法的虚拟机名称' };
+  const targetBytes = Math.round(targetGb) * 1024 ** 3;
+  if (targetBytes <= 0) return { ok: true };
+  const dirs = scopeDirs(dataRoot, scope);
+  const dir = path.join(dirs.avdHome, `${name}.avd`);
+  const base = path.join(dir, 'userdata-qemu.img');
+  const overlay = `${base}.qcow2`;
+  if (!fs.existsSync(base)) return { ok: false, error: '找不到数据镜像，无法扩容' };
+  const qemuImg = emulatorTool(sdk, 'qemu-img');
+  if (!qemuImg) return { ok: false, error: 'SDK 缺少 qemu-img，无法扩容' };
+  const hasOverlay = fs.existsSync(overlay);
+
+  if (!hasOverlay && !isQcow2Image(base) && isExt4Image(base)) {
+    // 上次扩容后的常态：原地只扩文件尾部，不会动已有数据
+    if (fs.statSync(base).size < targetBytes) {
+      const res = await run(qemuImg, ['resize', '-f', 'raw', base, `${Math.round(targetGb)}G`], {
+        timeoutMs: 60 * 60_000,
+      });
+      if (res.code !== 0) return { ok: false, error: `扩展数据镜像失败：${tailError(res, '未知错误')}` };
+    }
+    // 此处不做自动修复：没有覆盖层说明虚拟机是正常关机的，脏镜像不应被静默改写
+    return growExt4Image(sdk, base, targetBytes, false);
+  }
+
+  const src = hasOverlay ? overlay : base;
+  const info = await run(qemuImg, ['info', '--output=json', src], { timeoutMs: 60_000 });
+  let virtualSize = 0;
+  try {
+    virtualSize = Number((JSON.parse(info.stdout) as Record<string, unknown>)['virtual-size']);
+  } catch {
+    // 由下方统一报错
+  }
+  if (!(virtualSize > 0)) return { ok: false, error: '无法读取数据镜像大小，扩容中止' };
+  try {
+    const st = fs.statfsSync(dir);
+    if (Number(st.bavail) * Number(st.bsize) < virtualSize + 512 * 1024 ** 2) {
+      return {
+        ok: false,
+        error: `磁盘剩余空间不足，扩容需要约 ${Math.ceil(virtualSize / 1024 ** 3)} GB 临时空间`,
+      };
+    }
+  } catch {
+    // 空间查询失败不拦截，交给转换过程报错
+  }
+
+  const tmp = `${base}.grow-raw`;
+  fs.rmSync(tmp, { force: true });
+  // 这版 qemu-img 在 Windows 上创建 raw 目标时会把文件截断在 2 GiB，先按虚拟大小自行预分配
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.ftruncateSync(fd, virtualSize);
+  } finally {
+    fs.closeSync(fd);
+  }
+  let res = await run(qemuImg, ['convert', '-n', '-O', 'raw', '-U', src, tmp], { timeoutMs: 60 * 60_000 });
+  if (res.code !== 0) {
+    fs.rmSync(tmp, { force: true });
+    return { ok: false, error: `数据镜像转换失败：${tailError(res, '未知错误')}` };
+  }
+  if (!isExt4Image(tmp)) {
+    // 转换成功但拍平后看不到 ext4 超级块：数据是块级加密的密文，宿主机无法扩容
+    fs.rmSync(tmp, { force: true });
+    return {
+      ok: false,
+      needsWipe: true,
+      error: '数据分区已加密，无法在不丢失数据的前提下扩容',
+    };
+  }
+  if (fs.statSync(tmp).size < targetBytes) {
+    res = await run(qemuImg, ['resize', '-f', 'raw', tmp, `${Math.round(targetGb)}G`], {
+      timeoutMs: 60 * 60_000,
+    });
+    if (res.code !== 0) {
+      fs.rmSync(tmp, { force: true });
+      return { ok: false, error: `扩展数据镜像失败：${tailError(res, '未知错误')}` };
+    }
+  }
+  const fsRes = await growExt4Image(sdk, tmp, targetBytes, true);
+  if (!fsRes.ok) {
+    fs.rmSync(tmp, { force: true });
+    return fsRes;
+  }
+
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const backupPath = (file: string) => {
+    let candidate = `${file}.resize-bak-${stamp}`;
+    for (let i = 1; fs.existsSync(candidate); i++) candidate = `${file}.resize-bak-${stamp}-${i}`;
+    return candidate;
+  };
+  const moved: [string, string][] = [];
+  try {
+    if (hasOverlay) {
+      const to = backupPath(overlay);
+      fs.renameSync(overlay, to);
+      moved.push([overlay, to]);
+    }
+    const to = backupPath(base);
+    fs.renameSync(base, to);
+    moved.push([base, to]);
+    fs.renameSync(tmp, base);
+  } catch (e) {
+    for (const [from, to] of moved.reverse()) {
+      try {
+        fs.renameSync(to, from);
+      } catch {
+        // 回滚失败时保留已改名的文件，至少数据还在
+      }
+    }
+    fs.rmSync(tmp, { force: true });
+    return { ok: false, error: `数据镜像替换失败：${e instanceof Error ? e.message : String(e)}` };
+  }
+  // 旧快照记录的是被替换掉的镜像链，下次启动必须冷启动重建覆盖层
+  try {
+    fs.writeFileSync(path.join(dir, '.cold-boot-required'), '1', 'utf8');
+  } catch {
+    // 标记写不进去最多导致首次仍尝试加载旧快照，模拟器会自行回退冷启动
+  }
+  return { ok: true };
+}
+
+/** 标记下次启动重建数据分区；容量配置须在调用前写入 config.ini */
+export function markAvdWipe(
+  dataRoot: string,
+  scope: Scope,
+  name: string,
+): { ok: boolean; error?: string } {
+  if (!/^[\w.-]{1,50}$/.test(name)) return { ok: false, error: '非法的虚拟机名称' };
+  const dir = path.join(scopeDirs(dataRoot, scope).avdHome, `${name}.avd`);
+  if (!fs.existsSync(dir)) return { ok: false, error: '虚拟机不存在' };
+  try {
+    fs.writeFileSync(path.join(dir, WIPE_FLAG), '1', 'utf8');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: `写入重建标记失败：${e instanceof Error ? e.message : String(e)}` };
   }
 }
 

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, osFromImagePkg, prettyModel, tagLabel, type EmuDevice, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
 import { Select } from './Select.tsx';
-import { EditVmModal, HwFields, parseHwFields, RECOMMEND_HW } from './VmEdit.tsx';
+import { EditVmModal, HwFields, parseHwFields } from './VmEdit.tsx';
+import { isStorageBucketGb, STORAGE_BUCKETS_GB } from '../../core/storageUnits.ts';
 import type { EnvStatus } from '../App.tsx';
 import type { AvdInfo, DeviceDef } from '../../core/types.ts';
 
@@ -252,7 +253,9 @@ function NewVmModal({
   const [advanced, setAdvanced] = useState(false);
   const [ram, setRam] = useState('');
   const [cores, setCores] = useState('');
+  // 留空由模拟器按镜像给默认值，推荐容量只作占位提示
   const [storage, setStorage] = useState('');
+  const [storageError, setStorageError] = useState('');
 
   const loadDefs = useCallback(() => {
     setDefsError(false);
@@ -290,11 +293,29 @@ function NewVmModal({
   const typeOptions = TYPE_ORDER.filter((t) => defTypeMap.has(t));
   const defOptions = deviceType ? (defTypeMap.get(deviceType) ?? []) : [];
 
+  function checkStorage(v: string) {
+    const gb = v ? Number(v) : NaN;
+    setStorageError(
+      v && !isStorageBucketGb(gb) ? `硬盘容量需为 ${STORAGE_BUCKETS_GB.join(' / ')} GB` : '',
+    );
+  }
+
+  function changeStorage(v: string) {
+    setStorage(v);
+    // 失焦前不打扰输入；已经报错后改对或清空则立刻恢复
+    if (storageError) checkStorage(v);
+  }
+
   async function create() {
     if (!name.trim() || !imagePkg) return;
+    const hw = parseHwFields(ram, cores, storage);
+    if (storage && !isStorageBucketGb(Number(storage))) {
+      checkStorage(storage);
+      return;
+    }
     setCreating(true);
     setError('');
-    const r = await api.createAvd(scope, name.trim(), imagePkg, defId, parseHwFields(ram, cores, storage));
+    const r = await api.createAvd(scope, name.trim(), imagePkg, defId, hw);
     if (!r.ok || !r.data.ok) {
       setError(r.ok ? r.data.error ?? '创建失败' : r.error);
       setCreating(false);
@@ -312,7 +333,11 @@ function NewVmModal({
           <button className="btn" onClick={onDone}>
             取消
           </button>
-          <button className="btn btn-primary" disabled={creating || !name.trim() || !imagePkg || !defId} onClick={create}>
+          <button
+            className="btn btn-primary"
+            disabled={creating || !name.trim() || !imagePkg || !defId || !!storageError}
+            onClick={create}
+          >
             {creating ? '创建中' : '创建'}
           </button>
         </>
@@ -387,7 +412,16 @@ function NewVmModal({
       </div>
       <div className={`adv-body${advanced ? '' : ' collapsed'}`}>
         <div className="adv-inner">
-          <HwFields ram={ram} setRam={setRam} cores={cores} setCores={setCores} storage={storage} setStorage={setStorage} />
+          <HwFields
+            ram={ram}
+            setRam={setRam}
+            cores={cores}
+            setCores={setCores}
+            storage={storage}
+            setStorage={changeStorage}
+            storageError={storageError}
+            onStorageBlur={() => checkStorage(storage)}
+          />
         </div>
       </div>
       {error && <div className="error-line" style={{ border: 'none', padding: '0 0 0 1px' }}>{error}</div>}

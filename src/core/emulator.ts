@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { run } from './exec.ts';
@@ -7,7 +8,7 @@ import { scopeDirs, scopeEnv } from './env.ts';
 import { loadAppSettings } from './settings.ts';
 import { cameraArgs } from './camera.ts';
 import { stopLocation } from './location.ts';
-import { prepareEmulatorSkin, readAvdConfig } from './avd.ts';
+import { prepareEmulatorSkin, readAvdConfig, WIPE_FLAG } from './avd.ts';
 import {
   applyPortalProbes,
   installApk,
@@ -180,6 +181,13 @@ async function startOnPort(
 ): Promise<RunningEmu> {
   // 运行期提速参数；硬件（内存/核数）以各虚拟机 config.ini 为准，不再命令行覆盖
   const config = readAvdConfig(dirs.avdHome, avdName);
+  // 扩容替换过数据镜像后旧快照已失效，首次启动必须冷启动
+  const avdDir = path.join(dirs.avdHome, `${avdName}.avd`);
+  const coldBootFlag = path.join(avdDir, '.cold-boot-required');
+  const wipeFlag = path.join(avdDir, WIPE_FLAG);
+  const wipeData = fs.existsSync(wipeFlag);
+  // 重建数据分区同样不能回放旧快照
+  const coldBoot = wipeData || opts.noSnapshotLoad === true || fs.existsSync(coldBootFlag);
   const args = [
     '-avd',
     avdName,
@@ -200,7 +208,8 @@ async function startOnPort(
   const gpu = opts.gpu ?? (process.platform === 'win32' ? 'angle_indirect' : undefined);
   if (gpu) args.push('-gpu', gpu);
   if (opts.httpProxy) args.push('-http-proxy', opts.httpProxy);
-  if (opts.noSnapshotLoad) args.push('-no-snapshot-load');
+  if (wipeData) args.push('-wipe-data');
+  if (coldBoot) args.push('-no-snapshot-load');
   // 相机来源：屏幕模式先启动截屏馈送，等首帧落盘再拉起模拟器（避免相机源读到空文件回退默认相机）
   if (opts.camera === 'screen') {
     const { startScreenFeed, screenFeedReady } = await import('./camera.ts');
@@ -271,6 +280,15 @@ async function startOnPort(
       if (!settled) {
         settled = true;
         running.set(`${avdName}@${sKey}`, entry);
+        if (coldBoot) {
+          // 进程已存活才清除标记：启动失败时保留，重试仍走冷启动
+          try {
+            fs.rmSync(coldBootFlag, { force: true });
+            if (wipeData) fs.rmSync(wipeFlag, { force: true });
+          } catch {
+            // 清除失败无碍，最多下次仍冷启动
+          }
+        }
         if (process.platform === 'win32') {
           // 级联偏移避免多开重叠；基准 y 保证在屏幕可见区内
           const n = running.size;

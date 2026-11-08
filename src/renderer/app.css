@@ -193,6 +193,17 @@ textarea {
   flex: none;
 }
 
+.sel-tag {
+  margin-left: auto;
+  flex: none;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  border-radius: 9px;
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+
 .sel-empty {
   padding: 10px;
   text-align: center;
@@ -1021,6 +1032,24 @@ table.tbl {
   margin-top: 4px;
 }
 
+.form-row input.invalid,
+.form-row input.invalid:focus {
+  border-color: var(--danger);
+}
+
+.form-row input.invalid:focus {
+  box-shadow: 0 0 0 2px var(--danger-weak);
+}
+
+.form-error {
+  /* 始终占位：提示出现/消失时弹窗高度不跳动 */
+  min-height: 17px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
 .img-list {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1160,6 +1189,17 @@ table.tbl {
   padding: 2px 8px;
   font-family: var(--mono);
   font-size: 11.5px;
+}
+
+.cell-input-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cell-unit {
+  font-size: 11px;
+  color: var(--text-3);
 }
 
 .device-detail-grid .section {
@@ -1518,6 +1558,17 @@ table.tbl {
   flex: 1;
 }
 
+/* 设备类型 + 系列 + 型号：前两级只占固定窄宽，型号吃满剩余 */
+.cascade-row.cols-3 .sel:first-child {
+  flex: none;
+  width: 132px;
+}
+
+.cascade-row.cols-3 .sel:nth-child(2) {
+  flex: none;
+  width: 118px;
+}
+
 /* ---------- 虚拟机硬件配置 ---------- */
 
 .hw-grid {
@@ -1680,6 +1731,23 @@ table.tbl {
 .sdk-search {
   width: 100%;
   margin-bottom: 8px;
+}
+
+.sdk-filter-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sdk-filter-row .sdk-search {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.sdk-filter-row .sel {
+  flex: none;
+  width: 104px;
 }
 
 .sdk-list {

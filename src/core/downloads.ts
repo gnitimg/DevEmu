@@ -341,6 +341,127 @@ export function startFileDownload(task: FileTask): void {
   notify();
 }
 
+/** 接管 Electron 自身的下载（如华为下载页触发的 zip）：
+ *  进度并入下载管理，「取消」作用于外部下载，完成后走 postProcess 收尾。 */
+export interface ExternalDownloadTask {
+  progress(bytes: number, total: number): void;
+  complete(filePath: string): Promise<void>;
+  fail(error: string): void;
+}
+
+export function adoptExternalDownload(opts: {
+  key: string;
+  desc: string;
+  /** 下载管理里点取消 */
+  onCancel: () => void;
+  postProcess: (filePath: string, setPct: (p: number) => void) => Promise<void>;
+  onDone?: (r: { ok: boolean; cancelled?: boolean; error?: string }) => void;
+}): ExternalDownloadTask {
+  const entry: Entry = {
+    pkg: opts.key, desc: opts.desc, state: 'downloading', percent: 0, downloaded: 0, total: 0, speedBps: 0, etaSec: 0,
+    startedAt: Date.now(), child: null, samples: [],
+  };
+  active.set(`${opts.key}#${++seq}`, entry);
+  ensureTicker();
+  notify();
+  entry.abort = () => opts.onCancel();
+
+  const settle = (state: 'done' | 'failed' | 'cancelled', error?: string) => {
+    entry.state = state;
+    entry.error = error;
+    finish(entry);
+    opts.onDone?.({
+      ok: state === 'done',
+      cancelled: state === 'cancelled',
+      error: state === 'failed' ? error : undefined,
+    });
+  };
+
+  return {
+    progress(bytes, total) {
+      if (entry.state !== 'downloading') return;
+      entry.downloaded = bytes;
+      if (total > 0) entry.total = total;
+      entry.percent = total > 0 ? Math.min(95, Math.round((bytes / total) * 95)) : Math.min(95, entry.percent + 1);
+      entry.samples.push({ t: Date.now(), bytes });
+      if (entry.samples.length > 30) entry.samples.shift();
+      notify();
+    },
+    async complete(filePath) {
+      if (entry.state !== 'downloading') return;
+      try {
+        entry.percent = 96;
+        await opts.postProcess(filePath, (p) => {
+          entry.percent = Math.max(96, Math.min(99, Math.round(p)));
+        });
+        entry.percent = 100;
+        settle('done');
+      } catch (err) {
+        settle(entry.cancelRequested ? 'cancelled' : 'failed', err instanceof Error ? err.message : String(err));
+      }
+    },
+    fail(error) {
+      if (entry.state !== 'downloading') return;
+      settle(entry.cancelRequested ? 'cancelled' : 'failed', entry.cancelRequested ? '已取消' : error);
+    },
+  };
+}
+
+/** 外部进程只报百分比的任务（如 HarmonyOS 模拟器镜像）：进度并入下载管理 */
+export interface PercentTask {
+  /** 下载管理里的任务标识，同时用于取消匹配 */
+  key: string;
+  desc: string;
+  /** 下载管理里点取消 */
+  cancel?: () => void;
+  onDone?: (r: { ok: boolean; cancelled?: boolean; error?: string }) => void;
+}
+
+export function adoptPercentTask(opts: PercentTask): {
+  progress(percent: number | null): void;
+  complete(): void;
+  fail(error: string): void;
+} {
+  const entry: Entry = {
+    pkg: opts.key, desc: opts.desc, state: 'downloading', percent: 0, downloaded: 0, total: 0, speedBps: 0, etaSec: 0,
+    startedAt: Date.now(), child: null, samples: [], phase: 'download',
+  };
+  active.set(`${opts.key}#${++seq}`, entry);
+  ensureTicker();
+  notify();
+  entry.abort = () => opts.cancel?.();
+
+  const settle = (state: 'done' | 'failed' | 'cancelled', error?: string) => {
+    entry.state = state;
+    entry.error = error;
+    if (state === 'done') entry.percent = 100;
+    finish(entry);
+    opts.onDone?.({
+      ok: state === 'done',
+      cancelled: state === 'cancelled',
+      error: state === 'failed' ? error : undefined,
+    });
+  };
+
+  return {
+    progress(percent) {
+      if (entry.state !== 'downloading' || percent === null) return;
+      entry.percent = Math.max(0, Math.min(99, Math.round(percent)));
+      entry.samples.push({ t: Date.now(), bytes: entry.percent });
+      if (entry.samples.length > 30) entry.samples.shift();
+      notify();
+    },
+    complete() {
+      if (entry.state !== 'downloading') return;
+      settle('done');
+    },
+    fail(error) {
+      if (entry.state !== 'downloading') return;
+      settle(entry.cancelRequested ? 'cancelled' : 'failed', entry.cancelRequested ? '已取消' : error);
+    },
+  };
+}
+
 async function fileTaskImpl(entry: Entry, task: FileTask): Promise<void> {
   const dlDir = path.join(os.tmpdir(), 'devemu-env-dl');
   const dlPath = path.join(dlDir, `${task.fileName}.part`);
@@ -390,19 +511,12 @@ async function fileTaskImpl(entry: Entry, task: FileTask): Promise<void> {
       entry.state = 'failed';
       entry.error = msg;
     }
-    try {
-      fs.rmSync(dlPath, { force: true });
-    } catch {
-      // 清理失败忽略
-    }
+    // 安装包可达数 GB：异步删除，不冻结主进程（尤其是解压刚结束时）
+    await fs.promises.rm(dlPath, { force: true }).catch(() => undefined);
     finish(entry);
     task.onDone?.({ ok: false, cancelled: entry.state === 'cancelled', error: entry.error });
   } finally {
-    try {
-      fs.rmSync(dlPath, { force: true });
-    } catch {
-      // 清理失败忽略
-    }
+    await fs.promises.rm(dlPath, { force: true }).catch(() => undefined);
   }
 }
 
@@ -517,7 +631,8 @@ export function initDownloadStore(dataRoot: string): void {
   if (finished.length > 0) return;
   try {
     const raw = JSON.parse(fs.readFileSync(storeFile, 'utf8')) as { finished?: DownloadItem[] };
-    for (const it of raw.finished ?? []) finished.push(it as Entry);
+    // 只有成功落盘的任务算「已下载」；旧版本写入的失败/取消记录一并丢掉
+    for (const it of raw.finished ?? []) if (it.state === 'done') finished.push(it as Entry);
   } catch {
     // 无记录或损坏：空历史
   }
@@ -527,7 +642,9 @@ function persistFinished(): void {
   if (!storeFile) return;
   try {
     const tmp = `${storeFile}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ finished: finished.map(snapshot) }), 'utf8');
+    // 失败/取消只在当次弹窗提示，不写历史
+    const done = finished.filter((e) => e.state === 'done');
+    fs.writeFileSync(tmp, JSON.stringify({ finished: done.map(snapshot) }), 'utf8');
     fs.renameSync(tmp, storeFile);
   } catch {
     // 写失败不影响下载

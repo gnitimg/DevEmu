@@ -26,6 +26,8 @@ function fmtEta(sec: number): string {
 
 export function Downloads() {
   const [snap, setSnap] = useState<Snap>({ active: [], finished: [] });
+  // 失败/取消不算「已下载」：只在右上角弹窗告知，不留在列表里
+  const done = snap.finished.filter((d) => d.state === 'done');
   const [cancelling, setCancelling] = useState('');
   const [removing, setRemoving] = useState('');
   const [error, setError] = useState('');
@@ -110,32 +112,27 @@ export function Downloads() {
       <div className="section">
         <div className="section-head">
           <h2 className="section-title">已下载</h2>
-          {snap.finished.length > 0 && <span className="section-count">{snap.finished.length}</span>}
+          {done.length > 0 && <span className="section-count">{done.length}</span>}
         </div>
         <div style={{ padding: '6px 14px 12px' }}>
-          {snap.finished.length === 0 && <div className="empty" style={{ padding: '16px 0' }}>暂无记录</div>}
-          {snap.finished.map((d) => (
+          {done.length === 0 && <div className="empty" style={{ padding: '16px 0' }}>暂无记录</div>}
+          {done.map((d) => (
             <div key={d.pkg + d.startedAt} className="dl-item dl-done">
               <div className="dl-head">
                 <span className={`dl-name${d.desc && d.desc !== d.pkg ? '' : ' mono'}`}>
                   {d.desc && d.desc !== d.pkg ? d.desc : d.pkg}
                 </span>
-                {d.state !== 'done' && (
-                  <span className={`chip ${d.state === 'failed' ? 'err' : ''}`}>
-                    {d.state === 'failed' ? `失败${d.error ? ` · ${d.error}` : ''}` : '已取消'}
-                  </span>
-                )}
                 <button
                   className="btn btn-sm btn-danger dl-del"
                   disabled={removing !== ''}
-                  title={d.state === 'done' ? '卸载组件并删除记录' : '删除记录'}
+                  title="卸载组件并删除记录"
                   onClick={async () => {
                     setRemoving(`${d.pkg}${d.startedAt}`);
                     await api.downloadsRemove(d.pkg, d.startedAt);
                     setRemoving('');
                   }}
                 >
-                  {removing === `${d.pkg}${d.startedAt}` ? (d.state === 'done' ? '卸载中' : '删除中') : d.state === 'done' ? '卸载' : '删除'}
+                  {removing === `${d.pkg}${d.startedAt}` ? '卸载中' : '卸载'}
                 </button>
               </div>
               <div className="dl-meta">

@@ -336,6 +336,13 @@ export interface LocationDeps {
   shell?: (args: string[]) => Promise<void>;
   now?: () => number;
   gps?: () => Promise<GpsController | null>;
+  /** HarmonyOS：场景命令每次注入一帧坐标（无控制台与传感器通道） */
+  hosGps?: {
+    emu: string;
+    instance: string;
+    /** 测试注入，缺省 spawn Emulator.exe -instance <name> -gps */
+    send?: (fix: { lat: number; lon: number; altitudeM: number; bearingDeg: number }) => Promise<void>;
+  };
 }
 
 export interface LocationStatus {
@@ -543,6 +550,35 @@ async function sendGeo(s: Session): Promise<void> {
   const m = s.motion;
   const t = m.elapsedSec;
   const p = destination(destination(m.pos, 0, s.nLat(t)), 90, s.nLon(t));
+  if (s.deps.hosGps) {
+    const altitudeM = s.config.altitudeM ?? 12;
+    const bearingDeg = Math.round(m.courseDeg);
+    const { emu, instance, send } = s.deps.hosGps;
+    if (send) await send({ lat: p.lat, lon: p.lon, altitudeM, bearingDeg });
+    else {
+      const r = await run(
+        emu,
+        [
+          '-instance',
+          instance,
+          '-gps',
+          '-latitude',
+          fmt(p.lat),
+          '-longitude',
+          fmt(p.lon),
+          '-altitude',
+          String(Math.round(altitudeM)),
+          '-bearing',
+          String(bearingDeg),
+        ],
+        { timeoutMs: 8000 },
+      );
+      if (r.code !== 0) throw new Error(r.stderr.trim() || r.stdout.trim() || 'GNSS 注入失败');
+    }
+    s.viaConsole = false;
+    s.lastError = undefined;
+    return;
+  }
   if (s.gps) {
     try {
       await s.gps.set({ ...p, speedMps: m.speedMps, headingDeg: m.courseDeg, altitudeM: s.config.altitudeM ?? 12, passiveUpdate: s.stopped });
@@ -649,15 +685,12 @@ async function startLocationSession(
   serial: string,
   config: LocationConfig,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!/^emulator-\d{1,5}$/.test(serial)) return { ok: false, error: '仅支持 Android 模拟器' };
+  // HarmonyOS 由 ipc 注入场景命令通道；无通道时仍只接受 adb 串号
+  if (!deps.hosGps && !/^emulator-\d{1,5}$/.test(serial)) return { ok: false, error: '仅支持 Android 模拟器' };
   const clean = sanitizeLocationConfig(config);
   if (!clean.ok) return clean;
   await stopLocationSession(serial);
   config = clean.config;
-  // 设备定位总开关被关时 App 侧只会看到"GPS 信号弱"；注入前切到高精度模式。
-  // 不用 svc location：部分镜像无此子命令（只打印帮助且退出码为 0，无法察觉失败）。
-  const runShell = deps.shell ?? ((args: string[]) => run(deps.adbPath, ['-s', serial, 'shell', ...args], { timeoutMs: 4000 }));
-  try { await runShell(['settings', 'put', 'secure', 'location_mode', '3']); } catch { /* 继续注入 */ }
   const s: Session = {
     deps, serial, config, motion: new LocationMotion(config), console: null, gps: null, timer: null,
     stopped: false, lastAt: 0, lastGeoAt: 0, viaConsole: false, sensors: [],
@@ -666,28 +699,34 @@ async function startLocationSession(
   };
   sessions.set(serial, s);
   try {
-    // gRPC 端点来自运行目录的 pid ini，可能过期或未监听；失败回退控制台/adb 通道，不作为启动失败。
-    try { s.gps = await (deps.gps ?? (() => connectGps(serial)))(); }
-    catch (err) { s.sensorError = `gps: ${err instanceof Error ? err.message : String(err)}`; }
-    try {
-      s.console = await (deps.connect ?? connectConsole)(serial, 1500);
-      if (s.stopped) { s.console.close(); return { ok: false, error: '启动已取消' }; }
-      const status = await s.console.send('sensor status');
-      for (const sensor of ['acceleration', 'gyroscope', 'orientation', 'magnetic-field', 'pressure']) {
-        if (!status.split(/\r?\n/).some((line) => line.trim() === `${sensor}: enabled.`)) continue;
-        try {
-          const value = await s.console.send(`sensor get ${sensor}`);
-          const match = value.match(/=\s*([-+\deE.:]+)/);
-          if (!match) continue;
-          s.originalSensors.set(sensor, match[1]!);
-          s.sensors.push(sensor);
-        } catch { /* 不覆盖无法读取原值的传感器。 */ }
+    if (!deps.hosGps) {
+      // 设备定位总开关被关时 App 侧只会看到"GPS 信号弱"；注入前切到高精度模式。
+      // 不用 svc location：部分镜像无此子命令（只打印帮助且退出码为 0，无法察觉失败）。
+      const runShell = deps.shell ?? ((args: string[]) => run(deps.adbPath, ['-s', serial, 'shell', ...args], { timeoutMs: 4000 }));
+      try { await runShell(['settings', 'put', 'secure', 'location_mode', '3']); } catch { /* 继续注入 */ }
+      // gRPC 端点来自运行目录的 pid ini，可能过期或未监听；失败回退控制台/adb 通道，不作为启动失败。
+      try { s.gps = await (deps.gps ?? (() => connectGps(serial)))(); }
+      catch (err) { s.sensorError = `gps: ${err instanceof Error ? err.message : String(err)}`; }
+      try {
+        s.console = await (deps.connect ?? connectConsole)(serial, 1500);
+        if (s.stopped) { s.console.close(); return { ok: false, error: '启动已取消' }; }
+        const status = await s.console.send('sensor status');
+        for (const sensor of ['acceleration', 'gyroscope', 'orientation', 'magnetic-field', 'pressure']) {
+          if (!status.split(/\r?\n/).some((line) => line.trim() === `${sensor}: enabled.`)) continue;
+          try {
+            const value = await s.console.send(`sensor get ${sensor}`);
+            const match = value.match(/=\s*([-+\deE.:]+)/);
+            if (!match) continue;
+            s.originalSensors.set(sensor, match[1]!);
+            s.sensors.push(sensor);
+          } catch { /* 不覆盖无法读取原值的传感器。 */ }
+        }
+      } catch (err) {
+        s.sensorError = err instanceof Error ? err.message : String(err);
+        s.console?.close();
+        s.console = null;
+        s.sensors = [];
       }
-    } catch (err) {
-      s.sensorError = err instanceof Error ? err.message : String(err);
-      s.console?.close();
-      s.console = null;
-      s.sensors = [];
     }
     if (s.stopped) return { ok: false, error: '启动已取消' };
     // 首针保持锚点和零速度；初始化/握手耗时不计入运动时间。

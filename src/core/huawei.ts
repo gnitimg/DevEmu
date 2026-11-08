@@ -8,7 +8,8 @@ import { BrowserWindow, session } from 'electron';
  * （developer_userdata，历史命名 developer_userinfo，值含 csrftoken）。
  */
 
-const PARTITION = 'persist:huawei';
+export const HUAWEI_PARTITION = 'persist:huawei';
+const PARTITION = HUAWEI_PARTITION;
 const LOGIN_SITE = 'https://developer.huawei.com/';
 /** 登录标志 cookie 名：两种命名在不同版本的华为登录流程中都出现过 */
 const LOGIN_MARKERS = ['developer_userdata', 'developer_userinfo'];
@@ -19,6 +20,12 @@ const LOGIN_URL = 'https://developer.huawei.com/consumer/cn/download/command-lin
 
 let loginWin: BrowserWindow | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+const loginWaiters = new Set<(ok: boolean) => void>();
+
+function settleLoginWaiters(ok: boolean): void {
+  for (const w of loginWaiters) w(ok);
+  loginWaiters.clear();
+}
 
 /** 分区里是否存在登录标志 cookie（任一命名、值非空） */
 export async function hasHuaweiLogin(): Promise<boolean> {
@@ -71,6 +78,8 @@ export function openHuaweiLogin(onLogin: () => void): void {
     void hasHuaweiLogin().then((loggedIn) => {
       if (!loggedIn) return;
       stopPoll();
+      // 必须在 close 前结算：closed 事件会以 false 结算等待者
+      settleLoginWaiters(true);
       if (loginWin && !loginWin.isDestroyed()) loginWin.close();
       onLogin();
     });
@@ -78,5 +87,20 @@ export function openHuaweiLogin(onLogin: () => void): void {
   loginWin.on('closed', () => {
     stopPoll();
     loginWin = null;
+    settleLoginWaiters(false);
+  });
+}
+
+/** 打开登录窗口并等待结果：登录成功 true，用户关窗取消 false */
+export async function requestHuaweiLogin(): Promise<boolean> {
+  // 窗口正在关闭的瞬间可能还带着旧状态，先按 cookie 确认一次
+  if (await hasHuaweiLogin()) return true;
+  return new Promise((resolve) => {
+    loginWaiters.add(resolve);
+    if (!loginWin || loginWin.isDestroyed()) openHuaweiLogin(() => undefined);
+    else {
+      if (loginWin.isMinimized()) loginWin.restore();
+      loginWin.focus();
+    }
   });
 }

@@ -69,11 +69,13 @@ export function Settings({
   refreshEnv,
   section,
   onSection,
+  sdkSystem,
 }: {
   env: EnvStatus | null;
   refreshEnv: () => void;
   section: string;
   onSection: (s: Section) => void;
+  sdkSystem?: 'android' | 'harmonyos';
 }) {
   const [dataRoot, setDataRoot] = useState('');
   const [sdkPath, setSdkPath] = useState('');
@@ -314,7 +316,19 @@ export function Settings({
     void browse(ask.field, ask.title);
   }
 
-  /** 弹窗里“在此安装”：环境入下载队列；HarmonyOS 转官方下载页（需登录） */
+  /** HarmonyOS 命令行工具：后台抓官方签名直链后直接下载，解压落位 */
+  async function startHarmonyDownload(dir?: string) {
+    const d = await api.huaweiDownloadCenter(dir);
+    if (!d.ok) {
+      toast(d.error);
+      return;
+    }
+    if (d.data.started) toast('正在获取官方下载地址，进度见“下载管理”', 'ok');
+    else if (d.data.reason === 'window') toast('官方下载页已打开', 'ok');
+    else toast('已有下载任务在进行中');
+  }
+
+  /** 弹窗里“在此安装”：环境入下载队列；HarmonyOS 走后台直链下载（需登录） */
   async function installHere() {
     const ask = installAsk;
     if (!ask) return;
@@ -327,15 +341,7 @@ export function Settings({
     }
     applyPick(ask.field, ask.dir);
     setInstallAsk(null);
-    if (r.data.manual && r.data.url) {
-      void api.openUrl(r.data.url);
-      toast(
-        '已打开官方下载页（需登录华为账号），下载完成后解压到所选目录',
-        'ok',
-      );
-    } else {
-      toast('已加入下载队列，可在“下载管理”查看进度', 'ok');
-    }
+    if (r.data.manual) await startHarmonyDownload(ask.dir);
   }
 
   const mark =
@@ -558,8 +564,9 @@ export function Settings({
                 <SdkPackages
                   env={env}
                   onChanged={refreshEnv}
+                  initialSystem={sdkSystem}
                   onPickFolder={() => void browse('harmonyPath', '选择 HarmonyOS SDK 目录')}
-                  onLoginHuawei={() => void api.huaweiLogin()}
+                  onOpenDownload={() => void startHarmonyDownload()}
                 />
               </div>
             </div>

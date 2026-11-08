@@ -4,6 +4,8 @@ import type {
   CameraMode,
   DeviceDef,
   HarmonyComponent,
+  HosAvd,
+  HosImage,
   ProjectMeta,
   RunRecord,
   Settings,
@@ -11,7 +13,7 @@ import type {
   SystemImage,
 } from '../core/types.ts';
 
-export type { HarmonyComponent, CameraMode };
+export type { HarmonyComponent, CameraMode, HosAvd, HosImage };
 
 export type Scope = { kind: 'project'; projectId: string } | { kind: 'shared' };
 export type R<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -83,10 +85,13 @@ export function tagLabel(tag: string): string {
   return map[tag] ?? tag;
 }
 export type OpResult = { ok: boolean; error?: string };
-
-/** 华为命令行工具官方下载页（需登录；无匿名直链，应用内提供 zip 导入落位） */
-export const HARMONY_DOWNLOAD_URL =
-  'https://developer.huawei.com/consumer/cn/download/command-line-tools-for-hmos';
+/** needsWipe：镜像已加密，扩容只能清空数据重建，需要再弹一次确认 */
+export type SetHardwareReply =
+  | { ok: true; data: OpResult }
+  | { ok: false; error: string; needsWipe?: boolean };
+export type HarmonyDownloadReply =
+  | { started: true; desc: string }
+  | { started: false; reason: 'busy' | 'window' };
 
 interface RawApi {
   [channel: string]: (...args: unknown[]) => Promise<unknown>;
@@ -105,6 +110,15 @@ export function onSdkProgress(cb: (line: string) => void): () => void {
       devemu: { onSdkProgress?: (cb: (line: string) => void) => () => void };
     }
   ).devemu.onSdkProgress;
+  return fn ? fn(cb) : () => undefined;
+}
+
+export function onHosStartFailed(cb: (p: { name: string; error: string }) => void): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onHosStartFailed?: (cb: (p: { name: string; error: string }) => void) => () => void };
+    }
+  ).devemu.onHosStartFailed;
   return fn ? fn(cb) : () => undefined;
 }
 
@@ -149,13 +163,6 @@ export const ENV_LABELS: Record<EnvKind, string> = {
   java: 'Java 运行环境',
 };
 
-export type EnvInstallResult = {
-  label: string;
-  ok: boolean;
-  cancelled?: boolean;
-  error?: string;
-};
-
 export function onEnvChanged(cb: () => void): () => void {
   const api2 = (
     window as unknown as {
@@ -163,21 +170,6 @@ export function onEnvChanged(cb: () => void): () => void {
     }
   ).devemu;
   return api2?.onEnvChanged ? api2.onEnvChanged(() => cb()) : () => undefined;
-}
-
-export function onEnvInstallResult(
-  cb: (r: EnvInstallResult) => void,
-): () => void {
-  const api2 = (
-    window as unknown as {
-      devemu: {
-        onEnvInstallResult?: (cb: (payload: unknown) => void) => () => void;
-      };
-    }
-  ).devemu;
-  return api2?.onEnvInstallResult
-    ? api2.onEnvInstallResult((p) => cb(p as EnvInstallResult))
-    : () => undefined;
 }
 
 export function onWinMaximized(cb: (maximized: boolean) => void): () => void {
@@ -316,9 +308,35 @@ export const api = {
     call<RouteProbe[]>('probeRoutes', system),
   harmonyTargets: () => call<string[]>('harmonyTargets'),
   harmonyUninstall: (dir: string) => call<boolean>('harmonyUninstall', dir),
+  hosList: () => call<HosAvd[]>('hosList'),
+  hosImages: () => call<HosImage[]>('hosImages'),
+  hosScreenProfiles: (deviceType: string) => call<string[]>('hosScreenProfiles', deviceType),
+  hosCreate: (o: {
+    name: string;
+    deviceType: string;
+    osVersion: string;
+    screenProfile?: string;
+    memoryGb?: number;
+    storageGb?: number;
+    cpuCores?: number;
+  }) => call<{ needLicense?: boolean }>('hosCreate', o),
+  hosStart: (name: string) => call<{ needLicense?: boolean }>('hosStart', name),
+  hosStop: (name: string) => call<boolean>('hosStop', name),
+  hosDelete: (name: string) => call<boolean>('hosDelete', name),
+  hosAcceptLicense: () => call<boolean>('hosAcceptLicense'),
+  hosDownloadImage: (deviceType: string, osVersion: string) =>
+    call<{ started: boolean; key: string; needLicense?: boolean }>(
+      'hosDownloadImage',
+      deviceType,
+      osVersion,
+    ),
+  hosUninstallImage: (deviceType: string, osVersion: string) =>
+    call<boolean>('hosUninstallImage', deviceType, osVersion),
   openUrl: (url: string) => call<boolean>('openUrl', url),
   huaweiState: () => call<{ loggedIn: boolean }>('huaweiState'),
   huaweiLogin: () => call<boolean>('huaweiLogin'),
+  huaweiDownloadCenter: (dir?: string) =>
+    call<HarmonyDownloadReply>('huaweiDownloadCenter', dir),
   sdkInstalled: () => call<SdkPkg[]>('sdkInstalled'),
   sdkAvailable: () => call<SdkPkg[]>('sdkAvailable'),
   sdkInstall: (pkg: string) => call<boolean>('sdkInstall', pkg),
@@ -350,11 +368,13 @@ export const api = {
       scope,
       name,
     ),
-  setAvdHardware: (
+  setAvdHardware: async (
     scope: Scope,
     name: string,
     hw: { ramMb?: number; cores?: number; storageGb?: number },
-  ) => call<OpResult>('setAvdHardware', scope, name, hw),
+    opts?: { wipeData?: boolean },
+  ) =>
+    (await call<OpResult>('setAvdHardware', scope, name, hw, opts)) as SetHardwareReply,
   renameAvd: (scope: Scope, oldName: string, newName: string) =>
     call<OpResult>('renameAvd', scope, oldName, newName),
   deviceDefs: () =>

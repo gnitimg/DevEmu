@@ -343,6 +343,46 @@ test('gRPC 失效时回退控制台通道，定位模式切高精度', async () 
   }
 });
 
+test('HarmonyOS 会话走场景命令注入坐标，停止后补发末帧', async () => {
+  const serial = 'hos-UHVyYSA5MCBQcm8';
+  const fixes: { lat: number; lon: number; altitudeM: number; bearingDeg: number }[] = [];
+  let now = 0;
+  try {
+    const r = await startLocation(
+      {
+        adbPath: 'unused',
+        now: () => now,
+        hosGps: {
+          emu: 'Emulator.exe',
+          instance: 'Pura 90 Pro',
+          send: async (fix) => { fixes.push(fix); },
+        },
+      },
+      serial,
+      config(),
+    );
+    assert.ok(r.ok, r.error ?? '启动失败');
+    assert.equal(fixes.length, 1);
+    assert.ok(Math.abs(fixes[0]!.lat - 39.9) < 1e-9);
+    assert.ok(Math.abs(fixes[0]!.lon - 116.4) < 1e-9);
+    assert.equal(fixes[0]!.altitudeM, 12);
+    now += 400;
+    nudgeLocation(serial, 'up', true);
+    for (let i = 0; i < 4; i++) {
+      now += 400;
+      nudgeLocation(serial, 'up', true);
+      await new Promise((res) => setTimeout(res, 40));
+    }
+    const s = locationStatus(serial)!;
+    assert.ok(s.distanceM > 0);
+    assert.ok(fixes.length >= 2, '位移后应继续下发坐标');
+    assert.deepEqual(s.sensors, []);
+  } finally {
+    await stopLocation(serial);
+  }
+  assert.equal(locationStatus(serial), null);
+});
+
 test('GPS 双通道失败不会假报启动成功，单传感器拒绝不影响 GPS', async () => {
   const serial = 'emulator-5592';
   const fail = await startLocation(

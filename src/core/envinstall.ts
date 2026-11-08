@@ -54,6 +54,8 @@ export function checkEnvDir(kind: EnvKind, dir: string): boolean {
     return [
       path.join(dir, 'openharmony', 'toolchains'),
       path.join(dir, 'default', 'openharmony', 'toolchains'),
+      path.join(dir, 'sdk', 'default', 'openharmony', 'toolchains'),
+      path.join(dir, 'command-line-tools', 'sdk', 'default', 'openharmony', 'toolchains'),
       path.join(dir, 'commandline-tools'),
     ].some(exists);
   }
@@ -135,13 +137,23 @@ export async function resolveEnvPlan(kind: EnvKind, dl: DlOptions): Promise<EnvP
   throw new Error('HarmonyOS SDK 需登录华为开发者账号后从官方下载');
 }
 
+/** 必须用系统 bsdtar：Git Bash 等环境 PATH 上的 tar 可能是 GNU tar，
+ *  它把 "C:\..." 当成远程主机（Cannot connect to C:）而解压失败。 */
+function systemTar(): string {
+  if (process.platform === 'win32') {
+    const p = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+    if (fs.existsSync(p)) return p;
+  }
+  return 'tar.exe';
+}
+
 /** 用系统自带 bsdtar 解压 zip（Windows 10 1803+ 自带 tar.exe）。
  *  必须带超时：tar 卡住会让环境安装任务永久停在解压阶段。 */
 export async function extractZip(zipPath: string, destDir: string): Promise<void> {
   fs.mkdirSync(destDir, { recursive: true });
   let res;
   try {
-    res = await run('tar.exe', ['-xf', zipPath, '-C', destDir], {
+    res = await run(systemTar(), ['-xf', zipPath, '-C', destDir], {
       timeoutMs: 600_000,
     });
   } catch {

@@ -1,8 +1,21 @@
 import { useEffect, useState } from 'react';
 import { api, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
+import { displayedStorageGb, rawStorageGb } from '../../core/storageUnits.ts';
 
-export const RECOMMEND_HW = { ramMb: 2048, cores: 4, storageGb: 6 };
+export const RECOMMEND_HW = { ramMb: 2048, cores: 4, storageGb: 16 };
+/** 数据分区下限：再小 Android 的系统数据会很快占满整块存储 */
+export const MIN_STORAGE_GB = 6;
+
+/** MB 转 GB 文本（4 GB 而非 4.0 GB） */
+export function gbFromMb(mb: number): string {
+  return String(Math.round((mb / 1024) * 10) / 10);
+}
+
+/** 只保留一个小数点以内的数字，避免 Number() 得到 NaN 后被主进程静默丢弃 */
+export function decimalInput(value: string): string {
+  return value.replace(/[^\d.]/g, '').replace(/^(\d*\.?\d*).*$/, '$1');
+}
 
 export function HwFields({
   ram,
@@ -11,6 +24,9 @@ export function HwFields({
   setCores,
   storage,
   setStorage,
+  storageError,
+  storageReadOnly,
+  onStorageBlur,
 }: {
   ram: string;
   setRam: (v: string) => void;
@@ -18,16 +34,19 @@ export function HwFields({
   setCores: (v: string) => void;
   storage: string;
   setStorage: (v: string) => void;
+  storageError?: string;
+  storageReadOnly?: string;
+  onStorageBlur?: () => void;
 }) {
   return (
     <div className="hw-grid">
       <div className="form-row">
-        <label>内存（MB）</label>
+        <label>内存（GB）</label>
         <input
           value={ram}
-          onChange={(e) => setRam(e.target.value.replace(/[^\d]/g, ''))}
-          placeholder={`推荐 ${RECOMMEND_HW.ramMb}`}
-          inputMode="numeric"
+          onChange={(e) => setRam(decimalInput(e.target.value))}
+          placeholder={`推荐 ${gbFromMb(RECOMMEND_HW.ramMb)}`}
+          inputMode="decimal"
         />
       </div>
       <div className="form-row">
@@ -40,23 +59,33 @@ export function HwFields({
         />
       </div>
       <div className="form-row">
-        <label>数据分区（GB）</label>
-        <input
-          value={storage}
-          onChange={(e) => setStorage(e.target.value.replace(/[^\d]/g, ''))}
-          placeholder={`推荐 ${RECOMMEND_HW.storageGb}`}
-          inputMode="numeric"
-        />
+        <label>硬盘容量（GB）</label>
+        {storageReadOnly !== undefined ? (
+          <span className="num">{storageReadOnly}</span>
+        ) : (
+          <input
+            value={storage}
+            onChange={(e) => setStorage(e.target.value.replace(/[^\d]/g, ''))}
+            onBlur={onStorageBlur}
+            className={storageError ? 'invalid' : undefined}
+            aria-invalid={storageError ? true : undefined}
+            placeholder={`推荐 ${RECOMMEND_HW.storageGb}`}
+            inputMode="numeric"
+          />
+        )}
+        {storageError !== undefined && <div className="form-error">{storageError}</div>}
       </div>
     </div>
   );
 }
 
 export function parseHwFields(ram: string, cores: string, storage: string) {
+  const ramGb = ram ? Number(ram) : NaN;
   return {
-    ramMb: ram ? Number(ram) : undefined,
+    ramMb: Number.isFinite(ramGb) && ramGb > 0 ? Math.round(ramGb * 1024) : undefined,
     cores: cores ? Number(cores) : undefined,
-    storageGb: storage ? Number(storage) : undefined,
+    // 输入的是客人机显示的 GB 档位，落盘要换算成对应的 GiB 分区
+    storageGb: storage ? rawStorageGb(Number(storage)) : undefined,
   };
 }
 
@@ -72,17 +101,15 @@ export function EditVmModal({
   const [ram, setRam] = useState('');
   const [cores, setCores] = useState('');
   const [storage, setStorage] = useState('');
-  const [current, setCurrent] = useState<{ ramMb?: number; cores?: number; storageGb?: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.avdHardware(scope, avdName).then((r) => {
       if (r.ok && r.data) {
-        setCurrent(r.data);
-        setRam(r.data.ramMb ? String(r.data.ramMb) : '');
+        setRam(r.data.ramMb ? gbFromMb(r.data.ramMb) : '');
         setCores(r.data.cores ? String(r.data.cores) : '');
-        setStorage(r.data.storageGb ? String(Math.round(r.data.storageGb)) : '');
+        setStorage(r.data.storageGb ? String(displayedStorageGb(r.data.storageGb)) : '');
       } else if (r.ok) {
         setError('读取配置失败');
       } else {
@@ -94,7 +121,8 @@ export function EditVmModal({
   async function save() {
     setSaving(true);
     setError('');
-    const r = await api.setAvdHardware(scope, avdName, parseHwFields(ram, cores, storage));
+    // 容量入口暂缓：只提交内存与核数，避免把显示档位误写回分区
+    const r = await api.setAvdHardware(scope, avdName, parseHwFields(ram, cores, ''));
     if (!r.ok || !r.data.ok) {
       setError(r.ok ? r.data.error ?? '保存失败' : r.error);
       setSaving(false);
@@ -118,7 +146,15 @@ export function EditVmModal({
         </>
       }
     >
-      <HwFields ram={ram} setRam={setRam} cores={cores} setCores={setCores} storage={storage} setStorage={setStorage} />
+      <HwFields
+        ram={ram}
+        setRam={setRam}
+        cores={cores}
+        setCores={setCores}
+        storage={storage}
+        setStorage={setStorage}
+        storageReadOnly={storage ? `${storage} GB` : '—'}
+      />
       {error && <div className="error-line" style={{ border: 'none', padding: '0 0 0 1px' }}>{error}</div>}
     </Modal>
   );

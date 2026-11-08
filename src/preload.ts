@@ -27,11 +27,6 @@ contextBridge.exposeInMainWorld('devemu', {
     ipcRenderer.on('env:changed', listener);
     return () => ipcRenderer.removeListener('env:changed', listener);
   },
-  onEnvInstallResult: (cb: (payload: unknown) => void) => {
-    const listener = (_e: unknown, payload: unknown) => cb(payload);
-    ipcRenderer.on('env:installResult', listener);
-    return () => ipcRenderer.removeListener('env:installResult', listener);
-  },
   saveSettings: invoke('settings:save'),
   probeRoutes: invoke('settings:probe'),
   checkUpdate: invoke('app:checkUpdate'),
@@ -60,9 +55,25 @@ contextBridge.exposeInMainWorld('devemu', {
   },
   harmonyTargets: invoke('harmony:targets'),
   harmonyUninstall: invoke('harmony:uninstall'),
+  hosList: invoke('hos:list'),
+  hosImages: invoke('hos:images'),
+  hosScreenProfiles: invoke('hos:screenProfiles'),
+  hosCreate: invoke('hos:create'),
+  hosStart: invoke('hos:start'),
+  hosStop: invoke('hos:stop'),
+  hosDelete: invoke('hos:delete'),
+  hosAcceptLicense: invoke('hos:acceptLicense'),
+  hosDownloadImage: invoke('hos:downloadImage'),
+  hosUninstallImage: invoke('hos:uninstallImage'),
+  onHosStartFailed: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('hos:startFailed', listener);
+    return () => ipcRenderer.removeListener('hos:startFailed', listener);
+  },
   openUrl: invoke('open:url'),
   huaweiState: invoke('huawei:state'),
   huaweiLogin: invoke('huawei:login'),
+  huaweiDownloadCenter: invoke('huawei:downloadCenter'),
   onHuaweiChanged: (cb: (payload: unknown) => void) => {
     const listener = (_e: unknown, payload: unknown) => cb(payload);
     ipcRenderer.on('huawei:changed', listener);

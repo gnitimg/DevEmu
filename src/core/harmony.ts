@@ -2,17 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { run } from './exec.ts';
+import { extractZip } from './envinstall.ts';
 import { stageAsciiPath, unstage } from './staging.ts';
 import type { HarmonyComponent, HarmonyInfo } from './types.ts';
 
 /**
  * HarmonyOS 环境探测与 hdc 设备操作。
  *
- * SDK 目录结构（DevEco Studio 5.x 布局）：
- *   <root>/default/openharmony/{toolchains,previewer,sysroot,...}
- *   <root>/default/hms/{hms-ads,...}（部分安装没有）
- *   hdc 位于 <root>/default/openharmony/toolchains/hdc.exe
- * 旧版为 <root>/<版本号>/openharmony/...，探测时两种都认。
+ * SDK 目录结构：
+ *   DevEco Studio 5.x：<root>/default/openharmony/{toolchains,previewer,...}
+ *     旧版为 <root>/<版本号>/openharmony/...，探测时两种都认
+ *   命令行工具包：<root>/command-line-tools/sdk/default/openharmony/...
+ *   hdc 位于 <set>/openharmony/toolchains/hdc.exe
  */
 
 /** 解析 `hdc list targets` 输出为 serial 列表。
@@ -124,49 +125,93 @@ function isSdkSet(dir: string): boolean {
   }
 }
 
-/** 在 sdk 根下找到有效 SDK 集（default 或版本号目录），返回 {root, set} */
-function findSdkSet(root: string): { root: string; set: string } | null {
-  for (const cand of [path.join(root, 'default'), root]) {
-    if (isSdkSet(cand)) return { root, set: cand };
+/** 读取命令行工具包的 sdk-pkg.json 版本（DevEco 布局没有这个文件） */
+function readSdkPkgVersion(set: string): string | undefined {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(set, 'sdk-pkg.json'), 'utf8')) as {
+      data?: { version?: unknown };
+    };
+    const v = raw.data?.version;
+    if (typeof v === 'string' && v) return v;
+  } catch {
+    // 无该文件或解析失败：忽略
   }
-  // 旧版：<root>/<版本号>/openharmony
+  return undefined;
+}
+
+/** 在 sdk 根下找到有效 SDK 集（DevEco default/版本号目录，或命令行工具包内层），
+ *  返回 {root, set}；set 是 openharmony/hms 的父目录 */
+function findSdkSet(root: string): { root: string; set: string } | null {
+  const candidates = [
+    path.join(root, 'default'),
+    path.join(root, 'sdk', 'default'),
+    path.join(root, 'command-line-tools', 'sdk', 'default'),
+    root,
+  ];
   try {
     for (const e of fs.readdirSync(root, { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
-      const cand = path.join(root, e.name);
-      if (isSdkSet(cand)) return { root, set: cand };
+      const child = path.join(root, e.name);
+      candidates.push(child);
+      candidates.push(path.join(child, 'sdk', 'default'));
     }
   } catch {
-    // 根目录不可读：继续
+    // 根目录不可读：只用已知候选
+  }
+  for (const cand of candidates) {
+    if (isSdkSet(cand)) return { root, set: cand };
   }
   return null;
 }
 
 /** 在目录下递归找 hdc.exe（限深、跳过常见噪音目录）。
- *  命令行工具 zip 解压出的布局（commandline-tools/...）不在标准 SDK 集
- *  （<set>/openharmony/toolchains）结构里，标准探测找不到，导入落位后靠它兜底。 */
-export function findHdcAny(root: string, maxDepth = 4): string | undefined {
+ *  命令行工具 zip 解压出的布局（command-line-tools/sdk/default/...）在标准
+ *  SDK 集结构里也能认；残留的旧布局会留下体积极小的假 hdc，按 toolchains
+ *  路径与文件体积优先真实产物，避免被浅层假文件抢先。 */
+export function findHdcAny(root: string, maxDepth = 6): string | undefined {
+  for (const rel of [
+    ['command-line-tools', 'sdk', 'default'],
+    ['sdk', 'default'],
+    ['default'],
+  ]) {
+    const c = path.join(root, ...rel, 'openharmony', 'toolchains', 'hdc.exe');
+    try {
+      if (fs.statSync(c).isFile()) return c;
+    } catch {
+      // 不存在：继续
+    }
+  }
   const SKIP = new Set(['node_modules', '.git']);
-  const walk = (dir: string, depth: number): string | undefined => {
+  const best: { path: string; score: number; size: number }[] = [];
+  const walk = (dir: string, depth: number): void => {
     let entries: fs.Dirent[] = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
-      return undefined;
+      return;
     }
     for (const e of entries) {
+      if (!e.isFile() || e.name.toLowerCase() !== 'hdc.exe') continue;
       const full = path.join(dir, e.name);
-      if (e.isFile() && e.name.toLowerCase() === 'hdc.exe') return full;
+      let size = 0;
+      try {
+        size = fs.statSync(full).size;
+      } catch {
+        continue;
+      }
+      // 真实布局的 hdc 在 toolchains 下且有几 MB；假占位文件通常只有几十字节
+      const score = (/[\\/]toolchains[\\/]/i.test(full) ? 2 : 0) + (size > 64 * 1024 ? 1 : 0);
+      best.push({ path: full, score, size });
     }
-    if (depth >= maxDepth) return undefined;
+    if (depth >= maxDepth) return;
     for (const e of entries) {
       if (!e.isDirectory() || SKIP.has(e.name)) continue;
-      const hit = walk(path.join(dir, e.name), depth + 1);
-      if (hit) return hit;
+      walk(path.join(dir, e.name), depth + 1);
     }
-    return undefined;
   };
-  return walk(root, 0);
+  walk(root, 0);
+  best.sort((a, b) => b.score - a.score || b.size - a.size);
+  return best[0]?.path;
 }
 
 function findHdc(set: string, deveco?: string): string | undefined {
@@ -197,6 +242,36 @@ function findEmulator(deveco: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/** 解压下载中心 zip 并合并落位到 dir（staging 可能是单根目录或散开），
+ *  递归找 hdc 校验；返回 hdc.exe 路径。 */
+export async function importCommandlineTools(  zipPath: string,
+  dir: string,
+  extract: (zip: string, dest: string) => Promise<void> = extractZip,
+): Promise<string> {
+  const staging = path.join(dir, `.devemu-hms-staging-${Date.now()}`);
+  try {
+    await extract(zipPath, staging);
+    for (const entry of fs.readdirSync(staging)) {
+      const dest = path.join(dir, entry);
+      await fs.promises.rm(dest, { recursive: true, force: true }).catch(() => undefined);
+      try {
+        await fs.promises.rename(path.join(staging, entry), dest);
+      } catch {
+        // 同卷 rename 失败（目标被占用等）：退回复制
+        await fs.promises.cp(path.join(staging, entry), dest, { recursive: true, force: true });
+      }
+    }
+    const set = findSdkSet(dir);
+    const hdc = (set ? findHdc(set.set) : undefined) ?? findHdcAny(dir);
+    if (!hdc) {
+      throw new Error('压缩包内未找到 hdc，请确认下载的是 HarmonyOS 命令行工具（commandline-tools）压缩包');
+    }
+    return hdc;
+  } finally {
+    await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 /**
@@ -254,7 +329,9 @@ export function detectHarmony(explicitPath?: string): HarmonyInfo | null {
       hdc,
       deveco,
       emulator: deveco ? findEmulator(deveco) : undefined,
-      apiVersion: readUniVersion(path.join(found.set, 'openharmony')),
+      apiVersion:
+        readUniVersion(path.join(found.set, 'openharmony')) ??
+        readSdkPkgVersion(found.set),
       components: listHarmonyComponents(found.set),
     };
   }

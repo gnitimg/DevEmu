@@ -415,11 +415,22 @@ export async function downloadToFile(target: DlTarget, dest: string, opts: DlOpt
     new Promise<void>((resolve, reject) => {
       if (fileErr) return reject(fileErr);
       if (out.write(b)) return resolve();
-      // drain 之外 error/close 也要唤醒：文件流出错时等 drain 会永久挂起
-      const ok = () => (fileErr ? reject(fileErr) : resolve());
-      out.once('drain', ok);
-      out.once('error', ok);
-      out.once('close', ok);
+      // drain 之外 error/close 也要唤醒：文件流出错时等 drain 会永久挂起。
+      // 三个监听互斥摘除，否则每个背压块都会在同一个流上累积 error/close 监听
+      const settle = (err?: Error) => {
+        out.off('drain', onDrain);
+        out.off('error', onError);
+        out.off('close', onClose);
+        const e = err ?? fileErr;
+        if (e) reject(e);
+        else resolve();
+      };
+      const onDrain = () => settle();
+      const onError = (e: Error) => settle(e);
+      const onClose = () => settle();
+      out.once('drain', onDrain);
+      out.once('error', onError);
+      out.once('close', onClose);
     });
   try {
     return await download(target, opts, writeChunk);

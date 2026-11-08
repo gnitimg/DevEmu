@@ -8,6 +8,9 @@ import {
   parseConfigIni,
   listAvds,
   updateAvdHardware,
+  hardwareOf,
+  markAvdWipe,
+  WIPE_FLAG,
 } from './avd.ts';
 import { scopeDirs } from './env.ts';
 import * as avd from './avd.ts';
@@ -120,6 +123,14 @@ test('parseConfigIni 解析键值对', () => {
   assert.equal(cfg['tag.display'], 'Google APIs');
 });
 
+test('hardwareOf 同时解析字节数与带单位的数据分区容量', () => {
+  assert.equal(hardwareOf({ 'disk.dataPartition.size': '16G' }).storageGb, 16);
+  assert.equal(hardwareOf({ 'disk.dataPartition.size': '10240M' }).storageGb, 10);
+  assert.equal(hardwareOf({ 'disk.dataPartition.size': '6442450944' }).storageGb, 6);
+  assert.equal(hardwareOf({ 'disk.dataPartition.size': '0' }).storageGb, undefined);
+  assert.equal(hardwareOf({ 'hw.ramSize': '4096M' }).ramMb, 4096);
+});
+
 test('listAvds 从作用域目录读出 AVD 并推导镜像包名', () => {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-avd-'));
   const { avdHome } = scopeDirs(dataRoot, { kind: 'project', projectId: 'p1' });
@@ -174,6 +185,54 @@ test('updateAvdHardware 把内存写入 config.ini 并保留其他行', () => {
   assert.match(text, /tag\.display=Google APIs/);
 
   fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+test('updateAvdHardware 只允许扩容数据分区，缩小时不改写配置', () => {
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-avd-'));
+  const { avdHome } = scopeDirs(dataRoot, { kind: 'shared' });
+  const avdDir = path.join(avdHome, 'TestDevice.avd');
+  fs.mkdirSync(avdDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(avdDir, 'config.ini'),
+    'disk.dataPartition.size = 10G\n',
+    'utf8',
+  );
+
+  const shrink = updateAvdHardware(dataRoot, { kind: 'shared' }, 'TestDevice', {
+    storageGb: 8,
+  });
+  assert.equal(shrink.ok, false);
+  assert.match(shrink.error!, /只能扩容/);
+  assert.match(
+    fs.readFileSync(path.join(avdDir, 'config.ini'), 'utf8'),
+    /disk\.dataPartition\.size = 10G/,
+  );
+
+  const grow = updateAvdHardware(dataRoot, { kind: 'shared' }, 'TestDevice', {
+    storageGb: 16,
+  });
+  assert.deepEqual(grow, { ok: true });
+  assert.match(
+    fs.readFileSync(path.join(avdDir, 'config.ini'), 'utf8'),
+    /disk\.dataPartition\.size = 16G/,
+  );
+
+  fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+test('markAvdWipe 为存在的虚拟机写入重建标记', (t) => {
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-avd-'));
+  t.after(() => fs.rmSync(dataRoot, { recursive: true, force: true }));
+  const { avdHome } = scopeDirs(dataRoot, { kind: 'shared' });
+  const avdDir = path.join(avdHome, 'TestDevice.avd');
+  fs.mkdirSync(avdDir, { recursive: true });
+
+  assert.deepEqual(markAvdWipe(dataRoot, { kind: 'shared' }, 'TestDevice'), { ok: true });
+  assert.equal(fs.readFileSync(path.join(avdDir, WIPE_FLAG), 'utf8'), '1');
+
+  const missing = markAvdWipe(dataRoot, { kind: 'shared' }, 'NoSuchDevice');
+  assert.equal(missing.ok, false);
+  assert.match(missing.error!, /不存在/);
 });
 
 test('updateAvdHardware 写入失败时返回错误而不是静默成功', () => {
