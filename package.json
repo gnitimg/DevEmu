@@ -1,7 +1,7 @@
 {
   "name": "devemu",
   "productName": "DevEmu",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "description": "多系统虚拟机测试工作台",
   "type": "module",
