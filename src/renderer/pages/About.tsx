@@ -52,7 +52,6 @@ export function About({ env }: { env: EnvStatus | null }) {
   const [doc, setDoc] = useState<{ title: string; body: string } | null>(null);
   const [checking, setChecking] = useState(false);
   const [update, setUpdate] = useState<{ upToDate: boolean; latest: string; current: string; url: string; hasAsset: boolean } | null>(null);
-  const [updateError, setUpdateError] = useState('');
   const [downloading, setDownloading] = useState(false);
   const [autoOn, setAutoOn] = useState(true);
 
@@ -62,12 +61,19 @@ export function About({ env }: { env: EnvStatus | null }) {
 
   async function checkUpdate() {
     setChecking(true);
-    setUpdateError('');
     setUpdate(null);
     const r = await api.checkUpdate();
     setChecking(false);
-    if (r.ok) setUpdate(r.data);
-    else setUpdateError(r.error);
+    // 检查结果是一次性反馈，统一走右上角临时弹窗；只有“发现新版本”留下内联卡片供操作
+    if (!r.ok) {
+      toast(r.error);
+      return;
+    }
+    if (r.data.upToDate) {
+      toast('您使用的已是最新版本', 'ok');
+      return;
+    }
+    setUpdate(r.data);
   }
 
   async function toggleAutoCheck(on: boolean) {
@@ -85,8 +91,7 @@ export function About({ env }: { env: EnvStatus | null }) {
     const r = await api.updateDownload();
     setDownloading(false);
     if (!r.ok) return; // 失败由主进程 update:error 广播统一提示，避免双弹
-    // 成功后进度与安装就绪由全局更新弹窗接管
-    toast('已开始下载新版本', 'ok');
+    // 开始/完成提示由下载管理统一弹出，这里不再重复
   }
 
   return (
@@ -131,34 +136,29 @@ export function About({ env }: { env: EnvStatus | null }) {
             </div>
             {update && (
               <div className="about-body">
-                {update.upToDate ? (
-                  <p>已是最新版本（v{update.current}）</p>
-                ) : (
-                  <p>
-                    发现新版本 <span className="mono">v{update.latest}</span>（当前 v{update.current}）
-                    {update.hasAsset ? (
-                      <button
-                        className="btn"
-                        style={{ marginLeft: 10 }}
-                        disabled={downloading}
-                        onClick={() => void downloadUpdate()}
-                      >
-                        {downloading ? '已开始下载' : '下载并安装'}
-                      </button>
-                    ) : (
-                      <button
-                        className="link-btn"
-                        style={{ marginLeft: 10 }}
-                        onClick={() => void api.openUrl(update.url)}
-                      >
-                        打开下载页
-                      </button>
-                    )}
-                  </p>
-                )}
+                <p>
+                  发现新版本 <span className="mono">v{update.latest}</span>（当前 v{update.current}）
+                  {update.hasAsset ? (
+                    <button
+                      className="btn"
+                      style={{ marginLeft: 10 }}
+                      disabled={downloading}
+                      onClick={() => void downloadUpdate()}
+                    >
+                      {downloading ? '已开始下载' : '下载并安装'}
+                    </button>
+                  ) : (
+                    <button
+                      className="link-btn"
+                      style={{ marginLeft: 10 }}
+                      onClick={() => void api.openUrl(update.url)}
+                    >
+                      打开下载页
+                    </button>
+                  )}
+                </p>
               </div>
             )}
-            {updateError && <div className="error-line">{updateError}</div>}
           </div>
         </div>
         <div className="section changelog-panel">

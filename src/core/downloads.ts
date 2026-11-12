@@ -43,6 +43,8 @@ interface Entry extends DownloadItem {
   onStart?: () => void;
   /** 文件任务的 sock 中断（pkg 任务为空） */
   abort?: () => void;
+  /** 临时任务（如应用更新包）：不写入已下载持久化历史，安装包装完即焚 */
+  ephemeral?: boolean;
   // ---- sdkmanager 任务的显示进度重映射（原始百分比只反映全程位置） ----
   /** 原始百分比 */
   rawPct?: number;
@@ -381,6 +383,8 @@ export function adoptExternalDownload(opts: {
   desc: string;
   /** 解压落位目录：卸载时删它 */
   installDir?: string;
+  /** 临时任务不写入已下载持久化历史（本次会话内仍可见） */
+  ephemeral?: boolean;
   /** 下载管理里点取消 */
   onCancel: () => void;
   postProcess: (filePath: string, setPct: (p: number) => void) => Promise<void>;
@@ -388,7 +392,7 @@ export function adoptExternalDownload(opts: {
 }): ExternalDownloadTask {
   const entry: Entry = {
     pkg: opts.key, desc: opts.desc, state: 'downloading', percent: 0, downloaded: 0, total: 0, speedBps: 0, etaSec: 0,
-    startedAt: Date.now(), child: null, samples: [], installDir: opts.installDir,
+    startedAt: Date.now(), child: null, samples: [], installDir: opts.installDir, ephemeral: opts.ephemeral,
   };
   active.set(`${opts.key}#${++seq}`, entry);
   ensureTicker();
@@ -692,8 +696,8 @@ function persistFinished(): void {
   if (!storeFile) return;
   try {
     const tmp = `${storeFile}.tmp`;
-    // 失败/取消只在当次弹窗提示，不写历史
-    const done = finished.filter((e) => e.state === 'done');
+    // 失败/取消只在当次弹窗提示，不写历史；临时任务（更新包）装完即焚也不写
+    const done = finished.filter((e) => e.state === 'done' && !e.ephemeral);
     fs.writeFileSync(tmp, JSON.stringify({ finished: done.map(snapshot) }), 'utf8');
     fs.renameSync(tmp, storeFile);
   } catch {

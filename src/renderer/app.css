@@ -603,6 +603,22 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* 通知浮层：与展开侧栏同宽，提醒卡片去掉外边距改为纵向堆叠；
+   bottom 锚点向上展开，高度同时受视口约束 */
+.side-fly-notice {
+  width: 232px;
+  max-width: none;
+  max-height: min(460px, calc(100vh - 70px));
+}
+
+.side-fly-notice .side-notice {
+  margin: 0;
+}
+
+.side-fly-notice .side-notice + .side-notice {
+  margin-top: 6px;
+}
+
 .content {
   flex: 1;
   min-width: 0;
@@ -1658,6 +1674,44 @@ table.tbl.crash-tbl {
 .side-set svg {
   width: 14px;
   height: 14px;
+}
+
+/* 收起态通知铃铛：与设置圆钮同规格，有通知时带红点，点击弹出提醒卡片浮层 */
+.side-bell {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+  flex: none;
+  transition: background 0.12s, color 0.12s;
+  position: relative;
+}
+
+.side-bell:hover {
+  background: #eceef1;
+  color: var(--text);
+}
+
+.side-bell svg {
+  width: 14px;
+  height: 14px;
+}
+
+.side-bell.has-dot::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 1.5px solid var(--side-bg);
 }
 
 .sidebar.collapsed .side-footer {

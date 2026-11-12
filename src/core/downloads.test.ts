@@ -87,3 +87,36 @@ test('adoptExternalDownload 取消后不再落位', async () => {
   assert.equal(fin?.state, 'cancelled');
   assert.deepEqual(done, [{ ok: false, cancelled: true, error: undefined }]);
 });
+
+test('临时任务（应用更新包）完成不写入持久化历史', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-dl-'));
+  initDownloadStore(root);
+  const task = adoptExternalDownload({
+    key: 'app-update-ephemeral',
+    desc: 'DevEmu v9.9.9 更新包',
+    ephemeral: true,
+    onCancel: () => undefined,
+    postProcess: async () => undefined,
+  });
+  await task.complete('C:/tmp/update.exe');
+  const raw = JSON.parse(
+    fs.readFileSync(path.join(root, 'downloads.json'), 'utf8'),
+  ) as { finished?: { pkg: string }[] };
+  assert.ok(!raw.finished?.some((f) => f.pkg === 'app-update-ephemeral'));
+});
+
+test('常规外部任务完成仍写入持久化历史', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-dl-'));
+  initDownloadStore(root);
+  const task = adoptExternalDownload({
+    key: 'normal-persist',
+    desc: '常规任务',
+    onCancel: () => undefined,
+    postProcess: async () => undefined,
+  });
+  await task.complete('C:/tmp/none.zip');
+  const raw = JSON.parse(
+    fs.readFileSync(path.join(root, 'downloads.json'), 'utf8'),
+  ) as { finished?: { pkg: string }[] };
+  assert.ok(raw.finished?.some((f) => f.pkg === 'normal-persist'));
+});

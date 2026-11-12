@@ -95,6 +95,7 @@ import {
   onDownloadsChanged,
   initDownloadStore,
   adoptPercentTask,
+  adoptExternalDownload,
 } from './core/downloads.ts';
 import {
   listAvds,
@@ -1519,6 +1520,24 @@ export function registerIpc(): void {
     // “设备网络代理”是本机通用代理入口，更新下载跟随它；限速沿用全局下载限速
     const settings = loadAppSettings();
     const viaProxy = settings.proxyEnabled === true && !!settings.proxyPort;
+    // 更新包下载并入下载管理统一展示（进度/速度/取消），任务为临时项不进持久化历史；
+    // 结果仍经 update:* 广播驱动 UpdatePrompt 与侧栏通知卡
+    let exePathOut: string | null = null;
+    const task = adoptExternalDownload({
+      key: 'app-update',
+      desc: `DevEmu v${release.version} 更新包`,
+      ephemeral: true,
+      onCancel: () => cancelUpdateDownload(),
+      postProcess: async () => undefined,
+      onDone: (r) => {
+        if (r.ok && exePathOut) {
+          downloadedExePath = exePathOut;
+          broadcast('update:downloaded', { version: release.version });
+        } else if (!r.ok && !r.cancelled) {
+          broadcast('update:error', { message: r.error ?? '未知错误' });
+        }
+      },
+    });
     try {
       const exePath = await downloadUpdate(release, {
         viaProxy,
@@ -1532,16 +1551,16 @@ export function registerIpc(): void {
           const now = Date.now();
           if (now - lastProgressAt < 1000 && received < total) return;
           lastProgressAt = now;
+          task.progress(received, total);
           broadcast('update:progress', { received, total });
         },
       });
-      downloadedExePath = exePath;
-      broadcast('update:downloaded', { version: release.version });
+      exePathOut = exePath;
+      await task.complete(exePath);
       return ok(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // 用户主动取消不上报错误（net 层取消统一抛“已取消”）
-      if (msg !== '已取消') broadcast('update:error', { message: msg });
+      task.fail(msg);
       return fail(msg);
     } finally {
       downloading = false;
@@ -1549,7 +1568,9 @@ export function registerIpc(): void {
   });
 
   handle('update:cancel', () => {
-    cancelUpdateDownload();
+    // 任务已并入下载管理：条目取消会连带 abort → cancelUpdateDownload；
+    // 无条目（下载已结束或尚未开始）时兜底置取消标记
+    if (!cancelDownload('app-update')) cancelUpdateDownload();
     return ok(true);
   });
 

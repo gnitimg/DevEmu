@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
-import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onUpdateAvailable, onUpdateDownloaded, onUpdateError, onUpdateProgress, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -25,6 +25,13 @@ export interface EnvStatus {
   version: string;
   images: { pkg: string; api: number; tag: string; abi: string }[];
 }
+
+/** 侧栏新版本提醒卡状态：与 UpdatePrompt 弹窗共用主进程更新事件源 */
+type UpdateNotice = {
+  latest: string;
+  current: string;
+  phase: 'available' | 'downloading' | 'ready';
+};
 
 const ss = {
   get: (k: string, d: string) => sessionStorage.getItem(k) ?? d,
@@ -58,8 +65,14 @@ export function App() {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [devicesOpen, setDevicesOpen] = useState(true);
   // 收起态子项浮层：点图标不展开侧栏，改为在图标右侧弹出该分组的子项列表；
-  // 锚点在打开时按图标屏幕坐标算一次，窗口尺寸变化直接关闭不跟随
-  const [sideFly, setSideFly] = useState<{ kind: 'projects' | 'devices'; x: number; y: number } | null>(null);
+  // 锚点在打开时按图标屏幕坐标算一次，窗口尺寸变化直接关闭不跟随。
+  // 铃铛钉在窗口底部，通知浮层改用 bottom 锚点向上展开，避免超出下缘
+  const [sideFly, setSideFly] = useState<{
+    kind: 'projects' | 'devices' | 'notice';
+    x: number;
+    y?: number;
+    bottom?: number;
+  } | null>(null);
   const sideFlyRef = useRef<HTMLDivElement | null>(null);
   // 分区恢复时兼容旧值：'download' 已并入 'network'
   const [settingsSection, setSettingsSection] = useState(() => {
@@ -72,6 +85,8 @@ export function App() {
   const [dlActive, setDlActive] = useState<DownloadItem[]>([]);
   // null 表示尚未查完登录状态，避免闪卡片
   const [huaweiLogin, setHuaweiLogin] = useState<boolean | null>(null);
+  // 新版本提醒：弹窗负责完整流程，这里只保留可重入的下载/安装入口
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
 
   useEffect(() => {
     ss.set('de.page', page);
@@ -101,6 +116,24 @@ export function App() {
       })
       .catch(() => setHuaweiLogin(false));
     return onHuaweiChanged(setHuaweiLogin);
+  }, []);
+
+  // 新版本提醒跟随主进程更新事件；错误只回退卡片状态，失败原因由 update:error 统一弹窗
+  useEffect(() => {
+    const un1 = onUpdateAvailable((p) => setUpdateNotice({ latest: p.latest, current: p.current, phase: 'available' }));
+    const un2 = onUpdateProgress(() =>
+      setUpdateNotice((cur) => (cur && cur.phase === 'available' ? { ...cur, phase: 'downloading' } : cur)),
+    );
+    const un3 = onUpdateDownloaded(() => setUpdateNotice((cur) => (cur ? { ...cur, phase: 'ready' } : cur)));
+    const un4 = onUpdateError(() =>
+      setUpdateNotice((cur) => (cur && cur.phase === 'downloading' ? { ...cur, phase: 'available' } : cur)),
+    );
+    return () => {
+      un1();
+      un2();
+      un3();
+      un4();
+    };
   }, []);
 
   // 侧栏胶囊总进度：所有进行中任务（含排队）已下载 / 总大小
@@ -167,9 +200,14 @@ export function App() {
     if (p === 'projects') setProjectId(null);
   };
 
-  const toggleSideFly = (kind: 'projects' | 'devices', e: React.MouseEvent) => {
+  // 侧栏通知：HarmonyOS SDK 提醒 + 新版本提醒，数量驱动收起态铃铛红点
+  const hosNotice = !!env && !env.harmony && huaweiLogin !== null;
+  const noticeCount = (hosNotice ? 1 : 0) + (updateNotice ? 1 : 0);
+
+  const toggleSideFly = (kind: 'projects' | 'devices' | 'notice', e: React.MouseEvent) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setSideFly((cur) => (cur?.kind === kind ? null : { kind, x: r.right + 8, y: r.top }));
+    const v = kind === 'notice' ? { bottom: window.innerHeight - r.bottom - 8 } : { y: r.top };
+    setSideFly((cur) => (cur?.kind === kind ? null : { kind, x: r.right + 8, ...v }));
   };
 
   // 浮层关闭时机：点面板外（图标自身除外，交给 onToggle 做开合切换）、Esc、
@@ -183,7 +221,8 @@ export function App() {
     const onDown = (e: MouseEvent) => {
       const t = e.target;
       if (sideFlyRef.current?.contains(t as Node)) return;
-      if (t instanceof Element && t.closest('.side-item')) return;
+      // 图标与铃铛自身的点击交给各自 onToggle 做开合切换，这里不抢
+      if (t instanceof Element && t.closest('.side-item, .side-bell')) return;
       setSideFly(null);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -444,52 +483,21 @@ export function App() {
             )}
           </SideItem>
           </div>
-          {env && !env.harmony && huaweiLogin !== null && (
-            <div className="side-notice">
-              <div className="side-notice-head">
-                <svg
-                  className="side-notice-icon"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M8 1.8 14.8 13.8H1.2L8 1.8Z" />
-                  <path d="M8 6.4v3.2" />
-                  <path d="M8 12.1h.01" />
-                </svg>
-                <span>需要注意</span>
-              </div>
-              {huaweiLogin ? (
-                <>
-                  <p className="side-notice-text">HarmonyOS SDK 未检测到。已登录华为账号，可下载命令行工具并自动落位</p>
-                  <button
-                    className="side-notice-link"
-                    onClick={() => {
-                      void api.huaweiDownloadCenter().then((d) => {
-                        if (!d.ok) toast(d.error);
-                        else if (d.data.started) toast('正在获取官方下载地址，进度见“下载管理”', 'ok');
-                        else if (d.data.reason === 'window') toast('官方下载页已打开', 'ok');
-                        else toast('已有下载任务在进行中');
-                      });
-                    }}
-                  >
-                    下载并自动落位 ›
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="side-notice-text">如果要使用 HarmonyOS SDK 进行开发，你必须登录你的华为账号</p>
-                  <button className="side-notice-link" onClick={() => void api.huaweiLogin()}>
-                    点击跳转登录 ›
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+          {hosNotice && <HosNoticeCard loggedIn={huaweiLogin === true} />}
+          {updateNotice && <UpdateNoticeCard notice={updateNotice} />}
           <div className="side-footer">
+            {!sideOpen && (
+              <button
+                className={`side-bell${noticeCount > 0 ? ' has-dot' : ''}`}
+                title="通知"
+                onClick={(e) => toggleSideFly('notice', e)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8" />
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                </svg>
+              </button>
+            )}
             <button
               className={`side-dl${page === 'downloads' ? ' on' : ''}${dlActive.length > 0 ? ' dl-running' : ''}`}
               title="下载管理"
@@ -522,7 +530,14 @@ export function App() {
             </button>
           </div>
         </aside>
-        {sideFly && !sideOpen && (
+        {sideFly && !sideOpen && sideFly.kind === 'notice' && (
+          <div ref={sideFlyRef} className="side-fly side-fly-notice" style={{ left: sideFly.x, bottom: sideFly.bottom }}>
+            {noticeCount === 0 && <div className="side-fly-empty">暂无通知</div>}
+            {hosNotice && <HosNoticeCard loggedIn={huaweiLogin === true} />}
+            {updateNotice && <UpdateNoticeCard notice={updateNotice} />}
+          </div>
+        )}
+        {sideFly && !sideOpen && sideFly.kind !== 'notice' && (
           <div ref={sideFlyRef} className="side-fly" style={{ left: sideFly.x, top: sideFly.y }}>
             {sideFly.kind === 'projects' ? (
               projects.length === 0 ? (
@@ -725,6 +740,105 @@ function SideItem({
         )}
       </button>
       {children && <div className={`side-children${expanded && sideOpen ? '' : ' hidden'}`}>{children}</div>}
+    </div>
+  );
+}
+
+/** HarmonyOS SDK 提醒卡：展开态内联展示，收起态进通知浮层 */
+function HosNoticeCard({ loggedIn }: { loggedIn: boolean }) {
+  return (
+    <div className="side-notice">
+      <div className="side-notice-head">
+        <svg
+          className="side-notice-icon"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M8 1.8 14.8 13.8H1.2L8 1.8Z" />
+          <path d="M8 6.4v3.2" />
+          <path d="M8 12.1h.01" />
+        </svg>
+        <span>需要注意</span>
+      </div>
+      {loggedIn ? (
+        <>
+          <p className="side-notice-text">HarmonyOS SDK 未检测到。已登录华为账号，可下载命令行工具并自动落位</p>
+          <button
+            className="side-notice-link"
+            onClick={() => {
+              void api.huaweiDownloadCenter().then((d) => {
+                if (!d.ok) toast(d.error);
+                else if (d.data.started) toast('正在获取官方下载地址，进度见“下载管理”', 'ok');
+                else if (d.data.reason === 'window') toast('官方下载页已打开', 'ok');
+                else toast('已有下载任务在进行中');
+              });
+            }}
+          >
+            下载并自动落位 ›
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="side-notice-text">如果要使用 HarmonyOS SDK 进行开发，你必须登录你的华为账号</p>
+          <button className="side-notice-link" onClick={() => void api.huaweiLogin()}>
+            点击跳转登录 ›
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** 新版本提醒卡：phase 与 UpdatePrompt 弹窗同步，动作可直接重入下载/安装 */
+function UpdateNoticeCard({ notice }: { notice: UpdateNotice }) {
+  return (
+    <div className="side-notice">
+      <div className="side-notice-head">
+        <svg
+          className="side-notice-icon"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M8 2.5v7" />
+          <path d="M5 7l3 3 3-3" />
+          <path d="M3 11.5v1A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-1" />
+        </svg>
+        {notice.phase === 'downloading' && <span>正在下载 v{notice.latest}</span>}
+        {notice.phase === 'ready' && <span>v{notice.latest} 已就绪</span>}
+        {notice.phase === 'available' && <span>发现新版本 v{notice.latest}</span>}
+      </div>
+      {notice.phase === 'available' && (
+        <>
+          <p className="side-notice-text">当前版本 v{notice.current}，可以更新到 v{notice.latest}</p>
+          <button className="side-notice-link" onClick={() => void api.updateDownload()}>
+            下载并安装 ›
+          </button>
+        </>
+      )}
+      {notice.phase === 'downloading' && <p className="side-notice-text">更新包正在下载</p>}
+      {notice.phase === 'ready' && (
+        <>
+          <p className="side-notice-text">安装包已下载并通过完整性校验，重启后将安装新版本</p>
+          <button
+            className="side-notice-link"
+            onClick={() =>
+              void api.updateInstall().then((r) => {
+                if (!r.ok) toast(r.error);
+              })
+            }
+          >
+            立即安装并重启 ›
+          </button>
+        </>
+      )}
     </div>
   );
 }
