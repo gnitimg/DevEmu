@@ -60,6 +60,10 @@ function sanitizePoints(raw: unknown): LatLng[] {
   return out;
 }
 
+// 同毫秒连存的路线 createdAt 必须严格递增：列表按"新的在前"排序，
+// 时间戳打平会落入文件系统目录序（随机器而异，CI 上已暴露）
+let lastCreatedAt = 0;
+
 export function saveRoute(
   dataRoot: string,
   name: string,
@@ -75,11 +79,13 @@ export function saveRoute(
   const dir = routesDir(dataRoot);
   try {
     fs.mkdirSync(dir, { recursive: true });
+    const createdAt = Math.max(Date.now(), lastCreatedAt + 1);
+    lastCreatedAt = createdAt;
     const route: StoredRoute = {
       id,
       name: trimmed,
       points: clean,
-      createdAt: Date.now(),
+      createdAt,
     };
     fs.writeFileSync(
       path.join(dir, `${id}.json`),
