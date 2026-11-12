@@ -40,11 +40,39 @@ const TASK_DESC = 'HarmonyOS 命令行工具';
 const FALLBACK_FILE = 'commandline-tools-windows-x64.zip';
 const SCRAPE_TIMEOUT_MS = 60_000;
 
+/** 下载直链只接受华为系域名：抓链窗口跟随页面跳转，放任意来源的 https zip
+ *  进来会被解压落位并执行其中的 hdc */
+const HUAWEI_DOWNLOAD_HOST_SUFFIXES = [
+  'huawei.com',
+  'dbankcdn.com',
+  'dbankcdn.cn',
+  'dbankcloud.cn',
+  'dbankcloud.com',
+  'hicloud.com',
+];
+
+function isHuaweiDownloadHost(rawHost: string): boolean {
+  const host = rawHost.toLowerCase().replace(/\.+$/, '');
+  return HUAWEI_DOWNLOAD_HOST_SUFFIXES.some(
+    (s) => host === s || host.endsWith(`.${s}`),
+  );
+}
+
+function urlHostAllowed(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && isHuaweiDownloadHost(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 let win: BrowserWindow | null = null;
 let hooked = false;
 let importing = false;
-// 只接管本页及其弹窗的下载：同分区里的其它窗口（含扫描用的隐藏窗口）不归这里
-const ownedContents = new Set<number>();
+// 只接管本页及其弹窗的下载：同分区里的其它窗口（含扫描用的隐藏窗口）不归这里。
+// 记 BrowserWindow 引用而非裸 id：主窗关闭时要能把不可见的弹窗一并带走
+const ownedContents = new Map<number, BrowserWindow>();
 let ctx: {
   targetDir: string;
   onResult: (r: HarmonyDownloadResult) => void;
@@ -78,24 +106,34 @@ export function openHarmonyDownloadCenter(opts: {
     backgroundColor: '#ffffff',
     webPreferences: { partition: HUAWEI_PARTITION },
   });
-  const mainId = win.webContents.id;
-  ownedContents.add(mainId);
-  // 签名直链的弹窗只承担下载，隐藏避免空白窗口闪烁
-  win.webContents.setWindowOpenHandler(() => ({
-    action: 'allow',
-    overrideBrowserWindowOptions: {
-      show: false,
-      webPreferences: { partition: HUAWEI_PARTITION },
-    },
-  }));
-  win.webContents.on('did-create-window', (child) => {
-    const id = child.webContents.id;
-    ownedContents.add(id);
-    child.on('closed', () => ownedContents.delete(id));
-  });
+  // 签名直链的弹窗只承担下载，隐藏避免空白窗口闪烁；跨域弹窗一律拒绝。
+  // 弹窗再开的孙窗递归注册：不接管的话孙窗下载会静默落入 Electron 默认目录
+  const registerPopup = (w: BrowserWindow) => {
+    // id 必须在闭包外取：closed 回调触发时窗口已销毁，再取 webContents 会抛 destroyed
+    const id = w.webContents.id;
+    ownedContents.set(id, w);
+    w.on('closed', () => ownedContents.delete(id));
+    w.webContents.setWindowOpenHandler(({ url }) =>
+      urlHostAllowed(url)
+        ? {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              show: false,
+              webPreferences: { partition: HUAWEI_PARTITION },
+            },
+          }
+        : { action: 'deny' },
+    );
+    w.webContents.on('did-create-window', (grand) => registerPopup(grand));
+  };
+  registerPopup(win);
   void win.loadURL(HARMONY_MANUAL_URL);
   win.on('closed', () => {
     win = null;
+    // 弹出的签名直链窗 show:false 不进任务栏：不随主窗关闭会不可见地存活到退出。
+    // 快照遍历：close 触发 child closed 回调删 Map 项
+    const rest = [...ownedContents.values()];
+    for (const w of rest) if (!w.isDestroyed()) w.close();
     ownedContents.clear();
   });
 }
@@ -103,6 +141,8 @@ export function openHarmonyDownloadCenter(opts: {
 function handleDownload(item: DownloadItem, srcContents: WebContents): void {
   const name = item.getFilename() || '';
   if (!/\.zip$/i.test(name)) return;
+  // 非华为系来源不接管：交给 Electron 默认下载，用户可再手动导入
+  if (!urlHostAllowed(item.getURL())) return;
   // 连点会并发下载多个 2.5GB 安装包并争抢同一落位目录
   if (importing) {
     item.cancel();
@@ -124,6 +164,7 @@ function handleDownload(item: DownloadItem, srcContents: WebContents): void {
   const task = adoptExternalDownload({
     key: TASK_KEY,
     desc: TASK_DESC,
+    installDir: targetDir || undefined,
     onCancel: () => item.cancel(),
     postProcess: async (filePath, setPct) => {
       if (!targetDir) throw new Error('未配置 HarmonyOS SDK 目录');
@@ -205,7 +246,7 @@ function resolveHarmonyDownloadUrl(
     };
 
     const capture = (url: string): boolean => {
-      if (!/^https:\/\//i.test(url) || !/\.zip(\?|#|$)/i.test(url)) return false;
+      if (!urlHostAllowed(url) || !/\.zip(\?|#|$)/i.test(url)) return false;
       finish({ url, fileName: zipFileNameOf(url) });
       return true;
     };
@@ -223,6 +264,7 @@ function resolveHarmonyDownloadUrl(
       const name = item.getFilename() || '';
       // 只要链接：真下载会白拉 2.5GB 到 Electron 的默认目录
       item.cancel();
+      if (!urlHostAllowed(url)) return;
       if (!/\.zip$/i.test(name) && !/\.zip(\?|#|$)/i.test(url)) return;
       finish({
         url,
@@ -244,6 +286,8 @@ function resolveHarmonyDownloadUrl(
 
     scrapeWin.webContents.setWindowOpenHandler(({ url }) => {
       if (capture(url)) return { action: 'deny' };
+      // 与主下载窗同口径：非华为域弹窗一律拒绝，防跳转页操纵
+      if (!urlHostAllowed(url)) return { action: 'deny' };
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
@@ -350,6 +394,15 @@ export function startHarmonyDirectDownload(opts: {
       });
       return;
     }
+    if (!isHuaweiDownloadHost(target.hostname)) {
+      // 抓到的直链来源不对（页面改版/被操纵）：退回可见下载页手动完成
+      autoBusy = false;
+      openHarmonyDownloadCenter({
+        targetDir: opts.targetDir,
+        onResult: opts.onDone ?? (() => undefined),
+      });
+      return;
+    }
     startFileDownload({
       key: TASK_KEY,
       desc: TASK_DESC,
@@ -359,6 +412,7 @@ export function startHarmonyDirectDownload(opts: {
       viaProxy: opts.viaProxy,
       proxyPort: opts.proxyPort,
       maxBps: opts.maxBps,
+      installDir: opts.targetDir || undefined,
       postProcess: async (filePath) => {
         await importCommandlineTools(filePath, opts.targetDir);
       },

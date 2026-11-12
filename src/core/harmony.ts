@@ -253,6 +253,11 @@ export async function importCommandlineTools(  zipPath: string,
   const staging = path.join(dir, `.devemu-hms-staging-${Date.now()}`);
   try {
     await extract(zipPath, staging);
+    // 先验后删：坏包/非工具包 zip 必须在合并前拦截，否则目标目录同名旧组件
+    // 已被删除，校验失败时旧 SDK 不可恢复
+    if (!findHdcAny(staging)) {
+      throw new Error('压缩包内未找到 hdc，请确认下载的是 HarmonyOS 命令行工具（commandline-tools）压缩包');
+    }
     for (const entry of fs.readdirSync(staging)) {
       const dest = path.join(dir, entry);
       await fs.promises.rm(dest, { recursive: true, force: true }).catch(() => undefined);

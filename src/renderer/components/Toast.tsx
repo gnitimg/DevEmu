@@ -29,6 +29,7 @@ export function Toaster() {
       {items.map((t) => (
         <div
           key={t.id}
+          role={t.kind === 'err' ? 'alert' : 'status'}
           className={`toast-item toast-${t.kind}`}
           onClick={() => setItems((cur) => cur.filter((x) => x.id !== t.id))}
         >

@@ -91,7 +91,9 @@ export function Select<T extends string>({
       return;
     }
     if (e.key === 'Escape') {
+      // 只收起下拉；不拦住冒泡会连带关闭整个弹窗
       e.preventDefault();
+      e.stopPropagation();
       setOpen(false);
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();

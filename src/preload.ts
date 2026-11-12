@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('devemu', {
     return () => ipcRenderer.removeListener('env:changed', listener);
   },
   saveSettings: invoke('settings:save'),
+  checkDataRoot: invoke('settings:checkDataRoot'),
   probeRoutes: invoke('settings:probe'),
   checkUpdate: invoke('app:checkUpdate'),
   updateDownload: invoke('update:download'),
@@ -62,6 +63,8 @@ contextBridge.exposeInMainWorld('devemu', {
   hosStart: invoke('hos:start'),
   hosStop: invoke('hos:stop'),
   hosDelete: invoke('hos:delete'),
+  hosSetHardware: invoke('hos:setHardware'),
+  hosRename: invoke('hos:rename'),
   hosAcceptLicense: invoke('hos:acceptLicense'),
   hosDownloadImage: invoke('hos:downloadImage'),
   hosUninstallImage: invoke('hos:uninstallImage'),
@@ -110,6 +113,7 @@ contextBridge.exposeInMainWorld('devemu', {
   cameraWebcams: invoke('camera:webcams'),
   launchEmu: invoke('emu:launch'),
   stopEmu: invoke('emu:stop'),
+  restartRunningEmus: invoke('emu:restartRunning'),
   listEmulators: invoke('emu:list'),
   openApkDialog: invoke('dialog:openApk'),
   openDirDialog: invoke('dialog:openDir'),
@@ -124,8 +128,13 @@ contextBridge.exposeInMainWorld('devemu', {
   logcat: invoke('test:logcat'),
   clearData: invoke('test:clearData'),
   uninstall: invoke('test:uninstall'),
-  recordRun: invoke('run:record'),
-  listRuns: invoke('run:list'),
+  listCrashes: invoke('crash:list'),
+  readCrash: invoke('crash:read'),
+  onCrashRecorded: (cb: (record: unknown) => void) => {
+    const listener = (_e: unknown, record: unknown) => cb(record);
+    ipcRenderer.on('crash:recorded', listener);
+    return () => ipcRenderer.removeListener('crash:recorded', listener);
+  },
   agentStatus: invoke('agent:status'),
   agentApply: invoke('agent:apply'),
   agentRegenerateToken: invoke('agent:regenerateToken'),

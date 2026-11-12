@@ -1,11 +1,25 @@
 import { run, stream } from './exec.ts';
+import { AVD_NAME_RE } from './avd.ts';
 import { buildWindowGuardScript, buildHosWindowGuardScript } from './windowGroup.ts';
 export { buildWindowGuardScript, buildHosWindowGuardScript } from './windowGroup.ts';
 
 /** avd 名会嵌入 WQL/正则/PowerShell 字符串（进程匹配、窗口查找），
  *  这些函数可能收到渲染层或 console 回显来的名字，入口统一校验 */
 function assertAvdName(avdName: string): void {
-  if (!/^[\w.-]{1,50}$/.test(avdName)) throw new Error('非法的虚拟机名称');
+  if (!AVD_NAME_RE.test(avdName)) throw new Error('非法的虚拟机名称');
+}
+
+/** PowerShell 参数包装：脚本首行强制 UTF-8 输出——中文系统 OEM 码页（GBK）下
+ *  Add-Type 报错与 ConvertTo-Json 的中文实例名按 GBK 写出、UTF-8 解码即乱码；
+ *  findHosEmulatorPid 的中文实例名会真的匹配失败，不只是诊断信息不可读 */
+export function psArgs(script: string): string[] {
+  return [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    `[Console]::OutputEncoding=[Text.Encoding]::UTF8\n${script}`,
+  ];
 }
 
 /** 进程匹配正则里的 avd 名：允许字符中只有 '.' 是正则元字符，
@@ -52,7 +66,7 @@ export async function killEmulatorProcess(avdName: string): Promise<void> {
   ].join('\n');
   await run(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    psArgs(script),
     { timeoutMs: 30_000 },
   );
 }
@@ -65,7 +79,7 @@ export async function killAllEmulatorProcesses(): Promise<void> {
   ].join('\n');
   await run(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    psArgs(script),
     { timeoutMs: 30_000 },
   );
 }
@@ -132,7 +146,7 @@ export function repositionEmulatorWindow(
   const attempt = (force: boolean) =>
     run(
       'powershell.exe',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script(force)],
+      psArgs(script(force)),
       {
         timeoutMs: 30_000,
       },
@@ -176,23 +190,28 @@ export function onQemuGone(listener: (serial: string) => void): () => void {
   return () => qemuGoneListeners.delete(listener);
 }
 
+/** 该 serial 是否已有常驻守卫（随 qemu 进程退出自动清除） */
+export function hasWindowGuard(serial: string): boolean {
+  return guards.has(serial);
+}
+
 export function startWindowGuard(avdName: string, serial: string): void {
   if (guards.has(serial)) return;
   const script = buildWindowGuardScript(avdName, serial);
   runGuard(serial, script);
 }
 
-/** HarmonyOS 模拟器按已解析的进程 pid 起守卫（实例名不参与脚本拼接） */
-export function startHosWindowGuard(pid: number, serial: string): void {
+/** HarmonyOS 模拟器按已解析的进程 pid 起守卫（实例名不参与脚本拼接，仅作为窗口标题） */
+export function startHosWindowGuard(pid: number, serial: string, title: string): void {
   if (guards.has(serial)) return;
-  const script = buildHosWindowGuardScript(pid, serial);
+  const script = buildHosWindowGuardScript(pid, serial, title);
   runGuard(serial, script);
 }
 
 function runGuard(serial: string, script: string): void {
   const child = stream(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    psArgs(script),
     {
       onLine: (line) => {
         const geometry = line.match(/^GEOM (-?\d+) (-?\d+) (\d+) (\d+)$/);
@@ -249,7 +268,7 @@ export async function getShellGeometry(
   ].join('\n');
   const res = await run(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    psArgs(script),
     {
       timeoutMs: 30_000,
     },
@@ -277,7 +296,7 @@ export async function getShellGeometryByPid(
   ].join('\n');
   const res = await run(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    psArgs(script),
     {
       timeoutMs: 30_000,
     },
@@ -394,7 +413,7 @@ function runPairDrag(
   ].join('\n');
   void stream(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    psArgs(script),
     {
       onLine: () => undefined,
     },

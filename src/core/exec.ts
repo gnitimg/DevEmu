@@ -15,6 +15,8 @@ export interface RunOptions {
   timeoutMs?: number;
   /** 以 latin1 收集 stdout，二进制内容（如截图）不被 UTF-8 解码破坏 */
   binary?: boolean;
+  /** stdout/stderr 合计上限（字节），超限 kill 并截断 */
+  maxOutputBytes?: number;
 }
 
 export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise<ExecResult> {
@@ -26,25 +28,32 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
       stdio: [opts.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] as Array<'pipe' | 'ignore'>,
     };
 
-    // Windows 下 .bat/.cmd 需经 cmd /c 启动；整条命令拼成单个字符串并以 verbatim 传递，
-    // 避免 Node 自动加引号与 cmd 的引号剥离规则互相干扰
-    let child: ChildProcess;
+    // .bat/.cmd 须经 cmd /c 且命令行被 cmd 二次解析：空格裂参、& | ^ 引号规则、
+    // 引号内 %VAR% 展开都无法安全防护（sdkmanager/avdmanager 已改直调 java，
+    // 见 cmdlineTool）。这里只拒收，防止未来调用方误入注入路径
     if (/\.(bat|cmd)$/i.test(cmd)) {
-      const cmdline = `"${cmd}" ${args.map(String).join(' ')}`.trim();
-      child = spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', cmdline], {
-        ...base,
-        windowsVerbatimArguments: true,
-      });
-    } else {
-      child = spawn(cmd, args.map(String), base);
+      reject(new Error('不支持直接执行 .bat/.cmd：请直调其解释器（参照 cmdlineTool 直调 java）'));
+      return;
     }
+    const child = spawn(cmd, args.map(String), base);
 
     let stdout = '';
     let stderr = '';
     let outBuf = '';
     let errBuf = '';
+    // agent 桥透传的命令（cat /dev/urandom、logcat -d）可把主进程内存推到 GB 级：
+    // 超限即 kill 并截断，与 zip 解压的 maxOutputLength 同口径
+    const outputCap = opts.maxOutputBytes ?? 32 * 1024 * 1024;
+    let outputBytes = 0;
+    let truncated = false;
 
     const pump = (chunk: Buffer, source: 'stdout' | 'stderr') => {
+      outputBytes += chunk.length;
+      if (outputBytes > outputCap) {
+        truncated = true;
+        child.kill();
+        return;
+      }
       const text = chunk.toString(opts.binary && source === 'stdout' ? 'latin1' : 'utf8');
       if (source === 'stdout') stdout += text;
       else stderr += text;
@@ -81,7 +90,7 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
         if (outBuf) opts.onLine(outBuf, 'stdout');
         if (errBuf) opts.onLine(errBuf, 'stderr');
       }
-      resolve({ code: code ?? -1, stdout, stderr });
+      resolve({ code: code ?? -1, stdout, stderr: truncated ? `${stderr}\n[输出超过上限，已截断中止]` : stderr });
     });
   });
 }

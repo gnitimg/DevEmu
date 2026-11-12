@@ -7,6 +7,7 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 import type { ChildProcess } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,9 @@ import {
   saveAppSettings,
   settingsPath,
   migrateDataRoot,
+  rollbackMigration,
+  dataRootConflicts,
+  type DataRootMigration,
   DEFAULT_DATA_ROOT,
 } from './core/settings.ts';
 import { appendLog, clearLogs } from './core/log.ts';
@@ -57,6 +61,8 @@ import {
   listHosAvds,
   listHosImages,
   listHosScreenProfiles,
+  patchHosHardware,
+  renameHosAvd,
   startHosAvd,
   stopHosAvd,
   uninstallHosImage,
@@ -82,8 +88,10 @@ import {
   startDownload,
   startFileDownload,
   listDownloads,
+  isPkgPending,
   cancelDownload,
   removeFinished,
+  getFinished,
   onDownloadsChanged,
   initDownloadStore,
   adoptPercentTask,
@@ -98,6 +106,7 @@ import {
   getAvdHardware,
   renameAvd,
   markAvdWipe,
+  AVD_NAME_RE,
   type AvdHardware,
 } from './core/avd.ts';
 import {
@@ -105,6 +114,7 @@ import {
   stopEmulator,
   findRunning,
   listRunning,
+  listPersistedRunning,
 } from './core/emulator.ts';
 import {
   adbDevices,
@@ -151,7 +161,7 @@ import {
   saveRoute,
   type LocationPrefs,
 } from './core/locationStore.ts';
-import { getShellGeometry, getShellGeometryByPid } from './core/win.ts';
+import { getShellGeometry, getShellGeometryByPid, hasWindowGuard, startHosWindowGuard } from './core/win.ts';
 import {
   cancelUpdateDownload,
   compareVersions,
@@ -180,8 +190,9 @@ import {
   updateProject,
   deleteProject,
 } from './core/projects.ts';
-import { recordRun, listRuns } from './core/runs.ts';
-import { scopeDirs, scopeKey } from './core/env.ts';
+import { listCrashes, readCrashLog, recordCrash } from './core/crashes.ts';
+import { startHosCrashWatch, watchAndroidCrashes } from './core/crashwatch.ts';
+import { scopeDirs, scopeKey, avdScopeKeys } from './core/env.ts';
 import { killEmulatorProcess, killAllEmulatorProcesses } from './core/win.ts';
 import {
   DEFAULT_AGENT_PORT,
@@ -215,8 +226,11 @@ onDownloadsChanged(() => {
 /** 向所有存活窗口广播 */
 function broadcast(channel: string, payload: unknown): void {
   for (const w of BrowserWindow.getAllWindows()) {
-    if (!w.isDestroyed() && !w.webContents.isDestroyed())
-      w.webContents.send(channel, payload);
+    if (w.isDestroyed() || w.webContents.isDestroyed()) continue;
+    // 药丸/定位面板（devemu-* 标题）只主动 invoke 不消费广播：过滤掉
+    // 免去下载快照等频道的无效 IPC 投递（下载高峰每秒可达数次）
+    if (w.getTitle().startsWith('devemu-')) continue;
+    w.webContents.send(channel, payload);
   }
 }
 
@@ -270,7 +284,8 @@ function parseScope(raw: unknown): Scope | null {
     if (
       s.kind === 'project' &&
       typeof s.projectId === 'string' &&
-      /^[^\\/]+$/.test(s.projectId)
+      // projectId 直接拼数据根子路径，放行 ".." 可上跳一级建目录
+      /^(?!\.{1,2}$)[^\\/]+$/.test(s.projectId)
     ) {
       return { kind: 'project', projectId: s.projectId };
     }
@@ -530,9 +545,79 @@ async function hosAvdsCached(): Promise<{
     hosAvdsCache = { at: now, emu, avds };
     return { emu, avds };
   } catch {
-    hosAvdsCache = { at: now, emu, avds: [] };
-    return { emu, avds: [] };
+    // 瞬时失败与"无运行实例"同形会强拆运行中的药丸并终结定位会话：
+    // 失败不上缓存，调用方跳过本轮同步，等下一次轮询
+    return null;
   }
+}
+
+/** 运行中的 HarmonyOS 虚拟机各挂一份崩溃监听；实例重启后 hdc 目标会变，
+ *  监听内部按当前进程 pid 重新解析，无需随药丸开关重建 */
+const hosCrashWatchers = new Map<string, () => void>();
+
+function ensureHosCrashWatch(name: string): void {
+  if (hosCrashWatchers.has(name)) return;
+  const hdc = harmonyInfoCached()?.hdc;
+  if (!hdc) return;
+  const dirs = scopeDirs(loadAppSettings().dataRoot, { kind: 'shared' });
+  const labels = new Map<string, string>();
+  for (const app of listApps(dirs.appsDir)) {
+    if (app.packageName) labels.set(app.packageName, app.label ?? app.fileName);
+  }
+  hosCrashWatchers.set(
+    name,
+    startHosCrashWatch({
+      hdc,
+      name,
+      crashesDir: dirs.crashesDir,
+      labelOf: (source) => labels.get(source),
+      onRecord: (record) => broadcast('crash:recorded', record),
+    }),
+  );
+}
+
+function stopHosCrashWatch(name: string): void {
+  hosCrashWatchers.get(name)?.();
+  hosCrashWatchers.delete(name);
+}
+
+/** 应用重启后仍在运行的 Android 模拟器由列表轮询补挂崩溃监听；
+ *  本实例拉起的实例在 emulator.ts 启动时已挂过，按 serial 去重 */
+const androidCrashWatchers = new Map<string, () => void>();
+
+function ensureAndroidCrashWatch(adb: string, serial: string, avdName: string): void {
+  if (androidCrashWatchers.has(serial)) return;
+  const dirs = scopeDirs(loadAppSettings().dataRoot, { kind: 'shared' });
+  const labels = new Map<string, string>();
+  for (const app of listApps(dirs.appsDir)) {
+    if (app.packageName) labels.set(app.packageName, app.label ?? app.fileName);
+  }
+  const watch = watchAndroidCrashes(adb, serial, (event) => {
+    try {
+      const record = recordCrash(
+        dirs.crashesDir,
+        {
+          os: 'android',
+          at: event.at.toISOString(),
+          device: avdName,
+          source: event.source,
+          sourceLabel: event.source === 'SYSTEM' ? undefined : labels.get(event.source),
+          kind: event.kind,
+          summary: event.summary,
+        },
+        event.log || event.summary,
+      );
+      broadcast('crash:recorded', record);
+    } catch {
+      // 记录落盘失败不能影响列表轮询
+    }
+  }, { skipHistory: true });
+  androidCrashWatchers.set(serial, () => watch.stop());
+}
+
+function stopAndroidCrashWatch(serial: string): void {
+  androidCrashWatchers.get(serial)?.();
+  androidCrashWatchers.delete(serial);
 }
 
 /** 运行中的 HarmonyOS 虚拟机各开一枚药丸；解析进程 pid 后交给窗口守卫。
@@ -544,6 +629,10 @@ async function syncHosPills(hos: {
   if (process.platform !== 'win32') return;
   const running = hos.avds.filter((a) => a.running);
   const runningSerials = new Set(running.map((a) => hosPillSerial(a.name)));
+  for (const avd of running) ensureHosCrashWatch(avd.name);
+  for (const name of hosCrashWatchers.keys()) {
+    if (!running.some((a) => a.name === name)) stopHosCrashWatch(name);
+  }
   const pillOn = loadAppSettings().pillEnabled !== false;
   if (pillOn) {
     for (const avd of running) {
@@ -578,6 +667,22 @@ async function syncHosPills(hos: {
       }
     }
   }
+  // 药丸关闭时没有守卫进程，窗口标题仍要统一为设备名称
+  if (!pillOn) {
+    for (const avd of running) {
+      const serial = hosPillSerial(avd.name);
+      if (hasWindowGuard(serial)) continue;
+      const lastAttempt = pillRetryAt.get(serial) ?? 0;
+      if (Date.now() - lastAttempt < PILL_RETRY_MS) continue;
+      pillRetryAt.set(serial, Date.now());
+      try {
+        const pid = await findHosEmulatorPid(avd.name);
+        if (pid) startHosWindowGuard(pid, serial, avd.name);
+      } catch {
+        // 单台设备失败不影响其它实例
+      }
+    }
+  }
   for (const serial of openGroupSerials()) {
     if (!isHosPillSerial(serial)) continue;
     if (!pillOn || !runningSerials.has(serial)) {
@@ -598,6 +703,20 @@ async function avdNameCached(
   const name = await avdNameOf(adb, serial).catch(() => undefined);
   if (name) avdNameCache.set(serial, name);
   return name;
+}
+
+/** serial → 作用域：本实例在册优先，其次重启前落盘的注册表 */
+function runningScopeMap(dataRoot: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const e of listPersistedRunning(dataRoot)) map.set(e.serial, e.scopeKey);
+  for (const e of listRunning()) map.set(e.serial, e.scopeKey);
+  return map;
+}
+
+/** avd 名只存在于一个作用域时可判定归属；同名多作用域无从区分，返回 undefined */
+function loneAvdScope(dataRoot: string, avdName: string): string | undefined {
+  const keys = avdScopeKeys(dataRoot, avdName);
+  return keys.length === 1 ? keys[0] : undefined;
 }
 
 /** HarmonyOS 环境探测结果缓存：detectHarmony 全量扫描组件目录并逐个读
@@ -623,9 +742,10 @@ function harmonyInfoCached(): HarmonyInfo | null {
   return info;
 }
 
-/** HarmonyOS 模拟器：命令行工具包内的 Emulator.exe 才支持 -start/-create */
+/** HarmonyOS 模拟器：命令行工具包内的 Emulator.exe 才支持 -start/-create。
+ *  走 5 秒缓存版探测：emu:list 轮询热路径每次 hosEmu 全量扫盘纯属重复 */
 function hosEmu(): string {
-  const harmony = detectHarmony(loadAppSettings().harmonySdkPath);
+  const harmony = harmonyInfoCached();
   if (!harmony) throw new Error('未检测到 HarmonyOS SDK');
   const emu = findHosEmulator(harmony.sdkRoot);
   if (!emu) throw new Error('未检测到 HarmonyOS 模拟器组件');
@@ -668,6 +788,24 @@ function parseHosCreate(raw: unknown): CreateHosAvdOptions | null {
   if (storageGb !== undefined && (!Number.isInteger(storageGb) || storageGb < 2 || storageGb > 1023)) return null;
   if (cpuCores !== undefined && (!Number.isInteger(cpuCores) || cpuCores < 1 || cpuCores > 16)) return null;
   return { name, deviceType, osVersion, screenProfile, memoryGb, storageGb, cpuCores };
+}
+
+/** 已创建实例的硬件修改：只接受内存与核数，容量与镜像分区绑定 */
+function parseHosHardware(raw: unknown): { ramMb?: number; cores?: number } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const out: { ramMb?: number; cores?: number } = {};
+  if (o.ramMb !== undefined) {
+    const n = Number(o.ramMb);
+    if (!Number.isInteger(n) || n < 2048 || n > 32768) return null;
+    out.ramMb = n;
+  }
+  if (o.cores !== undefined) {
+    const n = Number(o.cores);
+    if (!Number.isInteger(n) || n < 1 || n > 16) return null;
+    out.cores = n;
+  }
+  return out.ramMb === undefined && out.cores === undefined ? null : out;
 }
 
 let hosLicenseOk = false;
@@ -728,8 +866,14 @@ export function registerIpc(): void {
 
   handle('hos:list', async () => {
     const emu = hosEmu();
+    // 渲染层多处轮询拉同一份数据：命中 5 秒缓存直接返回，不再每次 spawn
+    // Emulator.exe -list -details（约 0.2 秒/次）；增删改路径都会 invalidate
+    const now = Date.now();
+    if (hosAvdsCache && hosAvdsCache.emu === emu && now - hosAvdsCache.at < HOS_AVDS_CACHE_MS) {
+      return ok(hosAvdsCache.avds);
+    }
     const avds = await listHosAvds(emu);
-    hosAvdsCache = { at: Date.now(), emu, avds };
+    hosAvdsCache = { at: now, emu, avds };
     return ok(avds);
   });
 
@@ -755,6 +899,7 @@ export function registerIpc(): void {
     startHosAvd(emu, name, (message) =>
       broadcast('hos:startFailed', { name, error: message }),
     );
+    ensureHosCrashWatch(name);
     invalidateHosAvdsCache();
     return ok({ started: true });
   });
@@ -763,6 +908,7 @@ export function registerIpc(): void {
     const name = parseHosName(rawName);
     if (!name) return fail('参数错误');
     await stopHosAvd(hosEmu(), name);
+    stopHosCrashWatch(name);
     invalidateHosAvdsCache();
     return ok(true);
   });
@@ -771,6 +917,7 @@ export function registerIpc(): void {
     const name = parseHosName(rawName);
     if (!name) return fail('参数错误');
     await deleteHosAvd(hosEmu(), name);
+    stopHosCrashWatch(name);
     invalidateHosAvdsCache();
     return ok(true);
   });
@@ -783,6 +930,53 @@ export function registerIpc(): void {
     await createHosAvd(emu, opts);
     invalidateHosAvdsCache();
     return ok({ created: true });
+  });
+
+  handle('hos:setHardware', async (rawName: unknown, rawHw: unknown) => {
+    const name = parseHosName(rawName);
+    const hw = parseHosHardware(rawHw);
+    if (!name || !hw) return fail('参数错误');
+    let avd: Awaited<ReturnType<typeof listHosAvds>>[number] | undefined;
+    try {
+      avd = (await listHosAvds(hosEmu())).find((a) => a.name === name);
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    if (!avd) return fail('虚拟机不存在');
+    if (avd.running) return fail('请先关闭虚拟机再修改硬件配置');
+    if (!avd.instancePath) return fail('无法定位虚拟机实例目录');
+    try {
+      await patchHosHardware(path.join(avd.instancePath, 'config.ini'), hw);
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    invalidateHosAvdsCache();
+    return ok(true);
+  });
+
+  handle('hos:rename', async (rawName: unknown, rawNewName: unknown) => {
+    const name = parseHosName(rawName);
+    const newName = parseHosName(rawNewName);
+    if (!name || !newName) return fail('参数错误');
+    if (name === newName) return ok(true);
+    let avds: Awaited<ReturnType<typeof listHosAvds>>;
+    try {
+      avds = await listHosAvds(hosEmu());
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    const avd = avds.find((a) => a.name === name);
+    if (!avd) return fail('虚拟机不存在');
+    if (avd.running) return fail('请先关闭虚拟机再重命名');
+    if (avds.some((a) => a.name === newName)) return fail('已存在同名虚拟机');
+    if (!avd.instancePath) return fail('无法定位虚拟机实例目录');
+    try {
+      await renameHosAvd(avd.instancePath, newName);
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    invalidateHosAvdsCache();
+    return ok(true);
   });
 
   handle('hos:downloadImage', async (rawType: unknown, rawOs: unknown) => {
@@ -819,14 +1013,25 @@ export function registerIpc(): void {
     const deviceType = parseHosText(rawType);
     const osVersion = parseHosText(rawOs);
     if (!deviceType || !osVersion) return fail('参数错误');
+    // 安装进行中卸载会并发写删同一镜像目录
+    if (hosImageTasks.has(hosImageKey(deviceType, osVersion)))
+      return fail('该镜像正在下载安装中，请先取消或等待完成');
     await uninstallHosImage(hosEmu(), deviceType, osVersion);
     return ok(true);
   });
 
   handle('open:url', (url: unknown) => {
-    if (typeof url !== 'string' || !/^https:\/\/[\w.-]+/i.test(url))
+    let u: URL;
+    try {
+      u = new URL(typeof url === 'string' ? url : '');
+    } catch {
       return fail('仅支持 https 链接');
-    void shell.openExternal(url);
+    }
+    // 只锚定开头会让 user:pass@host 通过；Markdown 渲染的远端 release notes
+    // 会注入链接，必须完整解析并拒绝携带凭证的 URL
+    if (u.protocol !== 'https:' || u.username || u.password)
+      return fail('仅支持 https 链接');
+    void shell.openExternal(u.toString());
     return ok(true);
   });
 
@@ -838,6 +1043,20 @@ export function registerIpc(): void {
   });
   watchHuaweiLogin((loggedIn) => broadcast('huawei:changed', { loggedIn }));
 
+  /** 解压落位目标只放行用户空间：向系统目录写文件、落位后由主进程
+   *  执行其中的 exe，是渲染层被攻陷后的明确滥用路径 */
+  function saneSdkDir(dir: string): boolean {
+    const norm = path.resolve(dir).toLowerCase();
+    const roots = [
+      process.env.SystemRoot,
+      process.env.ProgramFiles,
+      process.env['ProgramFiles(x86)'],
+    ]
+      .filter((r): r is string => !!r)
+      .map((r) => path.resolve(r).toLowerCase());
+    return !roots.some((root) => norm === root || norm.startsWith(root + path.sep));
+  }
+
   // 后台抓取华为官方签名直链并直接下载，解压到已配置目录（没有则落到系统
   // 默认 HarmonyOS SDK 目录），完成后写设置并广播
   handle('huawei:downloadCenter', (rawDir?: unknown) => {
@@ -848,6 +1067,7 @@ export function registerIpc(): void {
       picked ||
       settings.harmonySdkPath?.trim() ||
       path.join(os.homedir(), 'AppData', 'Local', 'Huawei', 'Sdk');
+    if (!saneSdkDir(dir)) return fail('解压目标目录不可用');
     try {
       fs.mkdirSync(dir, { recursive: true });
     } catch {
@@ -870,6 +1090,13 @@ export function registerIpc(): void {
         },
       }),
     );
+  });
+
+  // 选择数据根时的前置检查：拒绝嵌套目录，并提示目标里的同名项目会被覆盖
+  handle('settings:checkDataRoot', (rawDir: unknown) => {
+    const dir = typeof rawDir === 'string' && path.isAbsolute(rawDir) ? rawDir : '';
+    if (!dir) return fail('非法的目录');
+    return ok(dataRootConflicts(loadAppSettings().dataRoot, dir));
   });
 
   handle('settings:save', async (raw: unknown) => {
@@ -925,18 +1152,32 @@ export function registerIpc(): void {
     // 数据根变更：先随迁全部数据再切换；迁不完（源被占用）则放弃切换，避免数据两边分裂后被当成已迁移
     const oldRoot = path.resolve(agent.dataRoot);
     const newRoot = path.resolve(s.dataRoot);
+    let migration: DataRootMigration | null = null;
     if (path.relative(oldRoot, newRoot) !== '') {
+      // 新根落在旧根内部时 projects 会搬进自己的子树，切换后列表为空
+      if (dataRootConflicts(oldRoot, newRoot).nested)
+        return fail('新数据根不能位于当前数据根内部，请选择其他目录');
       // 虚拟机磁盘文件被进程持有，不关干净迁移必留残缺
       if (listRunning().length > 0)
         return fail('有虚拟机正在运行，请先全部关闭后再更改数据根目录');
       // 桥进程持有旧数据根里的脚本路径，先停，保存完成后按新数据根重启
       if (agentBridgeRunning()) await stopAgentBridge().catch(() => undefined);
-      const migration = migrateDataRoot(oldRoot, newRoot);
+      migration = migrateDataRoot(oldRoot, newRoot);
       if (migration.failed.length) {
+        // failed 项也可能是半迁移态（moveInto 子项递归抛错），不回滚会让已迁
+        // 数据从活动视图消失
+        const stuck = rollbackMigration(migration, oldRoot, newRoot);
         appendLog(
           DEFAULT_DATA_ROOT,
-          `数据根迁移失败：${migration.failed.join('、')} 未迁完，数据根保持不变`,
+          stuck.length
+            ? `数据根迁移失败并已回滚：${migration.failed.join('、')} 未迁完，${stuck.join('、')} 仍留在新根，请手动处理`
+            : `数据根迁移失败：${migration.failed.join('、')} 未迁完，已回滚，数据根保持不变`,
         );
+        // 桥已按迁移前置条件停下：数据根未变更，按旧根恢复，避免设置页显示
+        // 已启用而桥实际停摆
+        void syncAgentBridge().then((startError) => {
+          if (startError) appendLog(DEFAULT_DATA_ROOT, `迁移回滚后控制桥同步失败：${startError}`);
+        });
         return fail(
           `以下内容未能迁入新数据根（可能被占用）：${migration.failed.join('、')}，数据根未变更`,
         );
@@ -948,7 +1189,8 @@ export function registerIpc(): void {
         `数据根迁移：${migration.moved.length} 项已迁至 ${newRoot}（改写 ${migration.iniFixed} 个虚拟机配置）`,
       );
     }
-    saveAppSettings({
+    // 显式注解：脱离内联调用后，字面量联合类型（如线路）会被拓宽成 string
+    const settingsPatch: Settings = {
       dataRoot: s.dataRoot,
       sdkPath: s.sdkPath,
       javaPath: s.javaPath,
@@ -977,7 +1219,28 @@ export function registerIpc(): void {
       agentEnabled: agent.agentEnabled,
       agentPort: agent.agentPort,
       agentToken: agent.agentToken,
-    });
+  };
+    let saveErr = '';
+    try {
+      saveAppSettings(settingsPatch);
+    } catch (e) {
+      saveErr = e instanceof Error ? e.message : String(e);
+    }
+    if (saveErr) {
+      // 数据已在新根而 settings.json 仍指旧根是最彻底的分裂：回滚并重挂下载存储
+      if (migration) {
+        const stuck = rollbackMigration(migration, oldRoot, newRoot);
+        initDownloadStore(oldRoot);
+        appendLog(
+          DEFAULT_DATA_ROOT,
+          `设置保存失败（${saveErr}），迁移已回滚${stuck.length ? `，${stuck.join('、')} 仍留在新根` : ''}`,
+        );
+        void syncAgentBridge().then((startError) => {
+          if (startError) appendLog(DEFAULT_DATA_ROOT, `设置保存失败回滚后控制桥同步失败：${startError}`);
+        });
+      }
+      return fail(`设置保存失败：${saveErr}`);
+    }
     // 操作中心开关实时生效：关闭立即收掉所有药丸，开启立即为在跑的模拟器补建
     if (process.platform === 'win32' && pillWasOn !== pillOn) {
       if (!pillOn) {
@@ -1001,7 +1264,9 @@ export function registerIpc(): void {
       }
     }
     // 数据目录变化后桥脚本要重新落盘；已在目标端口运行则同步是空操作
-    void syncAgentBridge();
+    void syncAgentBridge().then((startError) => {
+      if (startError) appendLog(loadAppSettings().dataRoot, `设置保存后控制桥同步失败：${startError}`);
+    });
     return ok(loadAppSettings());
   });
 
@@ -1142,7 +1407,10 @@ export function registerIpc(): void {
     return ok({ found: checkEnvDir(kind, dir) });
   });
 
-  // 环境安装：从官方最新版下载 → 解压到所选目录（进度进下载管理）
+  // 环境安装：从官方最新版下载 → 解压到所选目录（进度进下载管理）。
+  // 双击/双窗重复提交会并发解压同一目录：按包 key 去重，任务收尾（成功/
+  // 失败/取消都会触发 onDone）时释放
+  const envInstalls = new Set<string>();
   handle('env:install', async (rawKind: unknown, rawDir: unknown) => {
     const kind = parseEnvKind(rawKind);
     const dir = typeof rawDir === 'string' ? rawDir.trim() : '';
@@ -1168,6 +1436,8 @@ export function registerIpc(): void {
         `解析官方最新版失败：${err instanceof Error ? err.message : String(err)}`,
       );
     }
+    if (envInstalls.has(plan.key)) return fail('该环境安装任务已在进行中');
+    envInstalls.add(plan.key);
     startFileDownload({
       key: plan.key,
       desc: plan.desc,
@@ -1182,13 +1452,28 @@ export function registerIpc(): void {
           ? async (filePath, setPct) => {
               await installAndroidCmdtools(filePath, dir, setPct);
               await chainAndroidComponents(dir, settings);
+              return path.join(dir, 'cmdline-tools');
             }
           : async (filePath, setPct) => {
+              // 官方 checksum 为 sha256：不符即中止（失败路径会删掉安装包，不会落位）
+              if (plan.sha256) {
+                const hash = crypto.createHash('sha256');
+                await new Promise<void>((resolve, reject) => {
+                  const rs = fs.createReadStream(filePath);
+                  rs.on('data', (c) => hash.update(c));
+                  rs.on('end', () => resolve());
+                  rs.on('error', reject);
+                });
+                if (hash.digest('hex') !== plan.sha256.toLowerCase())
+                  throw new Error('SHA-256 校验失败，安装包可能被篡改，已中止安装');
+              }
               const javaExe = await installJdk(filePath, dir, setPct);
               // 自动把 Java 路径指向解压出的 java.exe，安装完成即可用
               saveAppSettings({ ...loadAppSettings(), javaPath: javaExe });
+              return path.dirname(path.dirname(javaExe));
             },
       onDone: (r) => {
+        envInstalls.delete(plan.key);
         if (r.ok) broadcast('env:changed', { kind });
       },
     });
@@ -1338,6 +1623,8 @@ export function registerIpc(): void {
   handle('sdk:install', async (pkg: string, progress?: ProgressFn) => {
     const { settings, java, sdk } = status();
     if (typeof pkg !== 'string' || !PKG_RE.test(pkg)) return fail('非法的包名');
+    // 双份 sdkmanager 同包装会互踩；渲染层防重入只覆盖单窗口，主进程守卫才闭环
+    if (isPkgPending(pkg)) return fail('该包已在下载队列');
     if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
     // 限速与并行数来自设置；走整形代理时上游按线路设置串接
     const kbps = Number(settings.maxDownloadKbps);
@@ -1364,24 +1651,93 @@ export function registerIpc(): void {
 
   handle('downloads:list', () => ok(listDownloads()));
   handle('downloads:cancel', (pkg: string) => ok(cancelDownload(pkg)));
-  // 删除历史记录：完成安装的 SDK 包同步执行卸载（与 SDK 管理页"卸载"同语义），
-  // 失败/取消的记录或卸载失败时仅删记录
+  // 卸载并删除历史记录：只删得出对应组件的类型才动文件；卸载失败保留记录
+  // 并回报错误，避免"看起来卸载成功、实际只删了记录"
   handle('downloads:remove', async (pkg: string, startedAt: number) => {
     if (typeof pkg !== 'string') return fail('非法的包名');
+    const entry = getFinished(pkg, Number(startedAt));
+    if (!entry) return fail('下载记录不存在');
+    const uninstallPath = (dir: string | undefined, check: string): string | null => {
+      if (!dir || !path.isAbsolute(dir)) return null;
+      const resolved = path.resolve(dir);
+      return fs.existsSync(path.join(resolved, check)) ? resolved : null;
+    };
+    const finishRemove = () => {
+      removeFinished(pkg, Number(startedAt));
+      return ok({ uninstalled: true });
+    };
     if (pkg.startsWith('hos-image:')) {
       const [deviceType, osVersion] = pkg.slice('hos-image:'.length).split('|');
       if (!deviceType || !osVersion) return fail('非法的包名');
-      const uninstalled = await uninstallHosImage(hosEmu(), deviceType, osVersion).then(
-        () => true,
-        () => false,
-      );
-      return ok(removeFinished(pkg, Number(startedAt)) || uninstalled);
+      // 与 hos:uninstallImage 同口径：安装进行中不允许并发卸载
+      if (hosImageTasks.has(hosImageKey(deviceType, osVersion)))
+        return fail('该镜像正在下载安装中，请先取消或等待完成');
+      try {
+        await uninstallHosImage(hosEmu(), deviceType, osVersion);
+      } catch (e) {
+        return fail(`卸载失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+      return finishRemove();
+    }
+    if (pkg === 'harmony-commandline-tools') {
+      const settings = loadAppSettings();
+      const dir = entry.installDir ? path.resolve(entry.installDir) : '';
+      if (
+        !dir ||
+        !settings.harmonySdkPath ||
+        path.resolve(settings.harmonySdkPath) !== dir
+      )
+        return fail('无法定位该工具包的安装目录，请手动删除');
+      if (!detectHarmony(dir)) return fail('该目录已不是有效的 HarmonyOS SDK，请手动确认后删除');
+      try {
+        await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+      } catch (e) {
+        return fail(`卸载失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+      saveAppSettings({ ...loadAppSettings(), harmonySdkPath: undefined });
+      broadcast('env:changed', { kind: 'harmonyos' });
+      return finishRemove();
+    }
+    if (pkg.startsWith('commandlinetools-')) {
+      // 只删 <SDK 根>/cmdline-tools，platform-tools 等链式补装组件各走自己的记录
+      const dir =
+        entry.installDir && path.basename(entry.installDir) === 'cmdline-tools'
+          ? entry.installDir
+          : undefined;
+      const target = uninstallPath(dir, path.join('latest', 'bin'));
+      if (!target) return fail('无法定位命令行工具的安装目录，请手动删除');
+      try {
+        await fs.promises.rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+      } catch (e) {
+        return fail(`卸载失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+      return finishRemove();
+    }
+    if (pkg.startsWith('temurin-jdk-')) {
+      const target = uninstallPath(entry.installDir, path.join('bin', 'java.exe'));
+      if (!target) return fail('无法定位 JDK 的安装目录，请手动删除');
+      try {
+        await fs.promises.rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+      } catch (e) {
+        return fail(`卸载失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+      // 当前 Java 就指向被删的 JDK 时清空，避免设置页继续指向不存在的路径
+      const settings = loadAppSettings();
+      if (settings.javaPath && path.resolve(settings.javaPath).startsWith(target + path.sep)) {
+        saveAppSettings({ ...settings, javaPath: undefined });
+        broadcast('env:changed', { kind: 'java' });
+      }
+      return finishRemove();
     }
     if (!PKG_RE.test(pkg)) return fail('非法的包名');
     const { settings, java } = status();
     const res = await sdkRun(settings, java, ['--uninstall', pkg]);
-    const uninstalled = !!res && res.code === 0;
-    return ok(removeFinished(pkg, Number(startedAt)) || uninstalled);
+    if (!res) return fail('SDK 缺少 cmdline-tools');
+    if (res.code !== 0)
+      return fail(
+        '卸载失败：' + ((res.stderr || res.stdout).trim().split(/\r?\n/).pop() ?? '未知错误'),
+      );
+    return finishRemove();
   });
 
   handle('sdk:uninstall', async (pkg: string, progress?: ProgressFn) => {
@@ -1407,7 +1763,8 @@ export function registerIpc(): void {
       ok(updateProject(loadAppSettings().dataRoot, id, patch)),
   );
   handle('project:delete', async (id: string) =>
-    ok(deleteProject(loadAppSettings().dataRoot, id)),
+    // 必须 await：Promise 不能塞进返回对象（Electron 结构化克隆会抛 cannot be cloned）
+    ok(await deleteProject(loadAppSettings().dataRoot, id)),
   );
 
   handle('avd:list', (rawScope: unknown) => {
@@ -1428,7 +1785,7 @@ export function registerIpc(): void {
       const { sdk, java, settings } = status();
       if (!scope) return fail('非法的作用域');
       if (!sdk) return fail('未检测到 Android SDK，请到设置页配置');
-      if (!/^[\w.-]{1,50}$/.test(name))
+      if (!AVD_NAME_RE.test(name))
         return fail('虚拟机名称仅限字母、数字、下划线、点、短横线');
       const hardware = parseHardware(hw);
       return ok(
@@ -1448,11 +1805,14 @@ export function registerIpc(): void {
   handle('avd:hardware', (rawScope: unknown, name: string) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
+    if (!AVD_NAME_RE.test(name)) return fail('虚拟机名称不合法');
     return ok(getAvdHardware(loadAppSettings().dataRoot, scope, name));
   });
   handle('avd:setHardware', async (rawScope: unknown, name: string, rawHw: unknown, rawOpts?: unknown) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
+    // name 直接进 config.ini 路径拼接，与 avd:hardware 同口径校验
+    if (!AVD_NAME_RE.test(name)) return fail('虚拟机名称不合法');
     // qemu 退出时会用启动时的内存值回写 config.ini，运行中修改必被覆盖
     if (findRunning(scopeKey(scope), name))
       return fail('请先关闭虚拟机再修改硬件配置');
@@ -1528,6 +1888,8 @@ export function registerIpc(): void {
     const scope = parseScope(rawScope);
     const { sdk, settings } = status();
     if (!scope || !sdk) return fail('未检测到 Android SDK');
+    // avdName 会进路径拼接与日志，与 avd:create 的白名单保持同口径
+    if (!AVD_NAME_RE.test(avdName)) return fail('虚拟机名称不合法');
     const gpu =
       settings.gpuMode ??
       (process.platform === 'win32' ? 'angle_indirect' : undefined);
@@ -1573,14 +1935,20 @@ export function registerIpc(): void {
     if (!sdk) return fail('未检测到 Android SDK');
     if (!serial.startsWith('emulator-')) return fail('非法参数');
     // 必须 await：Promise 不能塞进返回对象（Electron 结构化克隆会抛 cannot be cloned）
-    return ok(
-      await handlePillAction(
-        sdk,
-        settings.dataRoot,
-        serial,
-        rawAction as PillAction,
-      ),
+    const result = await handlePillAction(
+      sdk,
+      settings.dataRoot,
+      serial,
+      rawAction as PillAction,
     );
+    // 与 HOS 分支同口径留痕：Android 分支以 {ok:false} 返回而非抛错，handle
+    // 包装器的 appendLog 兜不到
+    if (!result.ok)
+      appendLog(
+        settings.dataRoot,
+        `Android 药丸动作 ${rawAction} 失败：${result.error ?? '未知错误'}`,
+      );
+    return ok(result);
   });
   handle('pill:move-start', (rawSerial: unknown) => {
     const serial = typeof rawSerial === 'string' ? rawSerial : '';
@@ -1749,13 +2117,21 @@ export function registerIpc(): void {
       appendLog(loadAppSettings().dataRoot, `关闭虚拟机 ${avdName}`);
       return ok(true);
     }
-    // 注册表丢失（应用重启过）：按 adb 设备兜底，先优雅后强杀
+    // 注册表丢失（应用重启过）：按 adb 设备兜底，先优雅后强杀。同名虚拟机
+    // 可能同时跑在别的作用域，必须逐台认领作用域，不能按名字全杀
     const devices = await adbDevices(sdk.adb);
+    const scopes = runningScopeMap(loadAppSettings().dataRoot);
+    const myKey = scopeKey(scope);
     const matches: string[] = [];
     for (const d of devices) {
       if (!d.serial.startsWith('emulator-') || d.state !== 'device') continue;
-      if ((await avdNameOf(sdk.adb, d.serial)) === avdName)
-        matches.push(d.serial);
+      const name = await avdNameOf(sdk.adb, d.serial);
+      if (name !== avdName) continue;
+      const owner =
+        scopes.get(d.serial) ??
+        loneAvdScope(loadAppSettings().dataRoot, avdName);
+      if (owner !== myKey) continue;
+      matches.push(d.serial);
     }
     if (matches.length === 0) return fail('该虚拟机未在运行');
     for (const serial of matches) {
@@ -1777,17 +2153,79 @@ export function registerIpc(): void {
     appendLog(loadAppSettings().dataRoot, `关闭虚拟机 ${avdName}`);
     return ok(true);
   });
+  // 相机来源等启动期参数改动后重启在册实例：设置须先落盘（调用方保证），
+  // 这里按当前设置逐台串行重启，避免并发抢端口
+  let restartRunningBusy = false;
+  handle('emu:restartRunning', async () => {
+    // stop→launch 全程数秒：IPC 面暴露的并发调用会交错抢同一 avd 与端口
+    if (restartRunningBusy) return fail('已有重启任务在进行中');
+    restartRunningBusy = true;
+    try {
+      return await restartRunningImpl();
+    } finally {
+      restartRunningBusy = false;
+    }
+  });
+  const restartRunningImpl = async () => {
+    const { sdk, settings } = status();
+    if (!sdk) return fail('未检测到 Android SDK');
+    const gpu =
+      settings.gpuMode ??
+      (process.platform === 'win32' ? 'angle_indirect' : undefined);
+    const httpProxy =
+      settings.proxyEnabled && settings.proxyPort
+        ? `http://127.0.0.1:${settings.proxyPort}`
+        : undefined;
+    const results: { avdName: string; ok: boolean; error?: string }[] = [];
+    for (const entry of listRunning()) {
+      const scope: Scope =
+        entry.scopeKey === 'shared'
+          ? { kind: 'shared' }
+          : {
+              kind: 'project',
+              projectId: entry.scopeKey.slice('project:'.length),
+            };
+      await stopEmulator(sdk, entry);
+      try {
+        await launchEmulator(sdk, settings.dataRoot, scope, entry.avdName, {
+          gpu,
+          httpProxy,
+          camera: settings.cameraMode,
+          webcam: settings.webcam,
+        });
+        results.push({ avdName: entry.avdName, ok: true });
+      } catch (e) {
+        results.push({
+          avdName: entry.avdName,
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    if (results.length > 0) {
+      appendLog(
+        settings.dataRoot,
+        `按新设置重启虚拟机：${results
+          .map((r) => `${r.avdName}${r.ok ? '' : '（失败）'}`)
+          .join('、')}`,
+      );
+    }
+    return ok(results);
+  };
   handle('emu:list', async () => {
     const { sdk } = status();
+    const settings = loadAppSettings();
     const result: {
       serial: string;
       state: string;
       avdName?: string;
+      scopeKey?: string;
       type: 'android' | 'harmonyos';
     }[] = [];
     if (sdk) {
       const devices = await adbDevices(sdk.adb);
-      const pillOn = loadAppSettings().pillEnabled !== false;
+      const pillOn = settings.pillEnabled !== false;
+      const scopes = runningScopeMap(settings.dataRoot);
       for (const d of devices) {
         if (d.serial.startsWith('emulator-')) {
           const avdName = await avdNameCached(sdk.adb, d.serial);
@@ -1808,26 +2246,54 @@ export function registerIpc(): void {
           result.push({
             ...d,
             avdName,
+            scopeKey:
+              scopes.get(d.serial) ??
+              (avdName ? loneAvdScope(settings.dataRoot, avdName) : undefined),
             type: 'android',
           });
         }
       }
       // adb 失联但在册的实例仍按运行中上报（qemu 进程存活），否则界面显示
-      // 已停止、启动却被注册表拒绝，状态自相矛盾
+      // 已停止、启动却被注册表拒绝，状态自相矛盾；重启前的实例从落盘注册表补
       for (const e of listRunning()) {
         if (!result.some((r) => r.serial === e.serial)) {
           result.push({
             serial: e.serial,
             state: 'device',
             avdName: e.avdName,
+            scopeKey: e.scopeKey,
             type: 'android',
           });
         }
+      }
+      for (const e of listPersistedRunning(settings.dataRoot)) {
+        if (!result.some((r) => r.serial === e.serial)) {
+          result.push({
+            serial: e.serial,
+            state: 'device',
+            avdName: e.avdName,
+            scopeKey: e.scopeKey,
+            type: 'android',
+          });
+        }
+      }
+      // 非本实例拉起的在线实例补挂崩溃监听（本实例的已在拉起时挂好）
+      const owned = new Set(listRunning().map((e) => e.serial));
+      for (const r of result) {
+        if (r.type !== 'android' || r.state !== 'device' || !r.avdName) continue;
+        if (owned.has(r.serial)) continue;
+        ensureAndroidCrashWatch(sdk.adb, r.serial, r.avdName);
       }
       // 设备已消失但窗口组还在（守卫未生效或崩溃时的兜底）：刷新时同步回收。
       // adb 瞬时故障（server 重启/协议错误）可能返回空列表：还有在册实例时视为
       // adb 异常而非全部下线，跳过回收——否则一次抖动就会杀掉所有定位会话
       if (devices.length > 0 || listRunning().length === 0) {
+        for (const serial of androidCrashWatchers.keys()) {
+          if (owned.has(serial)) continue;
+          if (!result.some((r) => r.serial === serial && r.state === 'device')) {
+            stopAndroidCrashWatch(serial);
+          }
+        }
         for (const serial of openGroupSerials()) {
           if (isHosPillSerial(serial)) continue;
           if (!result.some((r) => r.serial === serial)) {
@@ -1849,7 +2315,7 @@ export function registerIpc(): void {
     // HarmonyOS 在线设备（hdc）与 adb 设备可并存；查询失败不影响 Android 列表
     const harmony = harmonyInfoCached();
     if (harmony) {
-      // 3 秒轮询下结果缓存 5 秒（失败同样缓存）：hdc 服务挂起时每次 list targets
+      // 3 秒轮询下结果缓存 5 秒（失败保留旧值并顺延）：hdc 服务挂起时每次 list targets
       // 都要等满 10s 超时，不能让每轮轮询都排队 spawn 一次
       const now = Date.now();
       const stale =
@@ -1862,7 +2328,9 @@ export function registerIpc(): void {
             targets: await harmonyTargets(harmony.hdc),
           };
         } catch {
-          harmonyTargetsCache = { at: now, targets: [] };
+          // 失败不能与"无设备"同形（在线 HOS 设备会被闪没）：保留上次成功
+          // 列表并顺延缓存，重试仍限一次/5s
+          if (harmonyTargetsCache) harmonyTargetsCache.at = now;
           // hdc 服务未起或无设备：忽略
         }
       }
@@ -1928,6 +2396,7 @@ export function registerIpc(): void {
     const dir =
       typeof rawDir === 'string' && path.isAbsolute(rawDir) ? rawDir : '';
     if (!dir || !fs.existsSync(dir)) return fail('请选择解压目标目录');
+    if (!saneSdkDir(dir)) return fail('解压目标目录不可用');
     try {
       const hdc = await importCommandlineTools(zipPath, dir);
       saveAppSettings({ ...loadAppSettings(), harmonySdkPath: dir });
@@ -1957,6 +2426,8 @@ export function registerIpc(): void {
   handle('apk:remove', (rawScope: unknown, id: string) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
+    // id 直接拼进删除路径，放宽字符可被用于穿越删除应用库外的文件
+    if (!/^[\w-]+$/.test(id)) return fail('非法的应用标识');
     const dirs = scopeDirs(loadAppSettings().dataRoot, scope);
     return ok(removeApp(dirs.appsDir, id));
   });
@@ -2062,61 +2533,19 @@ export function registerIpc(): void {
     },
   );
 
-  handle('run:record', async (rawScope: unknown, payload: unknown) => {
-    const scope = parseScope(rawScope);
-    const { sdk, settings } = status();
-    if (!scope || !sdk) return fail('未检测到 Android SDK');
-    const p = payload as {
-      avdName: string;
-      serial: string;
-      apkId?: string;
-      result: string;
-      note?: string;
-    };
-    const dirs = scopeDirs(settings.dataRoot, scope);
-    const meta = p.apkId
-      ? listApps(dirs.appsDir).find((a) => a.id === p.apkId)
-      : undefined;
-    let shot: Buffer | undefined;
-    let log: string | undefined;
-    try {
-      shot = await screenshot(sdk.adb, p.serial);
-    } catch {
-      // 截图失败不阻塞记录
-    }
-    try {
-      const res = await runCmd(
-        sdk.adb,
-        ['-s', p.serial, 'logcat', '-d', '-t', '800'],
-        { timeoutMs: 20_000 },
-      );
-      log = res.stdout;
-    } catch {
-      // 同上
-    }
-    const rec = recordRun(
-      dirs.runsDir,
-      {
-        avdName: p.avdName,
-        apkLabel: meta?.label,
-        packageName: meta?.packageName,
-        result: (
-          ['ok', 'install-failed', 'launch-failed', 'manual'] as const
-        ).includes(p.result as never)
-          ? (p.result as 'ok')
-          : 'manual',
-        note: p.note,
-      },
-      { screenshot: shot, logcat: log },
-    );
-    return ok(rec);
-  });
-
-  handle('run:list', (rawScope: unknown) => {
+  handle('crash:list', (rawScope: unknown) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
     const dirs = scopeDirs(loadAppSettings().dataRoot, scope);
-    return ok(listRuns(dirs.runsDir));
+    return ok(listCrashes(dirs.crashesDir));
+  });
+
+  handle('crash:read', (rawScope: unknown, rawId: unknown) => {
+    const scope = parseScope(rawScope);
+    if (!scope) return fail('非法的作用域');
+    if (typeof rawId !== 'string') return fail('参数错误');
+    const dirs = scopeDirs(loadAppSettings().dataRoot, scope);
+    return ok(readCrashLog(dirs.crashesDir, rawId));
   });
 
   handle('agent:status', () => ok(agentStatus()));
@@ -2146,5 +2575,7 @@ export function registerIpc(): void {
   });
 
   // 应用启动即按设置拉起控制桥（未启用时是空操作）
-  void syncAgentBridge();
+  void syncAgentBridge().then((startError) => {
+    if (startError) appendLog(loadAppSettings().dataRoot, `控制桥启动失败：${startError}`);
+  });
 }

@@ -8,7 +8,7 @@ export function parseDevices(stdout: string): DeviceInfo[] {
   const devices: DeviceInfo[] = [];
   let inList = false;
   for (const line of stdout.split(/\r?\n/)) {
-    if (/^List of devices/.test(line)) {
+    if (line.startsWith('List of devices')) {
       inList = true;
       continue;
     }
@@ -158,6 +158,18 @@ export async function restoreDeviceDecorations(adb: string, serial: string, devi
   }
 }
 
+/** 系统设置里的「设备名称」读 Settings.Global.DEVICE_NAME（缺省为 Build.MODEL）；
+ *  与蓝牙名称一起改，模拟设备在各处显示同一名称 */
+export async function setGuestDeviceName(adb: string, serial: string, name: string): Promise<void> {
+  if (!name) return;
+  await run(adb, ['-s', serial, 'shell', 'settings', 'put', 'global', 'device_name', name], {
+    timeoutMs: 15_000,
+  }).catch(() => undefined);
+  await run(adb, ['-s', serial, 'shell', 'settings', 'put', 'secure', 'bluetooth_name', name], {
+    timeoutMs: 15_000,
+  }).catch(() => undefined);
+}
+
 /** 联网验证探测源。AOSP 默认 HTTPS 探测指向 www.google.com/generate_204，直连超时导致
  *  系统始终不给网络打 VALIDATED 标志——多邻国等应用按该标志判定离线，即使自身服务器
  *  可达（开本机代理后探测走代理才通过）。换成国内可达的 204 端点后不再依赖代理。 */
@@ -170,12 +182,12 @@ const PORTAL_PROBES: Array<[key: string, url: string]> = [
   ['captive_portal_other_fallback_url', 'http://wifi.vivo.com.cn/generate_204'],
 ];
 
-/** settings 持久化在 /data，重启与快照恢复都保留；已生效则不再翻动网络 */
+/** settings 持久化在 /data，重启与快照恢复都保留；已生效则无需重写 */
 export function portalProbeApplied(httpsUrl: string | undefined): boolean {
   return httpsUrl === PORTAL_PROBE_HTTPS;
 }
 
-/** 覆盖联网验证探测源并翻动 Wi-Fi 触发重新验证。返回本次是否修改了设置。 */
+/** 覆盖联网验证探测源。返回本次是否修改了设置；重新验证由 preferCellularNetwork 触发。 */
 export async function applyPortalProbes(adb: string, serial: string): Promise<boolean> {
   const cur = await run(
     adb,
@@ -188,18 +200,51 @@ export async function applyPortalProbes(adb: string, serial: string): Promise<bo
       timeoutMs: 15_000,
     }).catch(() => undefined);
   }
-  // NetworkStack 按新 URL 重新验证的时机不保证，翻动 Wi-Fi 强制重验证；
-  // enable 后 AndroidWifi 不一定自动回连，须显式 connect-network
-  await run(adb, ['-s', serial, 'shell', 'svc', 'wifi', 'disable'], {
-    timeoutMs: 15_000,
+  return true;
+}
+
+/** dumpsys connectivity 里是否有已连接的蜂窝网络（MOBILE[LTE]/MOBILE[NR] 等） */
+export function mobileConnected(connectivity: string): boolean {
+  return /ni\{MOBILE\[[A-Z0-9]+\] CONNECTED/.test(connectivity);
+}
+
+/** cmd wifi status 是否显示 Wi-Fi 已关闭 */
+export function wifiDisabled(status: string): boolean {
+  return /wifi is disabled/i.test(status);
+}
+
+/** 把默认网络切到蜂窝。模拟器虚拟 Wi-Fi 的 DNS 转发在部分宿主机上失联
+ *  （guest 侧 10.0.2.3 无应答），蜂窝链路（eth0/slirp）正常；系统又总是
+ *  优先 Wi-Fi，只能显式关掉它。没有蜂窝网络时保持 Wi-Fi，避免断掉唯一链路。
+ *  forceRevalidate 用于探测源刚更新、而 Wi-Fi 本就关着的情况。 */
+export async function preferCellularNetwork(
+  adb: string,
+  serial: string,
+  forceRevalidate = false,
+): Promise<boolean> {
+  const conn = await run(adb, ['-s', serial, 'shell', 'dumpsys', 'connectivity'], {
+    timeoutMs: 20_000,
+  }).catch(() => undefined);
+  if (!conn || !mobileConnected(conn.stdout)) return false;
+  const wifi = await run(adb, ['-s', serial, 'shell', 'cmd', 'wifi', 'status'], {
+    timeoutMs: 10_000,
+  }).catch(() => undefined);
+  const wasOff = wifi ? wifiDisabled(wifi.stdout) : false;
+  if (wasOff && !forceRevalidate) return false;
+  if (!wasOff) {
+    await run(adb, ['-s', serial, 'shell', 'svc', 'wifi', 'disable'], {
+      timeoutMs: 10_000,
+    }).catch(() => undefined);
+    // 等默认网络从 Wi-Fi 切走再翻数据，否则验证的还是 Wi-Fi
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  // 蜂窝网络在 Wi-Fi 在线时就已建立，不会按新探测源重验，翻一次数据强制重验
+  await run(adb, ['-s', serial, 'shell', 'svc', 'data', 'disable'], {
+    timeoutMs: 10_000,
   }).catch(() => undefined);
   await new Promise((r) => setTimeout(r, 1000));
-  await run(adb, ['-s', serial, 'shell', 'svc', 'wifi', 'enable'], {
-    timeoutMs: 15_000,
-  }).catch(() => undefined);
-  await new Promise((r) => setTimeout(r, 2000));
-  await run(adb, ['-s', serial, 'shell', 'cmd', 'wifi', 'connect-network', 'AndroidWifi', 'open'], {
-    timeoutMs: 15_000,
+  await run(adb, ['-s', serial, 'shell', 'svc', 'data', 'enable'], {
+    timeoutMs: 10_000,
   }).catch(() => undefined);
   return true;
 }

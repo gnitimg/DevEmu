@@ -253,7 +253,7 @@ textarea:focus {
 }
 
 .brand:hover {
-  background: #f0f2f4;
+  background: var(--bg);
 }
 
 .brand-logo {
@@ -551,6 +551,56 @@ textarea:focus {
 
 .sidebar.collapsed .side-children {
   display: none;
+}
+
+/* 收起态子项浮层：锚定在触发图标右侧，替代整体展开侧栏 */
+.side-fly {
+  position: fixed;
+  min-width: 150px;
+  max-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px rgba(23, 26, 30, 0.16);
+  padding: 4px;
+  max-height: 340px;
+  overflow-y: auto;
+  z-index: 120;
+  animation: selIn 0.12s ease;
+}
+
+.side-fly-item {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  color: #4a5058;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.side-fly-item:hover {
+  background: #eceef1;
+}
+
+.side-fly-item.on {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.side-fly-empty {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .content {
@@ -1083,6 +1133,77 @@ table.tbl {
 
 /* ---------- 日志与截图 ---------- */
 
+/* 表格最多露出 10 行，其余在容器内滚动；表头吸顶。
+   行高只用 padding + line-height（表头 30px、数据行 34px），容器高度按 30 + 10×34 精确计算 */
+.crash-scroll {
+  max-height: 370px;
+  overflow-y: auto;
+}
+
+/* border-collapse: collapse 会让吸顶表头的底边框随内容滚走，改用分离边框（spacing 0 视觉不变） */
+table.tbl.crash-tbl {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.crash-tbl th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  line-height: 16px;
+}
+
+/* 分隔线用 inset box-shadow 画：border 宽度会被吸附到设备像素，行高随缩放漂移，容器底部会露出下一行的细条 */
+.crash-tbl th,
+.crash-tbl td {
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+.crash-tbl td {
+  line-height: 18px;
+}
+
+.crash-tbl tr:last-child td {
+  box-shadow: none;
+}
+
+/* 崩溃记录的报错内容可能很长：固定列宽后末列截断，完整内容走详情弹窗 */
+
+.crash-tbl .cell-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crash-tbl .ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crash-tbl td.num {
+  white-space: nowrap;
+}
+
+.crash-row {
+  cursor: pointer;
+}
+
+.crash-modal {
+  width: min(780px, 92vw);
+}
+
+.crash-meta {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
 .log-box {
   margin: 0;
   padding: 10px 14px;
@@ -1175,6 +1296,18 @@ table.tbl {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   align-items: stretch;
+}
+
+.device-detail-grid > .section {
+  min-width: 0;
+}
+
+/* 窄窗口下两栏会各自不足表格最小宽度，应用表的操作列被裁掉：
+   改为单列，让每张卡片拿到整行宽度 */
+@media (max-width: 1120px) {
+  .device-detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .device-ops {
@@ -1951,6 +2084,10 @@ table.tbl {
   width: 12px;
   height: 12px;
   color: var(--text-3);
+}
+
+.install-modal {
+  width: 420px;
 }
 
 .about-body {

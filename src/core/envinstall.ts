@@ -81,6 +81,8 @@ export interface EnvPlan {
   host: string;
   path: string;
   fileName: string;
+  /** 官方 sha256（仅提供 checksum 的源，如 Adoptium）；缺省不做完整性校验 */
+  sha256?: string;
 }
 
 /** 解析某环境的官方最新安装包（发请求取版本清单，可能耗时数秒） */
@@ -119,12 +121,19 @@ export async function resolveEnvPlan(kind: EnvKind, dl: DlOptions): Promise<EnvP
       },
       dl,
     );
-    const list = JSON.parse(raw) as Array<{ release_name?: string; binary?: { package?: { link?: string } } }>;
+    const list = JSON.parse(raw) as Array<{
+      release_name?: string;
+      binary?: { package?: { link?: string; checksum?: string } };
+    }>;
     const link = list[0]?.binary?.package?.link;
     if (!link) throw new Error('未能解析 Temurin 最新版下载地址');
     const u = new URL(link);
     if (u.protocol !== 'https:') throw new Error('下载地址非 https，已中止');
-    const fileName = decodeURIComponent(u.pathname.split('/').pop() ?? 'jdk.zip');
+    // 远端 API 的文件名直接进下载路径：分隔符必须清洗，否则可逃出下载临时目录
+    const fileName =
+      decodeURIComponent(u.pathname.split('/').pop() ?? '')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/^\.+/, '') || 'jdk.zip';
     const ver = (list[0].release_name ?? fileName).replace(/^jdk-/i, '');
     return {
       key: `temurin-jdk-${ver}`,
@@ -132,6 +141,7 @@ export async function resolveEnvPlan(kind: EnvKind, dl: DlOptions): Promise<EnvP
       host: u.host,
       path: u.pathname + u.search,
       fileName,
+      sha256: list[0]?.binary?.package?.checksum,
     };
   }
   throw new Error('HarmonyOS SDK 需登录华为开发者账号后从官方下载');

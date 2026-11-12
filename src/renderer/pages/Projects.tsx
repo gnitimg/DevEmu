@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.ts';
 import { Modal, fmtTime } from '../components/Modal.tsx';
+import { toast } from '../components/Toast.tsx';
 import type { ProjectMeta } from '../../core/types.ts';
 
 export function Projects({ onOpen }: { onOpen: (id: string) => void }) {
   const [projects, setProjects] = useState<ProjectMeta[] | null>(null);
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
 
   const reload = useCallback(() => {
     api.listProjects().then((r) => {
-      if (r.ok) setProjects(r.data);
+      if (r.ok) {
+        setProjects(r.data);
+        setError('');
+      } else setError(r.error);
     });
   }, []);
 
@@ -18,7 +23,7 @@ export function Projects({ onOpen }: { onOpen: (id: string) => void }) {
   async function remove(p: ProjectMeta) {
     if (!window.confirm(`删除项目「${p.name}」？其下虚拟机、APK 与测试记录都会删除，不可恢复。`)) return;
     const r = await api.deleteProject(p.id);
-    if (!r.ok || !r.data) window.alert(r.ok ? '删除失败' : r.error);
+    if (!r.ok || !r.data) toast(r.ok ? '删除失败' : r.error);
     reload();
   }
 
@@ -32,18 +37,21 @@ export function Projects({ onOpen }: { onOpen: (id: string) => void }) {
           </button>
         </div>
       </div>
-      {projects === null ? (
+      {error && <div className="error-line">{error}</div>}
+      {projects === null && !error && (
         <div className="empty">
           <span className="spinner" />
         </div>
-      ) : projects.length === 0 ? (
+      )}
+      {projects !== null && projects.length === 0 && (
         <div className="empty">
           还没有项目
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
             新建一个
           </button>
         </div>
-      ) : (
+      )}
+      {projects !== null && projects.length > 0 && (
         <div className="proj-grid">
           {projects.map((p) => (
             <div key={p.id} className="proj-card" onClick={() => onOpen(p.id)}>

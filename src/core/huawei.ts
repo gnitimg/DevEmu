@@ -41,14 +41,21 @@ export async function hasHuaweiLogin(): Promise<boolean> {
   }
 }
 
-/** 登录状态翻转时回调（含过期/退出登录），用于向渲染层广播 */
+/** 登录状态翻转时回调（含过期/退出登录），用于向渲染层广播。
+ *  浏览页面期间 cookies changed 高频触发，逐事件跑 4 秒超时探测纯属空转：
+ *  500ms 尾沿去抖，静止半秒后才探测一次。 */
 export function watchHuaweiLogin(onChange: (loggedIn: boolean) => void): void {
   let last: boolean | null = null;
+  let debounce: ReturnType<typeof setTimeout> | null = null;
   session.fromPartition(PARTITION).cookies.on('changed', () => {
-    void hasHuaweiLogin().then((now) => {
-      if (last !== null && now !== last) onChange(now);
-      last = now;
-    });
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      debounce = null;
+      void hasHuaweiLogin().then((now) => {
+        if (last !== null && now !== last) onChange(now);
+        last = now;
+      });
+    }, 500);
   });
 }
 
@@ -91,12 +98,22 @@ export function openHuaweiLogin(onLogin: () => void): void {
   });
 }
 
-/** 打开登录窗口并等待结果：登录成功 true，用户关窗取消 false */
+/** 打开登录窗口并等待结果：登录成功 true，用户关窗取消 false。
+ *  必须带超时：登录窗不关则调用方（HarmonyOS 下载一条龙）永挂、autoBusy 恒真 */
 export async function requestHuaweiLogin(): Promise<boolean> {
   // 窗口正在关闭的瞬间可能还带着旧状态，先按 cookie 确认一次
   if (await hasHuaweiLogin()) return true;
   return new Promise((resolve) => {
-    loginWaiters.add(resolve);
+    const waiter = (ok: boolean) => {
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    loginWaiters.add(waiter);
+    const timer = setTimeout(() => {
+      // 超时按取消结算；登录窗留着，用户登完再点一次即可
+      loginWaiters.delete(waiter);
+      resolve(false);
+    }, 5 * 60_000);
     if (!loginWin || loginWin.isDestroyed()) openHuaweiLogin(() => undefined);
     else {
       if (loginWin.isMinimized()) loginWin.restore();

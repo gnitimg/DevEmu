@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const isAscii = (s: string): boolean => /^[\x00-\x7F]*$/.test(s);
+// ASCII 判定用 charCodeAt 遍历而非 /[\x00-\x7F]/ 正则：控制字符字面量会触发
+// no-control-regex 规则，语义等价的正则绕不开它
+const isAscii = (s: string): boolean => {
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0x7f) return false;
+  return true;
+};
 
 /**
  * aapt / adb 等原生工具无法打开含非 ASCII 字符（如中文项目名）的路径，

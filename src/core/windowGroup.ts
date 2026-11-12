@@ -37,6 +37,7 @@ namespace DevEmuGroup {
     [DllImport("user32.dll")] public static extern bool GetMonitorInfoW(IntPtr h, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder text, int count);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowTextW(IntPtr h, string text);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder text, int count);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr data);
     [DllImport("user32.dll")] public static extern IntPtr SetWindowsHookExW(int id, MouseProc callback, IntPtr module, uint tid);
@@ -47,16 +48,21 @@ namespace DevEmuGroup {
     [DllImport("user32.dll")] public static extern IntPtr DispatchMessageW(ref MSG msg);
     [DllImport("user32.dll")] public static extern uint MsgWaitForMultipleObjects(uint count, IntPtr handles, bool waitAll, uint ms, uint wakeMask);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc callback, uint pid, uint tid, uint flags);
     static uint owner;
     static string serial;
+    static string windowTitle;
     static bool clampWindow;
     static IntPtr device, pill, location, previousPill, previousLocation, hook;
+    static IntPtr titledWindow;
+    static int lastTitleCheck;
     static MouseProc callback;
     static WinEventProc layerCallback;
     static WinEventProc locationCallback;
     static IntPtr foregroundHook, reorderHook, locationHook;
     static volatile bool dragging;
+    static bool buttonSeen;
     static bool raisePending;
     static int startX, startY, left, top, pillDX, pillDY, locDX, locDY;
     static bool pillFollows, locFollows;
@@ -66,8 +72,8 @@ namespace DevEmuGroup {
     static IntPtr dragDevice, dragPill, dragLocation;
     static int targetX, targetY;
     static readonly AutoResetEvent dragSignal = new AutoResetEvent(false);
-    public static void Init(uint pid, string id, bool clamp) {
-      owner=pid; serial=id; clampWindow=clamp; SetProcessDPIAware();
+    public static void Init(uint pid, string id, bool clamp, string winTitle) {
+      owner=pid; serial=id; clampWindow=clamp; windowTitle=winTitle; SetProcessDPIAware();
       callback=OnMouse;
       hook=SetWindowsHookExW(14, callback, GetModuleHandleW(null), 0);
       layerCallback=delegate(IntPtr eventHook, uint kind, IntPtr win, int objectId, int childId, uint threadId, uint time) {
@@ -110,17 +116,31 @@ namespace DevEmuGroup {
         targetX=left; targetY=top;
         raisePending=true;
         dragging=true;
+        buttonSeen=false;
         dragSignal.Set();
         return (IntPtr)1;
       }
-      // 按下事件被本钩子吞掉，系统不会把该键置为按下态，GetAsyncKeyState 恒为 0：
-      // 拖动只能靠钩子收到的抬键消息结束（全局钩子能看到所有抬键）。
+      // 按下事件被本钩子吞掉，不向底层窗口投递；抬键也在此吞掉避免底层收到松开。
+      // 钩子被系统静默旁路时收不到抬键，由 MoverLoop 轮询 GetAsyncKeyState 兜底
+      //（异步键状态在钩子派发前已由输入线程更新，被吞的按下/抬起同样反映）。
       if (dragging && (msg == 0x202 || msg == 0x205)) { dragging=false; return (IntPtr)1; }
       return CallNextHookEx(hook, code, msg, data);
     }
     static void MoverLoop() {
       while (true) {
         if (!dragging) { dragSignal.WaitOne(100); continue; }
+        // 抬键兜底：钩子被系统静默旁路时收不到抬键消息，dragging 永真会让本循环
+        // 永久跟光标、Tick 永久 return（三窗粘死）。设备窗右键发起、药丸左键发起，
+        // 两键都未按下才解除；buttonSeen 闩锁保证从未观察到按下态就绝不解除——
+        // 前提若实测不成立，行为退化为现状，不会破坏正常拖动
+        if (!buttonSeen) {
+          if ((GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0)
+            buttonSeen=true;
+        }
+        else if ((GetAsyncKeyState(0x01) & 0x8000) == 0 && (GetAsyncKeyState(0x02) & 0x8000) == 0) {
+          dragging=false;
+          continue;
+        }
         POINT p;
         if (!GetCursorPos(out p)) { Thread.Sleep(5); continue; }
         int nx=left+p.X-startX, ny=top+p.Y-startY;
@@ -167,6 +187,17 @@ namespace DevEmuGroup {
         Console.WriteLine("GEOM " + r.L + " " + r.T + " " + (r.R-r.L) + " " + (r.B-r.T));
       }
     }
+    // 窗口标题与设备名称统一；Qt 启动/旋转时会改写标题，低频复查即可，不能每 25ms 都写
+    static void EnsureTitle() {
+      if (windowTitle == null || device == IntPtr.Zero) return;
+      int now=Environment.TickCount;
+      if (device == titledWindow && unchecked(now-lastTitleCheck) < 1000) return;
+      lastTitleCheck=now;
+      StringBuilder text=new StringBuilder(160);
+      GetWindowTextW(device, text, 160);
+      if (text.ToString() != windowTitle) SetWindowTextW(device, windowTitle);
+      titledWindow=device;
+    }
     static void Fit() {
       RECT r, end;
       if (!GetWindowRect(device, out r)) return;
@@ -181,6 +212,16 @@ namespace DevEmuGroup {
     }
     public static void Tick(IntPtr h, uint qpid) {
       if (raisePending) { raisePending=false; Raise(); }
+      // 与 MoverLoop 同款抬键兜底（两段式）：移动线程若在首次轮询前异常退出，
+      // buttonSeen 永远无人置位，Tick 不能因此放弃兜底
+      if (dragging) {
+        if (!buttonSeen) {
+          if ((GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0)
+            buttonSeen=true;
+        }
+        else if ((GetAsyncKeyState(0x01) & 0x8000) == 0 && (GetAsyncKeyState(0x02) & 0x8000) == 0)
+          dragging=false;
+      }
       // 拖动期间移动线程独占窗口位移；这里若再做 Z 序修复/尺寸钳制，会在输入钩子线程上同步等 qemu。
       if (dragging) return;
       // qemu 有多个顶层窗口（设备屏/工具窗），MainWindowHandle 会随 Z 序跳变：
@@ -220,6 +261,7 @@ namespace DevEmuGroup {
         else if (!minimized && hiddenWindows.Remove(win)) ShowWindow(win, 4);
       }
       if (minimized) return;
+      EnsureTitle();
       int style=GetWindowLong(device, -16);
       int fixedStyle=style & ~0x00C00000 & ~0x00040000 & ~0x00010000;
       if (style != fixedStyle) { SetWindowLong(device, -16, fixedStyle); SetWindowPos(device, IntPtr.Zero, 0, 0, 0, 0, 0x37); }
@@ -235,13 +277,15 @@ namespace DevEmuGroup {
 }
 ${WINDOW_LAYER_NATIVE}`;
 
-const guardPrelude = (serial: string, clamp: boolean): string => String.raw`
+// 标题可能含空格/中文（HarmonyOS 实例名），base64 传入避免引号与 OEM 码页破坏脚本
+const guardPrelude = (serial: string, clamp: boolean, title: string): string => String.raw`
 $ErrorActionPreference='Stop'
 Add-Type -TypeDefinition @'
 ${NATIVE}
 '@
 $ownerId=(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
-[DevEmuGroup.Native]::Init([uint32]$ownerId, '${serial}', ${clamp ? '$true' : '$false'})`;
+$title=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(title, 'utf8').toString('base64')}'))
+[DevEmuGroup.Native]::Init([uint32]$ownerId, '${serial}', ${clamp ? '$true' : '$false'}, $title)`;
 
 const GUARD_LOOP = String.raw`
 $msg=New-Object DevEmuGroup.MSG
@@ -279,7 +323,7 @@ export function buildWindowGuardScript(
   // avd 名嵌入正则：允许字符里只有 '.' 是元字符，不转义会匹配到同前缀的其他实例
   const avdMatcher = avdName.replace(/\./g, '\\.');
   return String.raw`
-${guardPrelude(serial, true)}
+${guardPrelude(serial, true, avdName)}
 $qemuId=0
 for ($i=0; $i -lt 120 -and -not $qemuId; $i++) {
   $p=Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match '-avd ${avdMatcher}(\s|$)' } | Select-Object -First 1
@@ -293,12 +337,17 @@ ${GUARD_LOOP}`;
 
 /** HarmonyOS 模拟器没有与实例名稳定的进程匹配串（名字可含空格/中文），
  *  由主进程先解析出 Emulator.exe 的 pid 再交给守卫。 */
-export function buildHosWindowGuardScript(pid: number, serial: string): string {
+export function buildHosWindowGuardScript(
+  pid: number,
+  serial: string,
+  title: string,
+): string {
   if (!Number.isInteger(pid) || pid <= 0 || pid > 0xffffffff)
     throw new Error('非法窗口组');
   if (!/^hos-[A-Za-z0-9_-]{1,120}$/.test(serial)) throw new Error('非法窗口组');
+  if (!title.trim()) throw new Error('非法窗口组');
   return String.raw`
-${guardPrelude(serial, false)}
+${guardPrelude(serial, false, title)}
 $qemuId=${String(pid)}
 if (-not (Get-Process -Id $qemuId -ErrorAction SilentlyContinue)) { exit 1 }
 [DevEmuGroup.Native]::Watch([uint32]$qemuId)

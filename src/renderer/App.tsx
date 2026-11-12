@@ -34,6 +34,10 @@ const ss = {
 
 const dlId = (d: DownloadItem) => `${d.pkg}#${d.startedAt}`;
 
+/** 轮询结果浅比较：主进程每次返回新数组身份，内容相同也触发整树重渲染；
+ *  数据规模小（≤百条），序列化对比 <0.1ms，相同即复用旧引用跳过渲染 */
+export const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
 export function App() {
   // 导航状态持久化：刷新/整页重载后回到原页面，不跳首页
   const [page, setPage] = useState<Page>(() => ss.get('de.page', 'projects') as Page);
@@ -53,6 +57,10 @@ export function App() {
   const [sideOpen, setSideOpen] = useState(() => sessionStorage.getItem('de.sideOpen') !== '0');
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [devicesOpen, setDevicesOpen] = useState(true);
+  // 收起态子项浮层：点图标不展开侧栏，改为在图标右侧弹出该分组的子项列表；
+  // 锚点在打开时按图标屏幕坐标算一次，窗口尺寸变化直接关闭不跟随
+  const [sideFly, setSideFly] = useState<{ kind: 'projects' | 'devices'; x: number; y: number } | null>(null);
+  const sideFlyRef = useRef<HTMLDivElement | null>(null);
   // 分区恢复时兼容旧值：'download' 已并入 'network'
   const [settingsSection, setSettingsSection] = useState(() => {
     const saved = ss.get('de.settingsSection', 'storage');
@@ -103,7 +111,7 @@ export function App() {
   useEffect(
     () =>
       onDownloadsChanged((s) => {
-        setDlActive(s.active);
+        setDlActive((cur) => (sameJson(cur, s.active) ? cur : s.active));
         const prevActive = seenActiveRef.current;
         seenActiveRef.current = new Set(s.active.map(dlId));
         const prevFinished = seenFinishedRef.current;
@@ -159,6 +167,39 @@ export function App() {
     if (p === 'projects') setProjectId(null);
   };
 
+  const toggleSideFly = (kind: 'projects' | 'devices', e: React.MouseEvent) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setSideFly((cur) => (cur?.kind === kind ? null : { kind, x: r.right + 8, y: r.top }));
+  };
+
+  // 浮层关闭时机：点面板外（图标自身除外，交给 onToggle 做开合切换）、Esc、
+  // 窗口尺寸变化、侧栏展开（展开态有自己的子项列表，浮层无意义）
+  useEffect(() => {
+    if (!sideFly) return;
+    if (sideOpen) {
+      setSideFly(null);
+      return;
+    }
+    const onDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (sideFlyRef.current?.contains(t as Node)) return;
+      if (t instanceof Element && t.closest('.side-item')) return;
+      setSideFly(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSideFly(null);
+    };
+    const onResize = () => setSideFly(null);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [sideFly, sideOpen]);
+
   const openSdkManage = (system: 'android' | 'harmonyos' = 'android') => {
     setSdkSystem(system);
     setSettingsSection('sdk');
@@ -191,7 +232,7 @@ export function App() {
     api
       .listEmulators()
       .then((r) => {
-        if (r.ok) setEmus(r.data);
+        if (r.ok) setEmus((cur) => (sameJson(cur, r.data) ? cur : r.data));
       })
       .finally(() => {
         emusInFlight.current = false;
@@ -212,7 +253,7 @@ export function App() {
   useEffect(() => {
     const refresh = () =>
       api.listProjects().then((r) => {
-        if (r.ok) setProjects(r.data);
+        if (r.ok) setProjects((cur) => (sameJson(cur, r.data) ? cur : r.data));
       });
     refresh();
     const timer = setInterval(refresh, 4000);
@@ -223,7 +264,7 @@ export function App() {
   useEffect(() => {
     const refresh = () =>
       api.listAvds({ kind: 'shared' }).then((r) => {
-        if (r.ok) setSharedAvds(r.data);
+        if (r.ok) setSharedAvds((cur) => (sameJson(cur, r.data) ? cur : r.data));
       });
     refresh();
     const timer = setInterval(refresh, 4000);
@@ -240,7 +281,7 @@ export function App() {
     let live = true;
     const refresh = () =>
       api.hosList().then((r) => {
-        if (live && r.ok) setHosAvds(r.data);
+        if (live && r.ok) setHosAvds((cur) => (sameJson(cur, r.data) ? cur : r.data));
       });
     refresh();
     const timer = setInterval(refresh, 5000);
@@ -310,11 +351,10 @@ export function App() {
             expanded={projectsOpen}
             hasChildren
             sideOpen={sideOpen}
-            onToggle={() => {
+            onToggle={(e) => {
               if (!sideOpen) {
-                setSideOpen(true);
-                setProjectsOpen(true);
                 goto('projects');
+                toggleSideFly('projects', e);
               } else {
                 setProjectsOpen((v) => !v);
                 goto('projects');
@@ -353,11 +393,11 @@ export function App() {
             expanded={devicesOpen}
             hasChildren
             sideOpen={sideOpen}
-            onToggle={() => {
+            onToggle={(e) => {
               if (!sideOpen) {
-                setSideOpen(true);
-                setDevicesOpen(true);
                 setPage('devices');
+                setDeviceName(null);
+                toggleSideFly('devices', e);
               } else {
                 setDevicesOpen((v) => !v);
                 setPage('devices');
@@ -482,6 +522,74 @@ export function App() {
             </button>
           </div>
         </aside>
+        {sideFly && !sideOpen && (
+          <div ref={sideFlyRef} className="side-fly" style={{ left: sideFly.x, top: sideFly.y }}>
+            {sideFly.kind === 'projects' ? (
+              projects.length === 0 ? (
+                <div className="side-fly-empty">暂无项目</div>
+              ) : (
+                projects.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`side-fly-item${page === 'projects' && projectId === p.id ? ' on' : ''}`}
+                    onClick={() => {
+                      setPage('projects');
+                      setProjectId(p.id);
+                      setSideFly(null);
+                    }}
+                    title={p.name}
+                  >
+                    {p.name}
+                  </button>
+                ))
+              )
+            ) : (
+              <>
+                {sharedAvds.length === 0 && hosAvds.length === 0 && <div className="side-fly-empty">暂无设备</div>}
+                {sharedAvds.map((a) => (
+                  <button
+                    key={a.name}
+                    className={`side-fly-item${
+                      page === 'device-detail' &&
+                      deviceScope === 'shared' &&
+                      deviceSystem === 'android' &&
+                      deviceName === a.name
+                        ? ' on'
+                        : ''
+                    }`}
+                    onClick={() => {
+                      openDevice(a.name, 'shared', 'android');
+                      setSideFly(null);
+                    }}
+                    title={a.name}
+                  >
+                    {a.name}
+                  </button>
+                ))}
+                {hosAvds.map((a) => (
+                  <button
+                    key={`hos:${a.name}`}
+                    className={`side-fly-item${
+                      page === 'device-detail' &&
+                      deviceScope === 'shared' &&
+                      deviceSystem === 'harmonyos' &&
+                      deviceName === a.name
+                        ? ' on'
+                        : ''
+                    }`}
+                    onClick={() => {
+                      openDevice(a.name, 'shared', 'harmonyos');
+                      setSideFly(null);
+                    }}
+                    title={`${a.name}（HarmonyOS）`}
+                  >
+                    {a.name}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        )}
         <main className="content">
           {page === 'projects' &&
             (projectId === null ? (
@@ -489,6 +597,7 @@ export function App() {
             ) : (
               <ProjectDetail
                 projectId={projectId}
+                name={projects.find((p) => p.id === projectId)?.name ?? projectId}
                 onBack={() => setProjectId(null)}
                 emus={emus}
                 refreshEmus={refreshEmus}
@@ -514,6 +623,7 @@ export function App() {
                 name={deviceName}
                 emus={emus}
                 backLabel="返回设备池"
+                onRenamed={(n) => setDeviceName(n)}
                 onBack={() => {
                   setPage('devices');
                   setDeviceName(null);
@@ -521,11 +631,18 @@ export function App() {
               />
             ) : (
               <DeviceDetail
+                // 切设备必须重挂：编辑草稿、启动中计时都按组件实例保存，
+                // 复用实例会把上一台的名称/内存配置保存到新设备
+                key={`${deviceName}:${deviceScope === 'shared' ? 'shared' : deviceScope}`}
                 avdName={deviceName}
                 scope={detailScope}
                 emus={emus}
                 refreshEmus={refreshEmus}
-                backLabel={deviceScope === 'shared' ? '返回设备池' : `返回 ${deviceScope}`}
+                backLabel={
+                  deviceScope === 'shared'
+                    ? '返回设备池'
+                    : `返回 ${projects.find((p) => p.id === deviceScope)?.name ?? deviceScope}`
+                }
                 onRenamed={(n) => setDeviceName(n)}
                 onBack={() => {
                   setPage(deviceScope === 'shared' ? 'devices' : 'projects');
@@ -572,7 +689,7 @@ function SideItem({
   hasChildren?: boolean;
   sideOpen: boolean;
   viewBox?: string;
-  onToggle: () => void;
+  onToggle: (e: React.MouseEvent) => void;
   children?: React.ReactNode;
 }) {
   return (
@@ -580,7 +697,7 @@ function SideItem({
       <button
         className={`side-item${active ? ' active' : ''}${indicated ? ' indicated' : ''}`}
         onClick={onToggle}
-        title={sideOpen ? label : label}
+        title={label}
       >
         <svg
           viewBox={viewBox}

@@ -43,6 +43,14 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
+  // 纵深防御：主窗不弹新窗、不跨文档导航（应用内只有 hash 路由，不会触发跨文档导航）
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    const same =
+      (MAIN_WINDOW_VITE_DEV_SERVER_URL && url.startsWith(MAIN_WINDOW_VITE_DEV_SERVER_URL)) ||
+      (url.startsWith('file:') && url.includes('index.html'));
+    if (!same) e.preventDefault();
+  });
 
   // 自绘标题栏需要知道最大化状态以切换按钮图标
   const sendMaximized = () => {

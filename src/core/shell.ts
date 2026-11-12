@@ -160,6 +160,9 @@ async function createPill(geom: PillGeom): Promise<void> {
   win.webContents.on('console-message', (_e, level, message, line, source) => {
     console.log(`[pill:${level}] ${message} (${source}:${line})`);
   });
+  // 药丸窗带全量 preload API：被导航到外部内容即获得全部 IPC，纯纵深拦下
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     console.log(`[pill] load failed ${code} ${desc} ${url}`);
     // 主帧加载失败则永远等不到 ready-to-show：关窗让 emu:list 轮询重建
@@ -170,7 +173,7 @@ async function createPill(geom: PillGeom): Promise<void> {
     if (!win.isDestroyed()) win.show();
   });
   pills.set(geom.serial, win);
-  if (kind === 'hos' && geom.pid) startHosWindowGuard(geom.pid, geom.serial);
+  if (kind === 'hos' && geom.pid) startHosWindowGuard(geom.pid, geom.serial, geom.avdName);
   else startWindowGuard(geom.avdName, geom.serial);
 }
 
@@ -267,8 +270,22 @@ function locationPanelHtml(
   }
 }
 
+const openingPanels = new Set<string>();
+
 /** 虚拟定位面板：药丸定位按钮唤出的参数与方向控制小窗（每台设备一个，已开则置前） */
 export async function openLocationPanel(serial: string): Promise<void> {
+  // 查 qemu 几何走 PowerShell 秒级：不防重入时窗口内双击会建两个面板，孤儿
+  // 面板不在 locationPanels 里，无人能关、onQemuGone 也够不到
+  if (openingPanels.has(serial)) return;
+  openingPanels.add(serial);
+  try {
+    await openLocationPanelInner(serial);
+  } finally {
+    openingPanels.delete(serial);
+  }
+}
+
+async function openLocationPanelInner(serial: string): Promise<void> {
   const { BrowserWindow } = await import('electron');
   const existing = locationPanels.get(serial);
   if (existing && !existing.isDestroyed()) {
@@ -344,6 +361,9 @@ export async function openLocationPanel(serial: string): Promise<void> {
     releaseLocationKeys(serial);
     if (locationPanels.get(serial) === win) locationPanels.delete(serial);
   });
+  // 同药丸窗：带全量 preload API，纯纵深拦下弹窗与跨文档导航
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.on('console-message', (_e, level, message, line, source) => {
     console.log(`[location:${level}] ${message} (${source}:${line})`);
   });
@@ -416,7 +436,6 @@ export async function handlePillAction(
   serial: string,
   action: PillAction,
 ): Promise<{ ok: boolean; savedTo?: string; error?: string }> {
-  console.log('[pill-main] action', serial, action);
   if (action === 'powerLong') {
     const entry = listRunning().find((e) => e.serial === serial);
     if (!entry) return { ok: false, error: '虚拟机未在运行' };

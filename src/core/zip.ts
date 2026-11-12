@@ -49,7 +49,9 @@ export function readZipFile(buf: Buffer, name: string): Buffer | null {
       const dataStart = localOff + 30 + lNameLen + lExtraLen;
       const raw = buf.subarray(dataStart, dataStart + compSize);
       if (method === 0) return Buffer.from(raw);
-      if (method === 8) return zlib.inflateRawSync(raw);
+      if (method === 8)
+        // 压缩炸弹：数 KB 的压缩条目可膨胀至数 GB，主进程解析直接 OOM
+        return zlib.inflateRawSync(raw, { maxOutputLength: 16 * 1024 * 1024 });
       throw new Error(`不支持的压缩方式 ${method}`);
     }
     off += 46 + nameLen + extraLen + commentLen;

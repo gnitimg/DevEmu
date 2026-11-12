@@ -23,6 +23,8 @@ export interface DownloadItem {
   startedAt: number;
   finishedAt?: number;
   error?: string;
+  /** 解压落位的组件目录：卸载时删它；缺省表示走 sdkmanager 或无法自动卸载 */
+  installDir?: string;
 }
 
 /** 并行与限速选项（来自设置页） */
@@ -213,6 +215,7 @@ function snapshot(entry: Entry): DownloadItem {
     startedAt: entry.startedAt,
     finishedAt: entry.finishedAt,
     error: entry.error,
+    installDir: entry.installDir,
   };
 }
 
@@ -233,6 +236,20 @@ export function removeFinished(pkg: string, startedAt: number): boolean {
   return true;
 }
 
+/** 查一条已下载记录（卸载前据 installDir 判断该删哪个目录） */
+export function getFinished(pkg: string, startedAt: number): DownloadItem | undefined {
+  const i = finished.findIndex((e) => e.pkg === pkg && e.startedAt === startedAt);
+  return i < 0 ? undefined : snapshot(finished[i]!);
+}
+
+/** 同包名任务是否已在队列或进行中：sdk:install 入队前去重用 */
+export function isPkgPending(pkg: string): boolean {
+  return (
+    queued.some((e) => e.pkg === pkg) ||
+    [...active.values()].some((v) => v.pkg === pkg)
+  );
+}
+
 export function cancelDownload(pkg: string): boolean {
   // 排队中的任务直接取消
   const qi = queued.findIndex((e) => e.pkg === pkg);
@@ -241,6 +258,9 @@ export function cancelDownload(pkg: string): boolean {
     entry.state = 'cancelled';
     entry.cancelRequested = true;
     finish(entry);
+    // 条目已出队，onStart 不会再被 pumpQueue 触发；等待方（Promise resolve /
+    // onDone 广播）只挂在 onStart 上，不补调会让环境补装链与 autoBusy 永久挂死
+    entry.onStart?.();
     return true;
   }
   // active 的键是 pkg#序号，按 pkg 匹配
@@ -311,8 +331,10 @@ export interface FileTask {
   proxyPort?: number;
   /** 字节/秒，0 不限速 */
   maxBps: number;
-  /** 下载完成后调用（解压/搬移）；setPct 汇报 0-100 的收尾进度，展示时映射到 96-99% */
-  postProcess: (filePath: string, setPct: (p: number) => void) => Promise<void>;
+  /** 解压落位目录（已知时）；postProcess 返回目录时以返回值为准 */
+  installDir?: string;
+  /** 下载完成后调用（解压/搬移）；返回落位后的组件目录，用于卸载 */
+  postProcess: (filePath: string, setPct: (p: number) => void) => Promise<string | void>;
   /** 完成（成功/失败/取消）回调，用于主进程广播 */
   onDone?: (r: { ok: boolean; cancelled?: boolean; error?: string }) => void;
 }
@@ -322,14 +344,19 @@ export function startFileDownload(task: FileTask): void {
   const key = `${task.key}#${++seq}`;
   const entry: Entry = {
     pkg: task.key, desc: task.desc, state: 'queued', percent: 0, downloaded: 0, total: 0, speedBps: 0, etaSec: 0,
-    startedAt: Date.now(), child: null, samples: [],
+    startedAt: Date.now(), child: null, samples: [], installDir: task.installDir,
   };
   active.set(key, entry);
   ensureTicker();
   notify();
 
   const startNow = () => {
-    if (entry.state === 'cancelled') return;
+    // 排队期间被取消：cancelDownload 会补调 onStart，这里必须收尾广播，
+    // 否则 HarmonyOS 下载的 autoBusy 永远停在 true
+    if (entry.state === 'cancelled') {
+      task.onDone?.({ ok: false, cancelled: true, error: '已取消' });
+      return;
+    }
     void fileTaskImpl(entry, task);
   };
   entry.onStart = startNow;
@@ -352,6 +379,8 @@ export interface ExternalDownloadTask {
 export function adoptExternalDownload(opts: {
   key: string;
   desc: string;
+  /** 解压落位目录：卸载时删它 */
+  installDir?: string;
   /** 下载管理里点取消 */
   onCancel: () => void;
   postProcess: (filePath: string, setPct: (p: number) => void) => Promise<void>;
@@ -359,12 +388,14 @@ export function adoptExternalDownload(opts: {
 }): ExternalDownloadTask {
   const entry: Entry = {
     pkg: opts.key, desc: opts.desc, state: 'downloading', percent: 0, downloaded: 0, total: 0, speedBps: 0, etaSec: 0,
-    startedAt: Date.now(), child: null, samples: [],
+    startedAt: Date.now(), child: null, samples: [], installDir: opts.installDir,
   };
   active.set(`${opts.key}#${++seq}`, entry);
   ensureTicker();
   notify();
   entry.abort = () => opts.onCancel();
+  // 进度事件可能每秒多条：数据照常更新，广播节流，1Hz ticker 兜底补齐显示
+  let lastNotify = 0;
 
   const settle = (state: 'done' | 'failed' | 'cancelled', error?: string) => {
     entry.state = state;
@@ -385,7 +416,11 @@ export function adoptExternalDownload(opts: {
       entry.percent = total > 0 ? Math.min(95, Math.round((bytes / total) * 95)) : Math.min(95, entry.percent + 1);
       entry.samples.push({ t: Date.now(), bytes });
       if (entry.samples.length > 30) entry.samples.shift();
-      notify();
+      const now = Date.now();
+      if (now - lastNotify >= 500) {
+        lastNotify = now;
+        notify();
+      }
     },
     async complete(filePath) {
       if (entry.state !== 'downloading') return;
@@ -430,6 +465,8 @@ export function adoptPercentTask(opts: PercentTask): {
   ensureTicker();
   notify();
   entry.abort = () => opts.cancel?.();
+  // HOS 镜像下载每秒输出多条百分比行：广播节流，1Hz ticker 兜底补齐显示
+  let lastNotify = 0;
 
   const settle = (state: 'done' | 'failed' | 'cancelled', error?: string) => {
     entry.state = state;
@@ -449,7 +486,11 @@ export function adoptPercentTask(opts: PercentTask): {
       entry.percent = Math.max(0, Math.min(99, Math.round(percent)));
       entry.samples.push({ t: Date.now(), bytes: entry.percent });
       if (entry.samples.length > 30) entry.samples.shift();
-      notify();
+      const now = Date.now();
+      if (now - lastNotify >= 500) {
+        lastNotify = now;
+        notify();
+      }
     },
     complete() {
       if (entry.state !== 'downloading') return;
@@ -464,7 +505,8 @@ export function adoptPercentTask(opts: PercentTask): {
 
 async function fileTaskImpl(entry: Entry, task: FileTask): Promise<void> {
   const dlDir = path.join(os.tmpdir(), 'devemu-env-dl');
-  const dlPath = path.join(dlDir, `${task.fileName}.part`);
+  // 时间戳前缀隔离：同名安装包并发任务（双击/多环境）写同一 .part 会互相截断
+  const dlPath = path.join(dlDir, `${Date.now()}-${task.fileName}.part`);
   entry.state = 'downloading';
   notify();
   let cancelled = false;
@@ -495,9 +537,10 @@ async function fileTaskImpl(entry: Entry, task: FileTask): Promise<void> {
     entry.total = r.total || r.bytes;
     entry.downloaded = r.bytes;
     entry.percent = 96;
-    await task.postProcess(dlPath, (p) => {
+    const installedDir = await task.postProcess(dlPath, (p) => {
       entry.percent = Math.max(96, Math.min(99, Math.round(p)));
     });
+    if (installedDir) entry.installDir = installedDir;
     entry.percent = 100;
     entry.state = 'done';
     finish(entry);
@@ -581,7 +624,12 @@ async function spawnTaskImpl(
   child.stdout?.on('data', (c: Buffer) => pump(c.toString('utf8')));
   child.stderr?.on('data', (c: Buffer) => pump(c.toString('utf8')));
 
+  // error 与 close 在异常退出时都会到达（close 总在 error 后）：只按先到的一次收尾，
+  // 否则历史里出现两条重复记录、persistFinished 双写
+  let childEnded = false;
   child.on('error', (err) => {
+    if (childEnded) return;
+    childEnded = true;
     entry.state = 'failed';
     entry.error = err.message;
     shaping?.close();
@@ -589,6 +637,8 @@ async function spawnTaskImpl(
     resolve({ ok: false, error: err.message });
   });
   child.on('close', (code) => {
+    if (childEnded) return;
+    childEnded = true;
     if (entry.state === 'downloading') {
       if (entry.cancelRequested) {
         entry.state = 'cancelled';

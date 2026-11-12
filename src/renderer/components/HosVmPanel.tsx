@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   api,
   onHosStartFailed,
@@ -20,7 +20,8 @@ import {
   hosScreenTypeLabel,
   hosSeries,
 } from '../../core/hosLabels.ts';
-import type { EnvStatus } from '../App.tsx';
+import { hosDefaultName } from '../../core/vmNames.ts';
+import { sameJson, type EnvStatus } from '../App.tsx';
 
 function imageKey(img: HosImage): string {
   return `${img.deviceType}|${img.osVersion}`;
@@ -46,6 +47,7 @@ export function HosVmPanel({
   onOpenVm?: (name: string) => void;
 }) {
   const [avds, setAvds] = useState<HosAvd[] | null>(null);
+  const existingNames = useMemo(() => (avds ?? []).map((a) => a.name), [avds]);
   const [error, setError] = useState('');
   const [busyName, setBusyName] = useState('');
   // 名称 → 点击启动的时刻；启动成功后由轮询结果收敛，超时则回落
@@ -55,7 +57,8 @@ export function HosVmPanel({
   const reload = useCallback(() => {
     api.hosList().then((r) => {
       if (r.ok) {
-        setAvds(r.data);
+        // 主进程每次返回新数组身份：内容相同即复用旧引用，跳过面板重渲染
+        setAvds((cur) => (sameJson(cur, r.data) ? cur : r.data));
         setError('');
       } else {
         setAvds((prev) => prev ?? []);
@@ -76,7 +79,9 @@ export function HosVmPanel({
     const running = new Set((avds ?? []).filter((a) => a.running).map((a) => a.name));
     const next: Record<string, number> = {};
     for (const [name, at] of entries) {
-      if (!running.has(name) && Date.now() - at < 180_000) next[name] = at;
+      if (!running.has(name) && Date.now() - at < 320_000) next[name] = at;
+      // 超时兜底静默还原按钮时进程可能只是挂起：补一条提示（当轮即移出，不重复弹）
+      else if (!running.has(name)) toast(`${name} 启动超时，请查看日志`);
     }
     if (Object.keys(next).length !== entries.length) setStarting(next);
   }, [avds, starting]);
@@ -255,6 +260,7 @@ export function HosVmPanel({
       {error && <div className="error-line">{error}</div>}
       {creating && (
         <NewHosVmModal
+          existing={existingNames}
           onClose={() => setCreating(false)}
           onOpenSdkManage={onOpenSdkManage}
           onDone={() => {
@@ -268,15 +274,19 @@ export function HosVmPanel({
 }
 
 function NewHosVmModal({
+  existing,
   onClose,
   onDone,
   onOpenSdkManage,
 }: {
+  /** 现有名称：默认名按此递增编号 */
+  existing: string[];
   onClose: () => void;
   onOpenSdkManage?: (system?: 'android' | 'harmonyos') => void;
   onDone: () => void;
 }) {
   const [name, setName] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
   const [images, setImages] = useState<HosImage[] | null>(null);
   const [imagesError, setImagesError] = useState('');
   const [family, setFamily] = useState('');
@@ -387,6 +397,12 @@ function NewHosVmModal({
         ?.models ?? [];
     setModel((cur) => (list.includes(cur) ? cur : (list[0] ?? '')));
   }, [models, modelSeries]);
+
+  // 机型自动选定后同步默认名称；用户改过名称就不再覆盖
+  useEffect(() => {
+    if (nameTouched || !model) return;
+    setName(hosDefaultName(model, existing));
+  }, [model, existing, nameTouched]);
 
   const families = [
     ...new Map(
@@ -529,7 +545,15 @@ function NewHosVmModal({
     >
       <div className="form-row">
         <label>名称</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 pura_test" autoFocus />
+        <input
+          value={name}
+          maxLength={64}
+          onChange={(e) => {
+            setName(e.target.value.replace(/[\\/:*?"<>|\r\n]/g, ''));
+            setNameTouched(true);
+          }}
+          autoFocus
+        />
       </div>
       <div className="form-row">
         <label>型号</label>

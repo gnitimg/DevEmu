@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, osFromImagePkg, prettyModel, tagLabel, type EmuDevice, type Scope } from '../api.ts';
+import { api, osFromImagePkg, prettyModel, scopeKeyOf, tagLabel, type EmuDevice, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
 import { Select } from './Select.tsx';
 import { EditVmModal, HwFields, parseHwFields } from './VmEdit.tsx';
 import { isStorageBucketGb, STORAGE_BUCKETS_GB } from '../../core/storageUnits.ts';
+import { avdDefaultName } from '../../core/vmNames.ts';
 import type { EnvStatus } from '../App.tsx';
 import type { AvdInfo, DeviceDef } from '../../core/types.ts';
 
@@ -32,31 +33,52 @@ export function VmPanel({
 
   const reload = useCallback(() => {
     api.listAvds(scope).then((r) => {
-      if (r.ok) setAvds(r.data);
-      else setError(r.error);
+      if (r.ok) {
+        setAvds(r.data);
+        setError('');
+      } else setError(r.error);
     });
   }, [scope]);
 
   useEffect(reload, [reload]);
 
   // offline 也是 qemu 在跑（adb 通道抖动）：按"运行中"处理，否则显示已停止、
-  // 点启动却被注册表以"已在运行"拒绝，状态自相矛盾
+  // 点启动却被注册表以"已在运行"拒绝，状态自相矛盾。同名虚拟机可能存在于
+  // 别的作用域，必须按 scopeKey 认领，否则会把别的实例当成这台
+  const scopeId = scopeKeyOf(scope);
   const runningOf = (name: string): EmuDevice | undefined =>
     emus.find(
-      (e) => e.serial.startsWith('emulator-') && e.avdName === name,
+      (e) =>
+        e.serial.startsWith('emulator-') &&
+        e.avdName === name &&
+        e.scopeKey === scopeId,
     );
 
-  // 「启动中」：点击启动后持续到设备真正上线或超时（与主进程 waitBooted 300s 对齐留缓冲）
+  // 「启动中」：点击启动后持续到设备真正上线或超时（与主进程 waitBooted 300s 对齐留缓冲）。
+  // 设备列表快照不变时上层不会重渲染，这里必须用定时器自行复查超时
   useEffect(() => {
-    const entries = Object.entries(starting);
-    if (entries.length === 0) return;
-    const online = new Set(emus.filter((e) => e.state === 'device' && e.avdName).map((e) => e.avdName!));
-    const next: Record<string, number> = {};
-    for (const [name, at] of entries) {
-      if (!online.has(name) && Date.now() - at < 320_000) next[name] = at;
-    }
-    if (Object.keys(next).length !== entries.length) setStarting(next);
-  }, [emus, starting]);
+    if (Object.keys(starting).length === 0) return;
+    const check = () => {
+      setStarting((cur) => {
+        const now = Date.now();
+        const next: Record<string, number> = {};
+        for (const [name, at] of Object.entries(cur)) {
+          const online = emus.some(
+            (e) =>
+              e.state === 'device' &&
+              e.avdName === name &&
+              e.scopeKey === scopeId,
+          );
+          if (!online && now - at < 320_000) next[name] = at;
+        }
+        if (Object.keys(next).length === Object.keys(cur).length) return cur;
+        return next;
+      });
+    };
+    check();
+    const timer = setInterval(check, 3000);
+    return () => clearInterval(timer);
+  }, [emus, starting, scopeId]);
 
   async function launch(name: string) {
     setBusyName(name);
@@ -206,6 +228,7 @@ export function VmPanel({
         <NewVmModal
           scope={scope}
           env={env}
+          existing={(avds ?? []).map((a) => a.name)}
           onOpenSdkManage={onOpenSdkManage}
           onDone={() => {
             setCreating(false);
@@ -233,15 +256,19 @@ const TYPE_ORDER = ['手机', '平板', '手表', '电视', '桌面 / 折叠屏'
 function NewVmModal({
   scope,
   env,
+  existing,
   onOpenSdkManage,
   onDone,
 }: {
   scope: Scope;
   env: EnvStatus | null;
+  /** 现有名称：默认名按此递增编号 */
+  existing: string[];
   onOpenSdkManage?: () => void;
   onDone: () => void;
 }) {
   const [name, setName] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
   const [defs, setDefs] = useState<DeviceDef[] | null>(null);
   const [defsError, setDefsError] = useState(false);
   const [deviceType, setDeviceType] = useState('');
@@ -345,7 +372,15 @@ function NewVmModal({
     >
       <div className="form-row">
         <label>名称</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 pixel6_test" autoFocus />
+        <input
+          value={name}
+          maxLength={100}
+          onChange={(e) => {
+            setName(e.target.value.replace(/[^\w.-]/g, ''));
+            setNameTouched(true);
+          }}
+          autoFocus
+        />
       </div>
       <div className="form-row">
         <label>型号</label>
@@ -356,13 +391,18 @@ function NewVmModal({
             onChange={(v) => {
               setDeviceType(v);
               setDefId('');
+              if (!nameTouched) setName('');
             }}
             placeholder="设备类型"
           />
           <Select
             value={defId}
             options={defOptions.map((d) => ({ value: d.id, label: d.name }))}
-            onChange={setDefId}
+            onChange={(v) => {
+              setDefId(v);
+              const def = defs?.find((d) => d.id === v);
+              if (!nameTouched && def) setName(avdDefaultName(def.name, existing));
+            }}
             placeholder={deviceType ? '选择机型' : '先选设备类型'}
             disabled={!deviceType || defsError}
           />

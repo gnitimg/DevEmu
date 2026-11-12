@@ -27,7 +27,7 @@ test('storageItems 覆盖常用文件，设置文件固定在默认数据目录'
     'agent',
     'avd',
     'apps',
-    'runs',
+    'crashes',
   ]) {
     assert.ok(ids.includes(id), id);
   }

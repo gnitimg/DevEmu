@@ -5,6 +5,11 @@ import { scopeDirs, scopeEnv } from './env.ts';
 import { cmdlineTool } from './sdk.ts';
 import type { AvdInfo, DeviceDef, Scope, SdkInfo } from './types.ts';
 
+/** 虚拟机名白名单：外部工具（Android Studio 等）可创建超长名，上限放到 100
+ *  （.avd 目录名仍远小于 MAX_PATH）；win/agent/ipc 各入口校验必须用同一常量，
+ *  否则长名会被列表列出却无法启动/配置 */
+export const AVD_NAME_RE = /^[\w.-]{1,100}$/;
+
 /** 解析 avdmanager list device 的 id/Name 对 */
 export function parseDeviceList(stdout: string): DeviceDef[] {
   const defs: DeviceDef[] = [];
@@ -42,6 +47,10 @@ function imageDirToPkg(dir: string): string | undefined {
   return `system-images;${parts[i + 1]};${parts[i + 2]};${parts[i + 3]}`;
 }
 
+// 孤儿 .avd 残目录（创建中断）可达数 GB：轮询路径上同步 rm 会把主进程冻结
+// 整个删除时长；改异步 fire-and-forget，在飞集合防止 4 秒轮询重复发起
+const orphanCleanup = new Set<string>();
+
 /** 直接读 avdHome 目录（比 avdmanager 快得多）；顺带清理无 .ini 的残留目录 */
 export function listAvds(dataRoot: string, scope: Scope): AvdInfo[] {
   const dirs = scopeDirs(dataRoot, scope);
@@ -55,7 +64,13 @@ export function listAvds(dataRoot: string, scope: Scope): AvdInfo[] {
   for (const entry of entries) {
     // 只有 .avd 目录没有同名 .ini 的虚拟机无法被模拟器识别，属于创建中断的残留
     if (entry.endsWith('.avd') && !inis.has(entry.slice(0, -4))) {
-      fs.rmSync(path.join(dirs.avdHome, entry), { recursive: true, force: true });
+      const target = path.join(dirs.avdHome, entry);
+      if (orphanCleanup.has(target)) continue;
+      orphanCleanup.add(target);
+      void fs.promises
+        .rm(target, { recursive: true, force: true })
+        .catch(() => undefined)
+        .finally(() => orphanCleanup.delete(target));
     }
   }
   const avds: AvdInfo[] = [];
@@ -249,7 +264,7 @@ export function updateAvdHardware(
   name: string,
   hw: AvdHardware,
 ): { ok: boolean; error?: string } {
-  if (!/^[\w.-]{1,50}$/.test(name)) return { ok: false, error: '非法的虚拟机名称' };
+  if (!AVD_NAME_RE.test(name)) return { ok: false, error: '非法的虚拟机名称' };
   const dirs = scopeDirs(dataRoot, scope);
   const configPath = path.join(dirs.avdHome, `${name}.avd`, 'config.ini');
   if (!fs.existsSync(configPath)) return { ok: false, error: '虚拟机不存在' };
@@ -289,7 +304,9 @@ export function renameAvd(
   oldName: string,
   newName: string,
 ): { ok: boolean; error?: string } {
-  if (!/^[\w.-]{1,50}$/.test(newName)) return { ok: false, error: '名称仅限字母、数字、下划线、点、短横线' };
+  if (!AVD_NAME_RE.test(newName)) return { ok: false, error: '名称仅限字母、数字、下划线、点、短横线' };
+  // oldName 同样直接拼 .ini/.avd 路径，不校验可搬走或删除目录外的同名文件
+  if (!AVD_NAME_RE.test(oldName)) return { ok: false, error: '名称仅限字母、数字、下划线、点、短横线' };
   if (oldName === newName) return { ok: true };
   const dirs = scopeDirs(dataRoot, scope);
   const oldIni = path.join(dirs.avdHome, `${oldName}.ini`);
@@ -396,14 +413,42 @@ export const WIPE_FLAG = '.wipe-data-required';
  * Play Store 等镜像的 /data 经 dm-default-key 加密，宿主机读不到 ext4 超级块，
  * guest 用户版又没有 root，无法原地扩容；此时返回 needsWipe，由调用方征得用户同意后重建。
  */
-export async function ensureAvdStorage(
+/** 数据分区扩容共用同一 .grow-raw 临时文件：并发的第二次调用必须排队，
+ *  否则互踩产出损坏镜像与 resize-bak 孤儿（模式同 location 的 enqueue） */
+const storageOps = new Map<string, Promise<unknown>>();
+
+function enqueueAvdStorage<T>(key: string, op: () => Promise<T>): Promise<T> {
+  const result = (storageOps.get(key) ?? Promise.resolve()).then(op, op);
+  storageOps.set(key, result);
+  void result
+    .finally(() => {
+      if (storageOps.get(key) === result) storageOps.delete(key);
+    })
+    .catch(() => undefined);
+  return result;
+}
+
+export function ensureAvdStorage(
   sdk: SdkInfo,
   dataRoot: string,
   scope: Scope,
   name: string,
   targetGb: number,
 ): Promise<{ ok: boolean; error?: string; needsWipe?: boolean }> {
-  if (!/^[\w.-]{1,50}$/.test(name)) return { ok: false, error: '非法的虚拟机名称' };
+  const sKey = scope.kind === 'shared' ? 'shared' : `project:${scope.projectId}`;
+  return enqueueAvdStorage(`${sKey}/${name}`, () =>
+    ensureAvdStorageImpl(sdk, dataRoot, scope, name, targetGb),
+  );
+}
+
+async function ensureAvdStorageImpl(
+  sdk: SdkInfo,
+  dataRoot: string,
+  scope: Scope,
+  name: string,
+  targetGb: number,
+): Promise<{ ok: boolean; error?: string; needsWipe?: boolean }> {
+  if (!AVD_NAME_RE.test(name)) return { ok: false, error: '非法的虚拟机名称' };
   const targetBytes = Math.round(targetGb) * 1024 ** 3;
   if (targetBytes <= 0) return { ok: true };
   const dirs = scopeDirs(dataRoot, scope);
@@ -529,7 +574,7 @@ export function markAvdWipe(
   scope: Scope,
   name: string,
 ): { ok: boolean; error?: string } {
-  if (!/^[\w.-]{1,50}$/.test(name)) return { ok: false, error: '非法的虚拟机名称' };
+  if (!AVD_NAME_RE.test(name)) return { ok: false, error: '非法的虚拟机名称' };
   const dir = path.join(scopeDirs(dataRoot, scope).avdHome, `${name}.avd`);
   if (!fs.existsSync(dir)) return { ok: false, error: '虚拟机不存在' };
   try {

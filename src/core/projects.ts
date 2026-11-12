@@ -64,7 +64,10 @@ export function listProjects(dataRoot: string): ProjectMeta[] {
 }
 
 export function updateProject(dataRoot: string, id: string, patch: { name?: string; note?: string }): ProjectMeta | null {
-  const file = path.join(projectsDir(dataRoot), id, 'project.json');
+  const dir = path.join(projectsDir(dataRoot), id);
+  // 只允许改 projects/ 下一级目录（与 deleteProject 同口径），防路径逃逸
+  if (path.dirname(dir) !== projectsDir(dataRoot)) return null;
+  const file = path.join(dir, 'project.json');
   const meta = JSON.parse(fs.readFileSync(file, 'utf8')) as ProjectMeta;
   if (patch.name !== undefined) meta.name = patch.name.trim();
   if (patch.note !== undefined) meta.note = patch.note.trim() || undefined;

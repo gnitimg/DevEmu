@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { AVD_NAME_RE } from './avd.ts';
 
 /**
  * Agent 控制桥：仅监听 127.0.0.1 的 HTTP 服务，把在线虚拟设备的
@@ -57,7 +58,6 @@ export function generateAgentToken(): string {
 
 const SERIAL_RE = /^[\w.:@+-]{1,80}$/;
 const SCOPE_RE = /^shared$|^project:[\w-]{1,64}$/;
-const AVD_RE = /^[\w.-]{1,50}$/;
 
 /** MCP 桥脚本落盘位置：<dataRoot>/agent/agent-mcp.mjs */
 export function agentScriptFile(dataRoot: string): string {
@@ -231,7 +231,7 @@ export async function handleAgentRequest(
       }
       const body = await readJsonObject(req);
       const avdName = str(body, 'avdName');
-      if (!AVD_RE.test(avdName)) throw new Error('非法的虚拟机名称');
+      if (!AVD_NAME_RE.test(avdName)) throw new Error('非法的虚拟机名称');
       const scope = body.scope === undefined ? undefined : String(body.scope);
       if (scope !== undefined && !SCOPE_RE.test(scope)) throw new Error('非法的作用域');
       if (url.pathname.endsWith('/launch')) {

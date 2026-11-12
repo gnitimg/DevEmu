@@ -26,7 +26,12 @@ export function appendLog(dataRoot: string, line: string): void {
     } catch {
       // 首次写入时文件不存在，无需轮转
     }
-    fs.appendFileSync(file, `[${new Date().toISOString()}] ${line}\n`, 'utf8');
+    // 单行约束：调用方拼入的错误 message 与用户输入可能带换行，会伪造多条日志
+    fs.appendFileSync(
+      file,
+      `[${new Date().toISOString()}] ${line.replace(/\s*[\r\n]+\s*/g, ' ')}\n`,
+      'utf8',
+    );
   } catch {
     // 忽略写入失败
   }

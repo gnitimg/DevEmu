@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run } from './exec.ts';
+import { psArgs } from './win.ts';
 import type { HosAvd, HosImage } from './types.ts';
 
 export type { HosAvd, HosImage };
@@ -233,13 +234,9 @@ export function parseEmulatorStartName(commandLine: string): string | undefined 
 export async function findHosEmulatorPid(name: string): Promise<number | undefined> {
   const r = await run(
     'powershell.exe',
-    [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
+    psArgs(
       "$ErrorActionPreference='SilentlyContinue'\nGet-CimInstance Win32_Process -Filter \"Name='Emulator.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
-    ],
+    ),
     { timeoutMs: 20_000 },
   ).catch(() => undefined);
   if (!r || r.code !== 0) return undefined;
@@ -393,14 +390,84 @@ export async function deleteHosAvd(emu: string, name: string): Promise<void> {
   if (r.code !== 0) throw new Error(errText(r.stdout, r.stderr, r.code));
 }
 
+/** 改写实例 config.ini 的键（缺失时补写），其余行原样保留 */
+async function patchHosConfig(configIni: string, values: Record<string, string>): Promise<void> {
+  let text = await fs.promises.readFile(configIni, 'utf8');
+  for (const [key, value] of Object.entries(values)) {
+    const re = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=.*$`, 'm');
+    const line = `${key}=${value}`;
+    text = re.test(text)
+      ? text.replace(re, line)
+      : `${text}${text.endsWith('\n') ? '' : os.EOL}${line}${os.EOL}`;
+  }
+  await fs.promises.writeFile(configIni, text, 'utf8');
+}
+
 /** -create 不认 CPU 核数，只能创建后改写实例 config.ini */
 export async function patchHosCpuCores(configIni: string, cores: number): Promise<void> {
-  const text = await fs.promises.readFile(configIni, 'utf8');
-  const line = `hw.cpu.ncore=${cores}`;
-  const next = /^hw\.cpu\.ncore=.*$/m.test(text)
-    ? text.replace(/^hw\.cpu\.ncore=.*$/m, line)
-    : `${text}${text.endsWith('\n') ? '' : os.EOL}${line}${os.EOL}`;
-  await fs.promises.writeFile(configIni, next, 'utf8');
+  await patchHosConfig(configIni, { 'hw.cpu.ncore': String(cores) });
+}
+
+/** 修改已创建实例的内存/核数；硬盘容量由镜像分区决定，不在可写范围 */
+export async function patchHosHardware(
+  configIni: string,
+  o: { ramMb?: number; cpuCores?: number },
+): Promise<void> {
+  const values: Record<string, string> = {};
+  if (o.ramMb !== undefined) values['hw.ramSize'] = String(o.ramMb);
+  if (o.cpuCores !== undefined) values['hw.cpu.ncore'] = String(o.cpuCores);
+  if (Object.keys(values).length) await patchHosConfig(configIni, values);
+}
+
+/**
+ * 实例目录名与 config.ini 的 name 必须一致：只改其一会让 -list 完全看不到实例。
+ * 重命名要同时搬目录、改写主配置与同级的 <名字>.ini。
+ */
+export async function renameHosAvd(instancePath: string, newName: string): Promise<string> {
+  const oldDir = path.resolve(instancePath);
+  const newDir = path.join(path.dirname(oldDir), newName);
+  const oldSide = `${oldDir}.ini`;
+  const newSide = `${newDir}.ini`;
+  const toPosix = (p: string) => p.replace(/\\/g, '/');
+  let side: string | null = null;
+  try {
+    side = await fs.promises.readFile(oldSide, 'utf8');
+  } catch {
+    // 没有伴随 ini 的实例也能被 -list 扫到
+  }
+  // 回滚要能把 config.ini 写回原文：patchHosConfig 是 read-modify-write，
+  // 失败时文件可能已写入新 name/instancePath，目录搬回去后仍对 -list 不可见
+  let configIniText: string | undefined;
+  try {
+    configIniText = await fs.promises.readFile(path.join(oldDir, 'config.ini'), 'utf8');
+  } catch {
+    // 实例没有 config.ini：无从写回，保持原 catch 语义
+  }
+  await fs.promises.rename(oldDir, newDir);
+  try {
+    await patchHosConfig(path.join(newDir, 'config.ini'), {
+      name: newName,
+      instancePath: toPosix(newDir),
+    });
+    if (side !== null) {
+      await fs.promises.writeFile(
+        newSide,
+        side.replace(/^path=.*$/m, `path=${toPosix(newDir)}`),
+        'utf8',
+      );
+      await fs.promises.unlink(oldSide);
+    }
+  } catch (e) {
+    await fs.promises.rm(newSide, { force: true }).catch(() => undefined);
+    if (configIniText !== undefined) {
+      await fs.promises
+        .writeFile(path.join(newDir, 'config.ini'), configIniText, 'utf8')
+        .catch(() => undefined);
+    }
+    await fs.promises.rename(newDir, oldDir).catch(() => undefined);
+    throw e;
+  }
+  return newDir;
 }
 
 export async function createHosAvd(emu: string, o: CreateHosAvdOptions): Promise<void> {
@@ -463,12 +530,19 @@ export function installHosImage(
     windowsHide: true,
   });
   let out = '';
+  // 进度行以 \r 结尾且会被 chunk 切断："45.7%" 跨块会被拆成两个假百分比
+  let lineBuf = '';
   const handle = (b: Buffer) => {
     const text = b.toString();
     if (out.length < 8192) out += text;
-    for (const m of text.matchAll(/(\d+(?:\.\d+)?)\s*%/g)) {
-      const pct = Math.max(0, Math.min(100, Math.round(parseFloat(m[1]!))));
-      onProgress(pct);
+    const lines = (lineBuf + text).split(/\r\n|\r|\n/);
+    lineBuf = lines.pop() ?? '';
+    if (lineBuf.length > 4096) lineBuf = '';
+    for (const line of lines) {
+      for (const m of line.matchAll(/(\d+(?:\.\d+)?)\s*%/g)) {
+        const pct = Math.max(0, Math.min(100, Math.round(parseFloat(m[1]!))));
+        onProgress(pct);
+      }
     }
   };
   child.stdout?.on('data', handle);

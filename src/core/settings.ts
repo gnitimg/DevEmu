@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { Settings } from './types.ts';
+import { appendLog } from './log.ts';
 
 export const DEFAULT_DATA_ROOT = path.join(os.homedir(), 'DevEmu');
 
@@ -25,13 +26,27 @@ export function saveAppSettings(settings: Settings): void {
   fs.renameSync(tmp, file);
 }
 
+// settings.json 读取缓存：emu:list 等轮询热路径每轮要 loadAppSettings 多次，
+// readFileSync+JSON.parse 每次都是重复 IO。按 mtime 失效（保存写入与外部手改
+// 都会变 mtime），命中返回浅拷贝——Settings 全为标量字段，浅拷贝即调用方隔离
+const settingsCache = new Map<string, { mtimeMs: number; settings: Settings }>();
+
 export function loadSettings(dataRoot: string): Settings {
+  const file = settingsPath(dataRoot);
+  let mtimeMs = -1;
   try {
-    const raw = fs.readFileSync(settingsPath(dataRoot), 'utf8');
+    mtimeMs = fs.statSync(file).mtimeMs;
+  } catch {
+    mtimeMs = -1;
+  }
+  const hit = settingsCache.get(dataRoot);
+  if (hit && mtimeMs !== -1 && hit.mtimeMs === mtimeMs) return { ...hit.settings };
+  try {
+    const raw = fs.readFileSync(file, 'utf8');
     const parsed = JSON.parse(raw) as Partial<Settings>;
     if (typeof parsed.dataRoot !== 'string' || !parsed.dataRoot)
       throw new Error('bad');
-    return {
+    const settings: Settings = {
       dataRoot: parsed.dataRoot,
       sdkPath: parsed.sdkPath,
       javaPath: parsed.javaPath,
@@ -62,7 +77,26 @@ export function loadSettings(dataRoot: string): Settings {
       agentPort: parsed.agentPort,
       agentToken: parsed.agentToken,
     };
-  } catch {
+    settingsCache.set(dataRoot, { mtimeMs, settings });
+    return { ...settings };
+  } catch (e) {
+    // 全新安装尚未保存过设置是正常态，不能当损坏报
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      // 缓存"缺失"态（mtime -1 哨兵），文件落盘出现即自然失效
+      settingsCache.set(dataRoot, { mtimeMs: -1, settings: { dataRoot } });
+      return { dataRoot };
+    }
+    // JSON 损坏时自定义数据根会"丢失"（数据仍在盘上）：改名留证并记日志
+    settingsCache.delete(dataRoot);
+    try {
+      fs.renameSync(file, `${file}.corrupt.bak`);
+    } catch {
+      // 已被删或不可写
+    }
+    appendLog(
+      dataRoot,
+      `settings.json 解析失败（${e instanceof Error ? e.message : String(e)}），已按默认设置启动，原文件保留为 settings.json.corrupt.bak`,
+    );
     return { dataRoot };
   }
 }
@@ -91,7 +125,7 @@ const MIGRATE_ITEMS = [
   'projects',
   path.join('devices', 'avd'),
   path.join('devices', 'apps'),
-  path.join('devices', 'runs'),
+  path.join('devices', 'crashes'),
   'agent',
   'logs',
   'location',
@@ -176,6 +210,47 @@ export interface DataRootMigration {
   failed: string[];
   /** 改写指向旧数据根的 AVD ini 数量 */
   iniFixed: number;
+}
+
+export interface DataRootConflict {
+  id: string;
+  name: string;
+}
+
+/**
+ * 迁移前置检查：新根不能落在旧根内部（否则 projects 会搬进自己的子树，
+ * 切换后项目列表为空）；目标里已存在同 ID 项目时迁移会覆盖，需要先告知用户。
+ */
+export function dataRootConflicts(
+  oldRoot: string,
+  newRoot: string,
+): { nested: boolean; projects: DataRootConflict[] } {
+  const from = path.resolve(oldRoot);
+  const to = path.resolve(newRoot);
+  const nested = isInside(from, to) && !samePath(from, to);
+  const projects: DataRootConflict[] = [];
+  if (nested || samePath(from, to)) return { nested, projects };
+  let ids: string[] = [];
+  try {
+    ids = fs.readdirSync(path.join(from, 'projects'));
+  } catch {
+    return { nested, projects };
+  }
+  for (const id of ids) {
+    const file = path.join(to, 'projects', id, 'project.json');
+    if (!fs.existsSync(file)) continue;
+    let name = id;
+    try {
+      const meta = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        name?: unknown;
+      };
+      if (typeof meta.name === 'string' && meta.name.trim()) name = meta.name;
+    } catch {
+      // 目标里同 ID 目录不是完整项目：仍按 ID 提示覆盖风险
+    }
+    projects.push({ id, name });
+  }
+  return { nested, projects };
 }
 
 /**
@@ -275,4 +350,36 @@ export function migrateDataRoot(
     // 非空或不存在
   }
   return result;
+}
+
+/**
+ * 迁移半途失败时把已到新根的数据并回旧根：failed 项也可能是半迁移态
+ * （moveInto 递归子项抛错时部分子内容已落新根），所以按"新根存在即并回"
+ * 处理而非只看 moved。并回沿用 moveInto 的合并语义：极少数同名冲突以新根
+ * 副本为准——保数据不保位置。返回仍卡在新根、无法搬回的项。
+ */
+export function rollbackMigration(
+  migration: DataRootMigration,
+  oldRoot: string,
+  newRoot: string,
+): string[] {
+  const stuck: string[] = [];
+  const from = path.resolve(newRoot);
+  const to = path.resolve(oldRoot);
+  for (const rel of [...migration.moved, ...migration.failed].reverse()) {
+    const src = path.join(from, rel);
+    try {
+      fs.statSync(src);
+    } catch {
+      continue;
+    }
+    try {
+      moveInto(src, path.join(to, rel));
+    } catch {
+      stuck.push(rel);
+    }
+  }
+  // ini 已被改指新根，数据搬回旧根后必须改回
+  rewriteAvdIniPaths(to, from);
+  return stuck;
 }

@@ -9,6 +9,7 @@ import developerMd from '../../../assets/docs/developer.md?raw';
 import changelogMd from '../../../assets/docs/changelog.md?raw';
 import { api } from '../api.ts';
 import { Markdown } from '../components/Markdown.tsx';
+import { Modal } from '../components/Modal.tsx';
 import { toast } from '../components/Toast.tsx';
 import type { EnvStatus } from '../App.tsx';
 
@@ -185,19 +186,9 @@ export function About({ env }: { env: EnvStatus | null }) {
       </div>
 
       {doc && (
-        <div className="overlay" onClick={() => setDoc(null)}>
-          <div className="modal doc-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h2 className="modal-title">{doc.title}</h2>
-              <button className="modal-close" onClick={() => setDoc(null)}>
-                ✕
-              </button>
-            </div>
-            <div className="modal-body">
-              <Markdown src={doc.body} />
-            </div>
-          </div>
-        </div>
+        <Modal title={doc.title} className="doc-modal" onClose={() => setDoc(null)}>
+          <Markdown src={doc.body} />
+        </Modal>
       )}
     </div>
   );

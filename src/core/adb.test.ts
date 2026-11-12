@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDecorOverlays, parseDevices, parseWmSize, portalProbeApplied, stripToPng, translateInstallError } from './adb.ts';
+import { mobileConnected, parseDecorOverlays, parseDevices, parseWmSize, portalProbeApplied, stripToPng, translateInstallError, wifiDisabled } from './adb.ts';
 
 const DEVICES_OUTPUT = `List of devices attached
 emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1
@@ -79,4 +79,16 @@ test('portalProbeApplied 判断探测源是否已生效', () => {
   assert.ok(!portalProbeApplied(''));
   assert.ok(!portalProbeApplied(undefined));
   assert.ok(!portalProbeApplied('https://www.google.com/generate_204'));
+});
+
+test('mobileConnected 识别已连接的蜂窝网络', () => {
+  assert.ok(mobileConnected('ni{MOBILE[LTE] CONNECTED extra: epc.tmobile.com}'));
+  assert.ok(mobileConnected('ni{MOBILE[NR] CONNECTED extra: epc.tmobile.com}'));
+  assert.ok(!mobileConnected('ni{MOBILE[LTE] DISCONNECTED extra: }'));
+  assert.ok(!mobileConnected('ni{WIFI CONNECTED extra: }'));
+});
+
+test('wifiDisabled 识别 Wi-Fi 开关状态', () => {
+  assert.ok(wifiDisabled('Wifi is disabled\nWifi scanning is only available when wifi is enabled'));
+  assert.ok(!wifiDisabled('Wifi is enabled'));
 });

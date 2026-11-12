@@ -35,17 +35,20 @@ const MAX_SPEED_BYTES = 4 * 1024 * 1024;
 
 type Sock = tls.TLSSocket;
 
-/** 建立一条到目标的 TLS 连接（直连，或经本地代理 CONNECT 隧道） */
+/** 建立一条到目标的 TLS 连接（直连，或经本地代理 CONNECT 隧道）。
+ *  insecure 仅限线路测速：探测只测可达性，放宽证书可兼容截持型代理；
+ *  下载路径（JDK/SDK/更新包等可执行内容）必须校验证书，防 MITM 替换安装包。 */
 function connect(
   target: { host: string; path: string },
   viaProxy: boolean,
   proxyPort: number,
   timeoutMs: number,
+  insecure: boolean,
 ): Promise<Sock> {
   return new Promise((resolve, reject) => {
     const fail = (e: Error) => reject(e);
     if (!viaProxy) {
-      const s = tls.connect({ host: target.host, port: 443, servername: target.host, rejectUnauthorized: false });
+      const s = tls.connect({ host: target.host, port: 443, servername: target.host, rejectUnauthorized: !insecure });
       s.setTimeout(timeoutMs, () => {
         s.destroy();
         reject(new Error('timeout'));
@@ -87,7 +90,7 @@ function connect(
       // raw socket 的连接超时必须清除：否则升级后空闲 timeoutMs 即被切断，
       // 与消费方（下载 30s 空闲）的节奏冲突
       sock.setTimeout(0);
-      const s = tls.connect({ socket: sock, servername: target.host, rejectUnauthorized: false });
+      const s = tls.connect({ socket: sock, servername: target.host, rejectUnauthorized: !insecure });
       s.setTimeout(timeoutMs, () => {
         s.destroy();
         reject(new Error('timeout'));
@@ -104,7 +107,7 @@ function connect(
 
 /** 一次 HEAD 请求测延迟（毫秒） */
 async function headOnce(target: { host: string; path: string }, viaProxy: boolean, proxyPort: number): Promise<number> {
-  const s = await connect(target, viaProxy, proxyPort, 6000);
+  const s = await connect(target, viaProxy, proxyPort, 6000, true);
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
     s.setTimeout(6000, () => {
@@ -126,7 +129,7 @@ async function headOnce(target: { host: string; path: string }, viaProxy: boolea
 
 /** 一次完整 GET 实测下载速度（字节/秒） */
 async function speedOnce(target: { host: string; path: string }, viaProxy: boolean, proxyPort: number): Promise<number> {
-  const s = await connect(target, viaProxy, proxyPort, 8000);
+  const s = await connect(target, viaProxy, proxyPort, 8000, true);
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
     let bytes = 0;
@@ -233,7 +236,7 @@ async function getOnce(
   opts: DlOptions,
   sink: (chunk: Buffer) => Promise<void>,
 ): Promise<{ status: number; location?: string; bytes: number; total: number }> {
-  const s = await connect(target, viaProxy, proxyPort, 10_000);
+  const s = await connect(target, viaProxy, proxyPort, 10_000, false);
   return new Promise((resolve, reject) => {
     let header = '';
     let meta: { status: number; location?: string; total: number } | null = null;

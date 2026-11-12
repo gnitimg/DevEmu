@@ -12,6 +12,8 @@ export class ShapingProxy {
   private waiters: Array<{ n: number; resolve: () => void }> = [];
   private port = 0;
   private closed = false;
+  private clients = new Set<net.Socket>();
+  private tunnels = new Set<{ client: net.Socket; remote: net.Socket }>();
   private readonly maxBps: number;
   private readonly upstream?: { port: number };
 
@@ -41,6 +43,16 @@ export class ShapingProxy {
     this.server = null;
     for (const w of this.waiters) w.resolve();
     this.waiters = [];
+    // 常态下存量 socket 随下载进程消亡；close 时处于上游连接/握手窗口的
+    // socket 会永久悬挂，必须显式销毁。快照遍历：destroy 触发 close→bye 会
+    // 从 Set 里删项，不能边迭代边变
+    const pairs = [...this.tunnels];
+    for (const { client, remote } of pairs) {
+      client.destroy();
+      remote.destroy();
+    }
+    const stale = [...this.clients];
+    for (const client of stale) client.destroy();
   }
 
   get listenPort(): number {
@@ -78,6 +90,9 @@ export class ShapingProxy {
   }
 
   private onConnection(client: net.Socket): void {
+    // 握手未完成（CONNECT 头还没解析完）的连接也要登记，close 时才能兜住
+    this.clients.add(client);
+    client.once('close', () => this.clients.delete(client));
     client.once('error', () => client.destroy());
     let head = '';
     const onData = (chunk: Buffer) => {
@@ -107,8 +122,9 @@ export class ShapingProxy {
       const bail = (sock: net.Socket, message: string) => {
         sock.destroy();
         if (!client.destroyed) {
-          client.write(`HTTP/1.1 502 ${message}\r\n\r\n`);
-          client.destroy();
+          // end 而非 destroy：502 随 FIN 送达；同步 destroy 会 RST，
+          // sdkmanager 只见连接重置收不到错误原因
+          client.end(`HTTP/1.1 502 ${message}\r\n\r\n`);
         }
       };
       if (this.upstream) {
@@ -151,6 +167,8 @@ export class ShapingProxy {
         return;
       }
       client.write('HTTP/1.1 200 Connection established\r\n\r\n');
+      const pair = { client, remote };
+      this.tunnels.add(pair);
 
       // 下行（远端 → sdkmanager）是下载数据，整形限速；上行走透传
       const pumpDown = async (chunk: Buffer) => {
@@ -182,6 +200,7 @@ export class ShapingProxy {
       });
       remote.on('drain', () => client.resume());
       const bye = () => {
+        this.tunnels.delete(pair);
         client.destroy();
         remote.destroy();
       };

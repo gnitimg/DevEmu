@@ -28,6 +28,10 @@ for (const state of ['current', 'exited', 'replaced'] as const) {
       sdk: { adb: 'test-adb' },
       scope: { kind: 'shared' },
       config: { 'hw.device.name': 'pixel_9_pro' },
+      // 设备内名称与 DevEmu/窗口标题统一，必须先于自动安装生效
+      setGuestDeviceName: async () => {
+        calls.push('deviceName');
+      },
       autoInstallAfterBoot: () => calls.push('install'),
       restoreDeviceDecorations: async () => {
         calls.push('decorations');
@@ -35,13 +39,18 @@ for (const state of ['current', 'exited', 'replaced'] as const) {
       applyPortalProbes: async () => {
         calls.push('portal');
       },
+      preferCellularNetwork: async () => {
+        calls.push('cellular');
+      },
     }) as (ok: boolean) => Promise<void>;
     await callback(false);
     assert.deepEqual(calls, []);
     await callback(true);
     assert.deepEqual(
       calls,
-      state === 'current' ? ['install', 'decorations', 'portal'] : [],
+      state === 'current'
+        ? ['deviceName', 'install', 'decorations', 'portal', 'cellular']
+        : [],
     );
   });
 }

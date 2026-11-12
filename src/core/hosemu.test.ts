@@ -18,7 +18,9 @@ import {
   parseHosList,
   parseHosScreenProfiles,
   patchHosCpuCores,
+  patchHosHardware,
   pickCreatableProfiles,
+  renameHosAvd,
 } from './hosemu.ts';
 
 function tmpDir(): string {
@@ -199,6 +201,39 @@ test('patchHosCpuCores 改写或补写实例 config.ini 的核数', async () => 
   await patchHosCpuCores(ini, 6);
   assert.match(fs.readFileSync(ini, 'utf8'), /^hw\.cpu\.ncore=6\r?$/m);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('patchHosHardware 同时改写内存与核数', async () => {
+  const dir = tmpDir();
+  const ini = path.join(dir, 'config.ini');
+  fs.writeFileSync(ini, 'name=x\nhw.ramSize=4096\nhw.cpu.ncore=4\nhw.dataPartitionSize=6144\n');
+  await patchHosHardware(ini, { ramMb: 6144, cpuCores: 8 });
+  const text = fs.readFileSync(ini, 'utf8');
+  assert.match(text, /^hw\.ramSize=6144$/m);
+  assert.match(text, /^hw\.cpu\.ncore=8$/m);
+  assert.match(text, /^hw\.dataPartitionSize=6144$/m);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('renameHosAvd 搬目录并同步主配置与伴随 ini', async () => {
+  const root = tmpDir();
+  const oldDir = path.join(root, 'Old Name');
+  fs.mkdirSync(oldDir);
+  fs.writeFileSync(
+    path.join(oldDir, 'config.ini'),
+    'name=Old Name\ninstancePath=C:/emu/Old Name\nhw.ramSize=4096\n',
+  );
+  fs.writeFileSync(path.join(root, 'Old Name.ini'), 'path=C:/emu/Old Name\n');
+
+  await renameHosAvd(oldDir, 'New Name');
+
+  assert.equal(fs.existsSync(oldDir), false);
+  assert.equal(fs.existsSync(path.join(root, 'Old Name.ini')), false);
+  const config = fs.readFileSync(path.join(root, 'New Name', 'config.ini'), 'utf8');
+  assert.match(config, /^name=New Name$/m);
+  assert.match(config, /^instancePath=.*New Name$/m);
+  assert.match(fs.readFileSync(path.join(root, 'New Name.ini'), 'utf8'), /^path=.*New Name$/m);
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('buildUninstallArgs 按设备类型与版本卸载镜像', () => {

@@ -36,6 +36,7 @@ export function RoutePanel({
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState<Partial<Record<'direct' | 'proxy', RouteProbe>>>({});
   const [testing, setTesting] = useState<Partial<Record<'direct' | 'proxy', boolean>>>({});
+  const [error, setError] = useState('');
   const probedRef = useRef(false);
 
   async function probeAll() {
@@ -43,7 +44,8 @@ export function RoutePanel({
     const r = await api.probeRoutes(system);
     if (r.ok) {
       setResults(Object.fromEntries(r.data.map((x) => [x.id, x])));
-    }
+      setError('');
+    } else setError(r.error);
     setTesting({});
   }
 
@@ -53,7 +55,8 @@ export function RoutePanel({
     if (r.ok) {
       const hit = r.data.find((x) => x.id === id);
       if (hit) setResults((cur) => ({ ...cur, [id]: hit }));
-    }
+      setError('');
+    } else setError(r.error);
     setTesting((t) => ({ ...t, [id]: false }));
   }
 
@@ -89,6 +92,7 @@ export function RoutePanel({
       </button>
       {open && (
         <div className="route-rows">
+          {error && <div className="error-line">{error}</div>}
           {rows.map((r) => (
             <div key={r.id} className="route-row">
               <button

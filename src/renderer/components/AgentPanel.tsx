@@ -122,13 +122,6 @@ export function AgentPanel() {
 
       <div className="section">
         <div style={{ padding: '12px 14px 14px' }}>
-          <p className="page-sub" style={{ marginTop: 0 }}>
-            启用后，本机 AI 编程助手（ZCode、Codex CLI 等支持 MCP 的工具）即可直接操作在线虚拟设备：
-            截图、点击、滑动、输入文字、执行 shell、读取界面控件树，用于自动化测试与问题排查。
-          </p>
-          <p className="page-sub" style={{ marginBottom: 10 }}>
-            在客户端配置文件中加入以下 <code className="mono">mcpServers</code> 片段（需要本机已安装 Node.js）：
-          </p>
           <pre className="code-block">
             {tokenAt >= 0 ? (
               <>
@@ -143,9 +136,6 @@ export function AgentPanel() {
               <CopyIcon />
             </button>
           </pre>
-          <p className="page-sub" style={{ marginBottom: 0 }}>
-            安全说明：服务仅监听本机 127.0.0.1，所有请求需携带令牌；令牌等同设备控制权，请勿外泄。
-          </p>
         </div>
       </div>
     </>

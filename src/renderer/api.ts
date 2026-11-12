@@ -2,18 +2,18 @@ import type {
   ApkMeta,
   AvdInfo,
   CameraMode,
+  CrashRecord,
   DeviceDef,
   HarmonyComponent,
   HosAvd,
   HosImage,
   ProjectMeta,
-  RunRecord,
   Settings,
   SdkInfo,
   SystemImage,
 } from '../core/types.ts';
 
-export type { HarmonyComponent, CameraMode, HosAvd, HosImage };
+export type { CrashRecord, HarmonyComponent, CameraMode, HosAvd, HosImage };
 
 export type Scope = { kind: 'project'; projectId: string } | { kind: 'shared' };
 export type R<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -21,8 +21,14 @@ export type EmuDevice = {
   serial: string;
   state: string;
   avdName?: string;
+  /** 'shared' 或 'project:<id>'；同名虚拟机可存在于不同作用域，运行态必须按它匹配 */
+  scopeKey?: string;
   type?: 'android' | 'harmonyos';
 };
+
+export function scopeKeyOf(scope: Scope): string {
+  return scope.kind === 'shared' ? 'shared' : `project:${scope.projectId}`;
+}
 export type SdkPkg = { pkg: string; version: string; desc: string };
 export type HarmonyInfo = {
   sdkRoot: string;
@@ -119,6 +125,15 @@ export function onHosStartFailed(cb: (p: { name: string; error: string }) => voi
       devemu: { onHosStartFailed?: (cb: (p: { name: string; error: string }) => void) => () => void };
     }
   ).devemu.onHosStartFailed;
+  return fn ? fn(cb) : () => undefined;
+}
+
+export function onCrashRecorded(cb: (record: CrashRecord) => void): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onCrashRecorded?: (cb: (record: CrashRecord) => void) => () => void };
+    }
+  ).devemu.onCrashRecorded;
   return fn ? fn(cb) : () => undefined;
 }
 
@@ -304,6 +319,11 @@ export const api = {
       images: SystemImage[];
     }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
+  checkDataRoot: (dir: string) =>
+    call<{ nested: boolean; projects: { id: string; name: string }[] }>(
+      'checkDataRoot',
+      dir,
+    ),
   probeRoutes: (system: 'android' | 'harmonyos') =>
     call<RouteProbe[]>('probeRoutes', system),
   harmonyTargets: () => call<string[]>('harmonyTargets'),
@@ -323,6 +343,10 @@ export const api = {
   hosStart: (name: string) => call<{ needLicense?: boolean }>('hosStart', name),
   hosStop: (name: string) => call<boolean>('hosStop', name),
   hosDelete: (name: string) => call<boolean>('hosDelete', name),
+  hosSetHardware: (name: string, hw: { ramMb?: number; cores?: number }) =>
+    call<boolean>('hosSetHardware', name, hw),
+  hosRename: (name: string, newName: string) =>
+    call<boolean>('hosRename', name, newName),
   hosAcceptLicense: () => call<boolean>('hosAcceptLicense'),
   hosDownloadImage: (deviceType: string, osVersion: string) =>
     call<{ started: boolean; key: string; needLicense?: boolean }>(
@@ -345,7 +369,7 @@ export const api = {
     call<{ active: DownloadItem[]; finished: DownloadItem[] }>('downloadsList'),
   downloadsCancel: (pkg: string) => call<boolean>('downloadsCancel', pkg),
   downloadsRemove: (pkg: string, startedAt: number) =>
-    call<boolean>('downloadsRemove', pkg, startedAt),
+    call<{ uninstalled: boolean }>('downloadsRemove', pkg, startedAt),
   listProjects: () => call<ProjectMeta[]>('listProjects'),
   createProject: (name: string, note?: string) =>
     call<ProjectMeta>('createProject', name, note),
@@ -388,6 +412,10 @@ export const api = {
     ),
   stopEmu: (scope: Scope, avdName: string) =>
     call<boolean>('stopEmu', scope, avdName),
+  restartRunningEmus: () =>
+    call<{ avdName: string; ok: boolean; error?: string }[]>(
+      'restartRunningEmus',
+    ),
   listEmulators: () => call<EmuDevice[]>('listEmulators'),
   openApkDialog: () => call<string | null>('openApkDialog'),
   openDirDialog: (title?: string) =>
@@ -410,17 +438,8 @@ export const api = {
     call<boolean>('clearData', scope, apkId, serial),
   uninstall: (scope: Scope, apkId: string, serial: string) =>
     call<boolean>('uninstall', scope, apkId, serial),
-  recordRun: (
-    scope: Scope,
-    p: {
-      avdName: string;
-      serial: string;
-      apkId?: string;
-      result: string;
-      note?: string;
-    },
-  ) => call<RunRecord>('recordRun', scope, p),
-  listRuns: (scope: Scope) => call<RunRecord[]>('listRuns', scope),
+  listCrashes: (scope: Scope) => call<CrashRecord[]>('listCrashes', scope),
+  readCrash: (scope: Scope, id: string) => call<string>('readCrash', scope, id),
   agentStatus: () => call<AgentStatus>('agentStatus'),
   agentApply: (enabled: boolean, port?: number) =>
     call<AgentStatus>('agentApply', { enabled, port }),

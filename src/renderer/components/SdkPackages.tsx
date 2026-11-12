@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
   onDownloadsChanged,
@@ -133,6 +133,9 @@ export function SdkPackages({
   // 下载快照：多任务互不影响，各按钮只反映自己；任务从进行中消失
   // （完成/取消/失败）时刷新"已安装"列表，装完的包不再停留在"可安装"
   const prevActiveRef = useRef<Set<string>>(new Set());
+  // 入队请求在途标记：IPC 往返窗口内可双击，且同包任务主进程不按包名去重；
+  // 按包记在途，不同包允许并行入队
+  const installBusyRef = useRef(new Set<string>());
   useEffect(
     () =>
       onDownloadsChanged((s) => {
@@ -156,13 +159,22 @@ export function SdkPackages({
     [reloadInstalled, reloadHosImages],
   );
 
-  function install(pkg: string, rect: DOMRect) {
+  async function install(pkg: string, rect: DOMRect) {
+    if (installBusyRef.current.has(pkg)) return;
+    installBusyRef.current.add(pkg);
     flyToDownloads(rect);
-    // 进度与成败提示统一由下载状态弹窗给出
-    void api.sdkInstall(pkg);
+    // 入队前的同步失败（缺 cmdline-tools 等）不产生下载任务，下载快照的
+    // toast 不会触发：这里必须自己反馈
+    try {
+      const r = await api.sdkInstall(pkg);
+      if (!r.ok) toast(r.error);
+    } finally {
+      installBusyRef.current.delete(pkg);
+    }
   }
 
   async function uninstallAndroid(pkg: string) {
+    if (!window.confirm(`卸载 ${pkg}？已安装的组件会被删除。`)) return;
     setBusyPkg(pkg);
     setError('');
     const r = await api.sdkUninstall(pkg);
@@ -177,6 +189,7 @@ export function SdkPackages({
   }
 
   async function uninstallHarmony(c: HarmonyComponent) {
+    if (!window.confirm(`卸载 ${c.name}？该组件将从 SDK 目录删除。`)) return;
     setBusyPkg(c.dir);
     setError('');
     const r = await api.harmonyUninstall(c.dir);
@@ -207,6 +220,7 @@ export function SdkPackages({
   }
 
   async function uninstallHosImage(g: HosImageGroup) {
+    if (!window.confirm(`卸载镜像 ${g.label} · ${g.osVersion}？将删除已下载的镜像文件。`)) return;
     const key = hosImageKey(g.deviceType, g.osVersion);
     setBusyPkg(key);
     setError('');
@@ -235,10 +249,15 @@ export function SdkPackages({
   );
 
   const q = query.trim().toLowerCase();
-  const harmonyShown = q
-    ? harmonyComponents.filter((c) => c.name.toLowerCase().includes(q) || (c.version ?? '').toLowerCase().includes(q))
-    : harmonyComponents;
-  const hosGroups = groupHosImages(hosImages ?? []);
+  // 派生列表记忆化：搜索框每键触发全面板重渲染，分组/过滤是可缓存的纯计算
+  const harmonyShown = useMemo(
+    () =>
+      q
+        ? harmonyComponents.filter((c) => c.name.toLowerCase().includes(q) || (c.version ?? '').toLowerCase().includes(q))
+        : harmonyComponents,
+    [q, harmonyComponents],
+  );
+  const hosGroups = useMemo(() => groupHosImages(hosImages ?? []), [hosImages]);
   const hosInstalled = hosGroups.filter((g) => g.downloaded);
   const hosAvailable = hosGroups.filter((g) => !g.downloaded);
   const familyOptions = HOS_IMAGE_FAMILIES.filter((f) => hosGroups.some((g) => g.family === f.id));
@@ -417,7 +436,10 @@ export function SdkPackages({
   }
 
   const list = (tab === 'installed' ? installed : available) ?? [];
-  const shown = q ? list.filter((e) => e.pkg.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q)) : list;
+  const shown = useMemo(
+    () => (q ? list.filter((e) => e.pkg.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q)) : list),
+    [q, list],
+  );
 
   return (
     <div>

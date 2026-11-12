@@ -27,8 +27,12 @@ async function api(method, path, body) {
         ...(body ? { 'content-type': 'application/json' } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      // 桥接受连接但挂起时工具调用会永久 pending：必须有上限
+      signal: AbortSignal.timeout(180_000),
     });
-  } catch {
+  } catch (e) {
+    if (e && e.name === 'TimeoutError')
+      throw new Error(`DevEmu 控制桥响应超时（${BASE}${path}）`);
     throw new Error(`无法连接 DevEmu 控制桥（${BASE}）：请确认 DevEmu 正在运行且已启用 Agent 接入`);
   }
   if (!res.ok) {

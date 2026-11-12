@@ -142,14 +142,25 @@ export interface ProjectMeta {
   updatedAt: string;
 }
 
-export interface RunRecord {
+export type CrashKind = 'java' | 'native' | 'anr' | 'other';
+
+export interface CrashRecord {
   id: string;
-  avdName: string;
-  apkLabel?: string;
-  packageName?: string;
-  result: 'ok' | 'install-failed' | 'launch-failed' | 'manual';
-  note?: string;
-  screenshot?: string; // 相对 runs/<id>/ 的文件名
-  logcat?: string;
+  /** android = Android 虚拟机，hos = HarmonyOS 虚拟机 */
+  os: 'android' | 'hos';
+  /** 崩溃发生时间（ISO；HOS 历史记录取故障日志自带时间） */
   at: string;
+  /** 设备名称（虚拟机名称） */
+  device: string;
+  /** 故障源：应用包名/进程名；系统级进程为 SYSTEM */
+  source: string;
+  /** 故障源显示名（应用库已知标签） */
+  sourceLabel?: string;
+  kind: CrashKind;
+  /** 报错摘要，完整内容在 log 指向的文件里 */
+  summary: string;
+  /** 详情文件名（相对记录目录） */
+  log?: string;
+  /** 去重键（HOS faultlogger 文件名），避免重启后重复导入 */
+  key?: string;
 }

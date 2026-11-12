@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, onDownloadsChanged, type DownloadItem } from '../api.ts';
+import { sameJson } from '../App.tsx';
 import { fmtTime } from '../components/Modal.tsx';
+import { toast } from '../components/Toast.tsx';
 
 type Snap = { active: DownloadItem[]; finished: DownloadItem[] };
 
@@ -36,14 +38,15 @@ export function Downloads() {
     const fetchList = () =>
       api.downloadsList().then((r) => {
         if (r.ok) {
-          setSnap(r.data);
+          setSnap((cur) => (sameJson(cur, r.data) ? cur : r.data));
           setError('');
         } else setError(r.error);
       }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
     void fetchList();
-    const off = onDownloadsChanged((s) => setSnap(s));
-    // 订阅之外每秒兜底拉取，防错过广播（主进程重启等）
-    const timer = setInterval(fetchList, 1000);
+    // 广播内容与当前相同时（如仅有排队任务、进度无变化）同样跳过重渲染
+    const off = onDownloadsChanged((s) => setSnap((cur) => (sameJson(cur, s) ? cur : s)));
+    // 广播是主路径；低频兜底只覆盖"主进程重启后广播链重建"这类罕见错过
+    const timer = setInterval(fetchList, 10_000);
     return () => {
       off();
       clearInterval(timer);
@@ -79,7 +82,9 @@ export function Downloads() {
                   disabled={cancelling === d.pkg + d.startedAt}
                   onClick={async () => {
                     setCancelling(d.pkg + d.startedAt);
-                    await api.downloadsCancel(d.pkg);
+                    const r = await api.downloadsCancel(d.pkg);
+                    if (!r.ok) toast(r.error);
+                    else if (!r.data) toast('任务已结束，无需取消');
                     setCancelling('');
                   }}
                 >
@@ -127,9 +132,13 @@ export function Downloads() {
                   disabled={removing !== ''}
                   title="卸载组件并删除记录"
                   onClick={async () => {
+                    if (!window.confirm(`卸载「${d.desc || d.pkg}」并删除记录？`)) return;
                     setRemoving(`${d.pkg}${d.startedAt}`);
-                    await api.downloadsRemove(d.pkg, d.startedAt);
+                    const r = await api.downloadsRemove(d.pkg, d.startedAt);
                     setRemoving('');
+                    if (!r.ok) toast(r.error);
+                    else if (r.data.uninstalled) toast(`已卸载「${d.desc || d.pkg}」`, 'ok');
+                    else toast('已删除记录');
                   }}
                 >
                   {removing === `${d.pkg}${d.startedAt}` ? '卸载中' : '卸载'}

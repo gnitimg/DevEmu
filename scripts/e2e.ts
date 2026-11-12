@@ -1,6 +1,6 @@
 /**
  * 端到端验证：真实 SDK 上走完整链路
- * 项目 → 建虚拟机 → 启动 → 等待开机 → 导入 APK → 安装 → 启动 → 截图 → 记录 → 停止
+ * 项目 → 建虚拟机 → 启动 → 等待开机 → 导入 APK → 安装 → 启动 → 截图 → 停止
  * 运行：node scripts/e2e.ts
  */
 import path from 'node:path';
@@ -12,7 +12,6 @@ import { createAvd, deleteAvd, listAvds } from '../src/core/avd.ts';
 import { launchEmulator, stopEmulator } from '../src/core/emulator.ts';
 import { waitBooted, installApk, launchApp, screenshot } from '../src/core/adb.ts';
 import { importApk, apkFilePath } from '../src/core/apk.ts';
-import { recordRun } from '../src/core/runs.ts';
 import { scopeDirs } from '../src/core/env.ts';
 import type { Scope } from '../src/core/types.ts';
 
@@ -70,16 +69,9 @@ async function main(): Promise<void> {
   const shot = await screenshot(sdk.adb, entry.serial);
   log('截图:', shot.length, '字节');
 
-  const run = recordRun(
-    dirs.runsDir,
-    { avdName: AVD_NAME, apkLabel: apk.label, packageName: apk.packageName, result: lau.ok ? 'ok' : 'launch-failed' },
-    { screenshot: shot },
-  );
-  log('测试记录:', run.id, '→', dirs.runsDir);
-
   await stopEmulator(sdk, entry);
   log('模拟器已停止');
-  log('=== E2E 全链路通过（项目与记录保留，可在应用中查看）===');
+  log('=== E2E 全链路通过（项目保留，可在应用中查看）===');
 }
 
 main().catch((e: unknown) => {

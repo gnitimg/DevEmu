@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import type { EmuDevice, Scope } from '../api.ts';
 import type { EnvStatus } from '../App.tsx';
 import { VmPanel } from '../components/VmPanel.tsx';
 import { HosVmPanel } from '../components/HosVmPanel.tsx';
 import { ApkPanel } from '../components/ApkPanel.tsx';
-import { RunsPanel } from '../components/RunsPanel.tsx';
+import { CrashesPanel } from '../components/CrashesPanel.tsx';
 import { Segmented } from '../components/Segmented.tsx';
 
 type System = 'android' | 'harmonyos';
@@ -36,7 +35,6 @@ export function DevicePool({
   onOpenVm?: (name: string, system: System) => void;
 }) {
   const scope = SHARED_SCOPE;
-  const [runsKey, setRunsKey] = useState(0);
 
   return (
     <div>
@@ -57,8 +55,8 @@ export function DevicePool({
               onOpenSdkManage={onOpenSdkManage}
               onOpenVm={(name) => onOpenVm?.(name, 'android')}
             />
-            <ApkPanel scope={scope} emus={emus} onRecorded={() => setRunsKey((k) => k + 1)} />
-            <RunsPanel scope={scope} refreshKey={runsKey} />
+            <ApkPanel scope={scope} emus={emus} />
+            <CrashesPanel scope={scope} os="android" />
           </>
         ) : (
           <>
@@ -68,8 +66,8 @@ export function DevicePool({
               onOpenSdkManage={onOpenSdkManage}
               onOpenVm={(name) => onOpenVm?.(name, 'harmonyos')}
             />
-            <ApkPanel scope={scope} emus={emus} onRecorded={() => setRunsKey((k) => k + 1)} />
-            <RunsPanel scope={scope} refreshKey={runsKey} />
+            <ApkPanel scope={scope} emus={emus} />
+            <CrashesPanel scope={scope} os="hos" />
           </>
         )}
       </div>

@@ -83,7 +83,7 @@ export function listApps(appsDir: string): ApkMeta[] {
   const out: ApkMeta[] = [];
   for (const f of entries) {
     try {
-      // 单个损坏的 meta 文件不能炸掉整个应用库（与 listRoutes/listRuns 同口径）
+      // 单个损坏的 meta 文件不能炸掉整个应用库（与 listRoutes/listCrashes 同口径）
       out.push(JSON.parse(fs.readFileSync(path.join(appsDir, f), 'utf8')) as ApkMeta);
     } catch {
       // 损坏文件跳过

@@ -119,6 +119,17 @@ export function EditVmModal({
   }, [scope, avdName]);
 
   async function save() {
+    // parseHardware 对越界值静默丢弃（保存"成功"但没改）：这里先显式校验
+    const ramN = ram ? Number(ram) : NaN;
+    if (ram && (!Number.isInteger(ramN) || ramN < 1 || ramN > 32)) {
+      setError('内存需为 1–32 GB 的整数');
+      return;
+    }
+    const coresN = cores ? Number(cores) : NaN;
+    if (cores && (!Number.isInteger(coresN) || coresN < 1 || coresN > 16)) {
+      setError('CPU 核数需为 1–16 的整数');
+      return;
+    }
     setSaving(true);
     setError('');
     // 容量入口暂缓：只提交内存与核数，避免把显示档位误写回分区

@@ -18,8 +18,12 @@ test('右键拖动的钩子回调不阻塞输入：移动交给独立线程执�
   // 全局低级鼠标钩子同步等 qemu 的 UI 线程会拖住整机输入：回调里不得做跨进程移动或输出
   assert.doesNotMatch(hookBody, /SetWindowPos|Console\.WriteLine|Layer\.Sync/);
   assert.match(script, /GetCursorPos\(out p\)/);
-  // 按下事件被钩子吞掉后系统按键态不会变为按下，依赖 GetAsyncKeyState() 会让拖动立即中止
-  assert.doesNotMatch(script, /GetAsyncKeyState\s*\(/);
+  // 抬键兜底：钩子被系统静默旁路时由 MoverLoop 轮询异步键状态结束拖动；
+  // buttonSeen 闩锁保证从未观察到按下态就绝不解除（旧断言"不得使用
+  // GetAsyncKeyState"基于"被吞按键不反映到异步键状态"的误诊，已删）
+  assert.match(script, /GetAsyncKeyState\(0x01\)/);
+  assert.match(script, /GetAsyncKeyState\(0x02\)/);
+  assert.match(script, /buttonSeen/);
   assert.match(script, /static void MoverLoop\(\)/);
   // 跨进程等待只允许发生在移动线程；异步投递会堆积过期位置
   assert.match(script, /const uint moveFlags=0x15/);
@@ -29,23 +33,36 @@ test('右键拖动的钩子回调不阻塞输入：移动交给独立线程执�
   assert.match(script, /if \(dragging\) return;/);
 });
 
-test('HarmonyOS 守卫按 pid 定位窗口，实例名不进入脚本', () => {
+test('HarmonyOS 守卫按 pid 定位窗口，实例名只以 base64 传入（用作窗口标题）', () => {
   const serial = hosPillSerial('Pura 90 测试');
-  const script = buildHosWindowGuardScript(4321, serial);
-  // 实例名可含空格/中文/引号：守卫只接收 pid 与 base64url 标识
+  const script = buildHosWindowGuardScript(4321, serial, 'Pura 90 测试');
+  // 实例名可含空格/中文/引号：原样拼进脚本会被引号打断，base64 后仅作标题
   assert.doesNotMatch(script, /Pura 90/);
+  const b64 = script.match(/FromBase64String\('([^']+)'\)/)?.[1];
+  assert.ok(b64, '标题必须 base64 传入');
+  assert.equal(Buffer.from(b64, 'base64').toString('utf8'), 'Pura 90 测试');
   assert.match(script, /\$qemuId=4321/);
   assert.match(script, /\[DevEmuGroup\.Native\]::Watch\(\[uint32\]\$qemuId\)/);
   assert.match(script, /static void MoverLoop\(\)/);
   // Qt 模拟器自己定尺寸；守卫再钳制会与 Qt 互相改回，表现为窗口持续抽搐
-  assert.match(script, /::Init\(\[uint32\]\$ownerId, '[^']+', \$false\)/);
-  assert.throws(() => buildHosWindowGuardScript(0, serial), /非法窗口组/);
-  assert.throws(() => buildHosWindowGuardScript(4321, "a'; exit 0; #"), /非法窗口组/);
+  assert.match(script, /::Init\(\[uint32\]\$ownerId, '[^']+', \$false, \$title\)/);
+  assert.throws(() => buildHosWindowGuardScript(0, serial, 'x'), /非法窗口组/);
+  assert.throws(() => buildHosWindowGuardScript(4321, "a'; exit 0; #", 'x'), /非法窗口组/);
+  assert.throws(() => buildHosWindowGuardScript(4321, serial, '  '), /非法窗口组/);
 });
 
 test('Android 守卫保留 75% 尺寸钳制', () => {
   const script = buildWindowGuardScript('test', 'emulator-5554');
-  assert.match(script, /::Init\(\[uint32\]\$ownerId, '[^']+', \$true\)/);
+  assert.match(script, /::Init\(\[uint32\]\$ownerId, '[^']+', \$true, \$title\)/);
+});
+
+test('守卫把设备窗口标题改写为设备名称', () => {
+  const script = buildWindowGuardScript('test', 'emulator-5554');
+  // Qt 启动/旋转会改写标题，Tick 里低频复查并写回
+  assert.match(script, /SetWindowTextW\(device, windowTitle\)/);
+  assert.match(script, /EnsureTitle\(\);/);
+  // test → base64
+  assert.match(script, /FromBase64String\('dGVzdA=='\)/);
 });
 
 test(

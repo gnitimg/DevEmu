@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, osFromImagePkg, prettyModel, type EmuDevice, type Scope } from '../api.ts';
-import { RunsPanel } from '../components/RunsPanel.tsx';
+import { api, osFromImagePkg, prettyModel, scopeKeyOf, type EmuDevice, type Scope } from '../api.ts';
+import { CrashesPanel } from '../components/CrashesPanel.tsx';
+import { DeviceAppsPanel } from '../components/DeviceAppsPanel.tsx';
 import { decimalInput, gbFromMb } from '../components/VmEdit.tsx';
 import { displayedStorageGb } from '../../core/storageUnits.ts';
-import { toast } from '../components/Toast.tsx';
-import { fmtTime } from '../components/Modal.tsx';
-import type { ApkMeta, AvdInfo } from '../../core/types.ts';
+import type { AvdInfo } from '../../core/types.ts';
 
 export function DeviceDetail({
   avdName,
@@ -26,46 +25,52 @@ export function DeviceDetail({
 }) {
   const [avd, setAvd] = useState<AvdInfo | null>(null);
   const [hw, setHw] = useState<{ ramMb?: number; cores?: number; storageGb?: number } | null>(null);
-  const [apps, setApps] = useState<ApkMeta[] | null>(null);
   // 点击启动的时刻（null=非启动中）；上限按时间戳判定，定时器会被轮询重置而永不触发
   const [starting, setStarting] = useState<number | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [runsKey] = useState(0);
   const [editing, setEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [ram, setRam] = useState('');
   const [cores, setCores] = useState('');
   const [storage, setStorage] = useState('');
   const [saving, setSaving] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [apkBusy, setApkBusy] = useState('');
 
   const reload = useCallback(() => {
     api.listAvds(scope).then((r) => {
-      if (r.ok) setAvd(r.data.find((a) => a.name === avdName) ?? null);
-      else setError(r.error);
+      if (r.ok) {
+        setError('');
+        setAvd(r.data.find((a) => a.name === avdName) ?? null);
+      } else setError(r.error);
     });
     api.avdHardware(scope, avdName).then((r) => {
       if (r.ok) setHw(r.data);
-    });
-    api.listApps(scope).then((r) => {
-      if (r.ok) setApps(r.data);
     });
   }, [avdName, scope]);
 
   useEffect(reload, [reload]);
 
-  // offline 也是 qemu 在跑（adb 通道抖动）：按"运行中"处理，与 VmPanel 同口径
+  // offline 也是 qemu 在跑（adb 通道抖动）：按"运行中"处理，与 VmPanel 同口径。
+  // 同名虚拟机可存在于不同作用域，必须按 scopeKey 认领，否则会把别的
+  // 作用域实例当成这台，更新 APK 就会装错设备
   const run = emus.find(
-    (e) => e.serial.startsWith('emulator-') && e.avdName === avdName,
+    (e) =>
+      e.serial.startsWith('emulator-') &&
+      e.avdName === avdName &&
+      e.scopeKey === scopeKeyOf(scope),
   );
 
-  // 启动中：设备上线或超时（与主进程 waitBooted 300s 对齐留缓冲）后清除
+  // 启动中：设备上线或超时（与主进程 waitBooted 300s 对齐留缓冲）后清除。
+  // 用定时器而不是靠重渲染判定：设备列表快照不变时不会重渲染，超时检查会永不执行
   useEffect(() => {
     if (starting === null) return;
-    if (run || Date.now() - starting > 320_000) setStarting(null);
+    if (run) {
+      setStarting(null);
+      return;
+    }
+    const left = starting + 320_000 - Date.now();
+    const t = setTimeout(() => setStarting(null), Math.max(0, left));
+    return () => clearTimeout(t);
   }, [run, starting]);
 
   async function launch() {
@@ -141,10 +146,11 @@ export function DeviceDetail({
       storageGb: storage ? Number(storage) : undefined,
     };
     const currentStorage = hw?.storageGb !== undefined ? Math.round(hw.storageGb) : undefined;
+    // 清空的输入框视为"保持现状"：undefined 混入比较会误判 changed 导致白重启
     const changed =
-      next.ramMb !== hw?.ramMb ||
-      next.cores !== hw?.cores ||
-      next.storageGb !== currentStorage;
+      (next.ramMb !== undefined && next.ramMb !== hw?.ramMb) ||
+      (next.cores !== undefined && next.cores !== hw?.cores) ||
+      (next.storageGb !== undefined && next.storageGb !== currentStorage);
     if (trimmed === avdName && !changed) {
       setEditing(false);
       return;
@@ -206,48 +212,6 @@ export function DeviceDetail({
     if (restart) relaunch(trimmed);
   }
 
-  async function doImport() {
-    setImporting(true);
-    setError('');
-    const d = await api.openApkDialog();
-    if (d.ok && d.data) {
-      const r = await api.importApk(scope, d.data);
-      if (!r.ok) {
-        toast(`导入失败：${r.error}`);
-        setImporting(false);
-        return;
-      }
-      reload();
-      // 设备在运行则直接安装（仅 APK；HAP 需 HarmonyOS 设备，在应用库中安装）
-      if (run && r.data.kind !== 'hap') {
-        setInstalling(true);
-        const ir = await api.install(scope, r.data.id, run.serial);
-        if (!ir.ok || !ir.data.ok) {
-          toast(`${r.data.label ?? r.data.fileName} 安装失败：${ir.ok ? ir.data.error ?? '未知错误' : ir.error}`);
-        }
-        setInstalling(false);
-      }
-    }
-    setImporting(false);
-  }
-
-  async function apkAction(apk: ApkMeta, action: 'update' | 'remove') {
-    setApkBusy(apk.id);
-    setError('');
-    if (action === 'update') {
-      const r = await api.install(scope, apk.id, run!.serial);
-      if (!r.ok || !r.data.ok) {
-        toast(`${apk.label ?? apk.fileName} 安装失败：${r.ok ? r.data.error ?? '未知错误' : r.error}`);
-      }
-      setApkBusy('');
-      return;
-    }
-    const r = await api.removeApk(scope, apk.id);
-    if (!r.ok) setError(r.error);
-    reload();
-    setApkBusy('');
-  }
-
   return (
     <div>
       <button className="back-link" onClick={onBack}>
@@ -302,6 +266,10 @@ export function DeviceDetail({
                       style={{ width: 180 }}
                       value={nameDraft}
                       onChange={(e) => setNameDraft(e.target.value.replace(/[^\w.-]/g, ''))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void saveEdit();
+                        if (e.key === 'Escape') setEditing(false);
+                      }}
                     />
                   ) : (
                     <span className="mono">{avdName}</span>
@@ -320,7 +288,7 @@ export function DeviceDetail({
                   )}
                   {run && (
                     <span className="mono" style={{ color: 'var(--text-3)', marginLeft: 10 }}>
-                      {run.serial}
+                      {avdName}
                     </span>
                   )}
                 </td>
@@ -370,76 +338,16 @@ export function DeviceDetail({
           </table>
         </div>
 
-        <div className="section" style={{ marginBottom: 0 }}>
-          <div className="section-head">
-            <h2 className="section-title">测试的应用</h2>
-            <div className="section-actions">
-              <button className="btn" onClick={doImport} disabled={importing || installing}>
-                {installing ? '安装中' : importing ? '导入中' : '导入'}
-              </button>
-            </div>
-          </div>
-          {apps === null ? (
-            <div className="empty">
-              <span className="spinner" />
-            </div>
-          ) : apps.length === 0 ? (
-            <div className="empty">暂无应用</div>
-          ) : (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th style={{ width: 44 }}>编号</th>
-                  <th>应用名称</th>
-                  <th style={{ width: 70 }}>版本号</th>
-                  <th style={{ width: 90 }}>导入时间</th>
-                  <th style={{ width: 130 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {apps.map((apk, i) => (
-                  <tr key={apk.id}>
-                    <td className="num">{i + 1}</td>
-                    <td title={apk.packageName ?? apk.fileName}>
-                      <span className="chip" style={{ marginRight: 7 }}>
-                        {apk.kind === 'hap' ? 'HAP' : 'APK'}
-                      </span>
-                      {apk.label ?? apk.fileName}
-                    </td>
-                    <td className="num">{apk.versionName ?? '—'}</td>
-                    <td className="num">{fmtTime(apk.importedAt)}</td>
-                    <td>
-                      <div className="row-actions">
-                        {apk.kind !== 'hap' && (
-                          <button
-                            className="btn btn-sm"
-                            disabled={!run || apkBusy !== ''}
-                            title={run ? '安装到设备（覆盖更新）' : '先启动设备'}
-                            onClick={() => apkAction(apk, 'update')}
-                          >
-                            {apkBusy === apk.id ? '更新中' : '更新'}
-                          </button>
-                        )}
-                        <button
-                          className="btn btn-sm btn-danger"
-                          disabled={apkBusy !== ''}
-                          onClick={() => {
-                            if (window.confirm(`从库中移除 ${apk.fileName}？`)) apkAction(apk, 'remove');
-                          }}
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <DeviceAppsPanel
+          scope={scope}
+          os="android"
+          running={!!run}
+          serial={run?.serial}
+          emus={emus}
+        />
       </div>
       <div style={{ marginTop: 16 }}>
-        <RunsPanel scope={scope} refreshKey={runsKey} />
+        <CrashesPanel scope={scope} os="android" device={avdName} />
       </div>
       {error && <div className="error-line" style={{ marginTop: 12 }}>{error}</div>}
     </div>

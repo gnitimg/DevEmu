@@ -12,16 +12,20 @@ import { prepareEmulatorSkin, readAvdConfig, WIPE_FLAG } from './avd.ts';
 import {
   applyPortalProbes,
   installApk,
+  preferCellularNetwork,
   restoreDeviceDecorations,
+  setGuestDeviceName,
   waitBooted,
 } from './adb.ts';
 import { apkFilePath, listApps } from './apk.ts';
+import { recordCrash } from './crashes.ts';
+import { watchAndroidCrashes } from './crashwatch.ts';
 import {
   getShellGeometry,
   repositionEmulatorWindow,
   startWindowGuard,
 } from './win.ts';
-import type { CameraMode, Scope, SdkInfo } from './types.ts';
+import type { CameraMode, CrashRecord, Scope, SdkInfo } from './types.ts';
 
 export interface RunningEmu {
   avdName: string;
@@ -34,6 +38,97 @@ export interface RunningEmu {
 }
 
 const running = new Map<string, RunningEmu>(); // key: avdName@scopeKey
+// pickPort 命中到 running.set 之间存在多个 await 的窗口：预留集挡住并发的
+// 第二次 launch 选中同一端口（qemu 双实例同端口必然起不来）
+const reservedPorts = new Set<number>();
+
+/**
+ * 运行中实例落盘：应用重启后 qemu 仍在跑，而 adb 只暴露 avd 名、不暴露
+ * AVD_HOME。同名虚拟机可同时存在于设备池与项目作用域，只靠名字会认错实例，
+ * 所以把 serial→scopeKey 存下来；只有 pid 仍存活的条目才算数。
+ */
+interface PersistedRunning {
+  serial: string;
+  avdName: string;
+  scopeKey: string;
+  port: number;
+  pid?: number;
+  startedAt: number;
+}
+
+let registryRoot: string | null = null;
+
+function runningRegistryPath(root: string): string {
+  return path.join(root, 'running-emulators.json');
+}
+
+function persistRunning(): void {
+  if (!registryRoot) return;
+  try {
+    const entries: PersistedRunning[] = [...running.values()].map((e) => ({
+      serial: e.serial,
+      avdName: e.avdName,
+      scopeKey: e.scopeKey,
+      port: e.port,
+      pid: e.pid,
+      startedAt: e.startedAt,
+    }));
+    const file = runningRegistryPath(registryRoot);
+    fs.mkdirSync(registryRoot, { recursive: true });
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(entries, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
+  } catch {
+    // 仅用于重启后恢复作用域归属，写失败不影响启动
+  }
+}
+
+// emu:list 3s 轮询每轮要读本注册表多次（runningScopeMap×2 + stop 兜底），
+// 读盘 + 逐条 pidAlive 探测是重复成本：按 mtime 缓存，persistRunning 的
+// rename 写入会改 mtime 自然失效；返回数组调用方只读不持有
+let persistedCache: { mtimeMs: number; dataRoot: string; entries: PersistedRunning[] } | null = null;
+
+export function listPersistedRunning(dataRoot: string): PersistedRunning[] {
+  const file = runningRegistryPath(dataRoot);
+  let mtimeMs = -1;
+  try {
+    mtimeMs = fs.statSync(file).mtimeMs;
+  } catch {
+    mtimeMs = -1;
+  }
+  if (persistedCache && persistedCache.dataRoot === dataRoot && persistedCache.mtimeMs === mtimeMs) {
+    return persistedCache.entries;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    persistedCache = { mtimeMs, dataRoot, entries: [] };
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    persistedCache = { mtimeMs, dataRoot, entries: [] };
+    return [];
+  }
+  const live: PersistedRunning[] = [];
+  for (const item of raw) {
+    const e = item as Partial<PersistedRunning> | null;
+    if (!e || typeof e !== 'object') continue;
+    if (typeof e.serial !== 'string' || !e.serial.startsWith('emulator-')) continue;
+    if (typeof e.avdName !== 'string' || typeof e.scopeKey !== 'string') continue;
+    if (typeof e.pid !== 'number' || !pidAlive(e.pid)) continue;
+    live.push({
+      serial: e.serial,
+      avdName: e.avdName,
+      scopeKey: e.scopeKey,
+      port: Number(e.port) || 0,
+      pid: e.pid,
+      startedAt: Number(e.startedAt) || 0,
+    });
+  }
+  persistedCache = { mtimeMs, dataRoot, entries: live };
+  return live;
+}
 
 export function listRunning(): RunningEmu[] {
   return [...running.values()];
@@ -60,7 +155,14 @@ export async function pickPort(): Promise<number> {
   const used = new Set([...running.values()].map((e) => e.port));
   let port = 5554;
   while (port <= 5700) {
-    if (!used.has(port) && (await portFree(port))) return port;
+    if (used.has(port) || reservedPorts.has(port)) {
+      port += 2;
+      continue;
+    }
+    // 先占位再探测：has 与 add 之间隔着 await 时，并发两次 launch 会双双通过检查
+    reservedPorts.add(port);
+    if (await portFree(port)) return port;
+    reservedPorts.delete(port);
     port += 2;
   }
   throw new Error('没有可用的模拟器端口（5554-5700）');
@@ -86,6 +188,19 @@ function pidAlive(pid: number | undefined): boolean {
     // EPERM = 进程存在但无权限发信号，必须按存活处理，否则注册表被误清后双重启动
     return err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPERM';
   }
+}
+
+function broadcastCrash(record: CrashRecord): void {
+  void import('electron')
+    .then(({ BrowserWindow }) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (w.isDestroyed() || w.webContents.isDestroyed()) continue;
+        // 与 ipc.ts broadcast 同口径：药丸/定位面板不消费主窗频道
+        if (w.getTitle().startsWith('devemu-')) continue;
+        w.webContents.send('crash:recorded', record);
+      }
+    })
+    .catch(() => undefined);
 }
 
 /** 把该作用域库中的应用补装到设备（已装跳过），结果广播到各窗口。
@@ -158,14 +273,19 @@ export function launchEmulator(
   const sKey =
     scope.kind === 'shared' ? 'shared' : `project:${scope.projectId}`;
   const key = `${avdName}@${sKey}`;
+  registryRoot = dataRoot;
   const prev = running.get(key);
   if (prev && pidAlive(prev.pid)) {
     return Promise.reject(new Error('该虚拟机已在运行'));
   }
   // 注册表残留（qemu 已退出但 exit 未清理）：清掉放行重新启动
-  running.delete(key);
+  if (running.delete(key)) persistRunning();
   return pickPort().then((port) =>
-    startOnPort(sdk, dataRoot, dirs, scope, sKey, avdName, port, opts),
+    startOnPort(sdk, dataRoot, dirs, scope, sKey, avdName, port, opts).catch((e) => {
+      // spawn 前失败（config/端口/相机馈送抛错）：释放预留端口，否则池被占死
+      reservedPorts.delete(port);
+      throw e;
+    }),
   );
 }
 
@@ -200,8 +320,21 @@ async function startOnPort(
     '-netspeed',
     'full',
   ];
+  // 不指定时 slirp 沿用启动时的宿主 DNS，宿主换网/多网卡/VPN 残留会让 10.0.2.3
+  // 整段超时（guest 表现为“已连接但打不开网页”），固定成国内公共解析器
+  args.push('-dns-server', '223.5.5.5,119.29.29.29');
   let grpcPort = port + 3000;
-  while (!(await portFree(grpcPort))) grpcPort++;
+  for (;;) {
+    if (reservedPorts.has(grpcPort)) {
+      grpcPort++;
+      continue;
+    }
+    // 与 pickPort 同口径先占位再探测，防并发 launch 选到同值
+    reservedPorts.add(grpcPort);
+    if (await portFree(grpcPort)) break;
+    reservedPorts.delete(grpcPort);
+    grpcPort++;
+  }
   args.push('-grpc', String(grpcPort), '-grpc-use-token');
   // swiftshader_indirect 在 API 35+ 预览镜像上整屏全黑（2026-10 实测 guest/窗口 0% 点亮），
   // angle_indirect 双路正常；个别机器 angle 黑屏时可在设置切回软件渲染
@@ -210,19 +343,43 @@ async function startOnPort(
   if (opts.httpProxy) args.push('-http-proxy', opts.httpProxy);
   if (wipeData) args.push('-wipe-data');
   if (coldBoot) args.push('-no-snapshot-load');
-  // 相机来源：屏幕模式先启动截屏馈送，等首帧落盘再拉起模拟器（避免相机源读到空文件回退默认相机）
-  if (opts.camera === 'screen') {
-    const { startScreenFeed, screenFeedReady } = await import('./camera.ts');
-    args.push(...cameraArgs('screen', startScreenFeed(dataRoot)));
-    await screenFeedReady();
-  } else {
-    args.push(...cameraArgs(opts.camera, '', opts.webcam));
+  let entry: RunningEmu;
+  let child: ChildProcess;
+  try {
+    // 相机来源：屏幕模式先启动截屏馈送，等首帧落盘再拉起模拟器（避免相机源读到空文件回退默认相机）
+    if (opts.camera === 'screen') {
+      const { startScreenFeed, screenFeedReady } = await import('./camera.ts');
+      args.push(...cameraArgs('screen', startScreenFeed(dataRoot)));
+      await screenFeedReady();
+    } else {
+      args.push(...cameraArgs(opts.camera, '', opts.webcam));
+    }
+    child = spawn(sdk.emulator, args, {
+      env: { ...process.env, ...scopeEnv(dirs) },
+      cwd: path.dirname(sdk.emulator),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    entry = {
+      avdName,
+      scopeKey: sKey,
+      port,
+      serial: `emulator-${port}`,
+      pid: child.pid,
+      startedAt: Date.now(),
+      child,
+    };
+    // spawn 即在册：确认窗口与此前各 await 期间再来的 emu:launch 不再因
+    // 注册表滞后选中同一端口
+    running.set(`${avdName}@${sKey}`, entry);
+    persistRunning();
+    reservedPorts.delete(port);
+    reservedPorts.delete(grpcPort);
+  } catch (e) {
+    // spawn 前失败：预留端口必须释放，否则端口池被永久占死
+    reservedPorts.delete(port);
+    reservedPorts.delete(grpcPort);
+    throw e;
   }
-  const child = spawn(sdk.emulator, args, {
-    env: { ...process.env, ...scopeEnv(dirs) },
-    cwd: path.dirname(sdk.emulator),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
 
   let stderrTail = '';
   child.stderr?.on('data', (c: Buffer) => {
@@ -232,16 +389,42 @@ async function startOnPort(
   // stdout 写入上，表现为模拟器卡死/黑屏假死——必须持续丢弃
   child.stdout?.on('data', () => undefined);
 
+  // 崩溃与启动并行监听：能收到开机阶段 system_server 等系统进程的崩溃
+  const labels = new Map<string, string>();
+  for (const app of listApps(dirs.appsDir)) {
+    if (app.packageName) labels.set(app.packageName, app.label ?? app.fileName);
+  }
+  let crashWatch: { stop(): void } | undefined = watchAndroidCrashes(
+    sdk.adb,
+    entry.serial,
+    (event) => {
+      try {
+        const record = recordCrash(
+          dirs.crashesDir,
+          {
+            os: 'android',
+            at: event.at.toISOString(),
+            device: avdName,
+            source: event.source,
+            sourceLabel:
+              event.source === 'SYSTEM' ? undefined : labels.get(event.source),
+            kind: event.kind,
+            summary: event.summary,
+          },
+          event.log || event.summary,
+        );
+        broadcastCrash(record);
+      } catch {
+        // 记录落盘失败不能影响模拟器运行
+      }
+    },
+  );
+  const stopCrashWatch = () => {
+    crashWatch?.stop();
+    crashWatch = undefined;
+  };
+
   return new Promise((resolve, reject) => {
-    const entry: RunningEmu = {
-      avdName,
-      scopeKey: sKey,
-      port,
-      serial: `emulator-${port}`,
-      pid: child.pid,
-      startedAt: Date.now(),
-      child,
-    };
     let settled = false;
     // 屏幕相机馈送随模拟器退出/启动失败而释放；exit 与 error 可能双发，只释放一次
     let feedHeld = opts.camera === 'screen';
@@ -254,6 +437,8 @@ async function startOnPort(
     };
     const onExit = () => {
       running.delete(`${avdName}@${sKey}`);
+      persistRunning();
+      stopCrashWatch();
       // 药丸窗口随模拟器一起关闭（electron 未加载时静默跳过）
       stopLocation(entry.serial);
       void import('./shell.ts')
@@ -271,6 +456,10 @@ async function startOnPort(
     child.on('exit', onExit);
     child.on('error', (err) => {
       releaseFeed();
+      stopCrashWatch();
+      // spawn 失败只发 error 不发 exit：注册表须同步清掉
+      running.delete(`${avdName}@${sKey}`);
+      persistRunning();
       if (!settled) {
         settled = true;
         reject(err);
@@ -279,8 +468,7 @@ async function startOnPort(
     setTimeout(() => {
       if (!settled) {
         settled = true;
-        running.set(`${avdName}@${sKey}`, entry);
-        if (coldBoot) {
+        if (coldBoot && pidAlive(child.pid)) {
           // 进程已存活才清除标记：启动失败时保留，重试仍走冷启动
           try {
             fs.rmSync(coldBootFlag, { force: true });
@@ -300,6 +488,10 @@ async function startOnPort(
         void waitBooted(sdk.adb, entry.serial, 300_000)
           .then(async (ok) => {
             if (!ok || running.get(`${avdName}@${sKey}`) !== entry) return;
+            // 设备内「设备名称」（设置 → 关于）与 DevEmu、窗口标题保持同一名称
+            await setGuestDeviceName(sdk.adb, entry.serial, avdName).catch(
+              () => undefined,
+            );
             // 自动补装挂到同一就绪点（不再自起第二个 waitBooted 轮询循环）
             autoInstallAfterBoot(sdk, scope, avdName, entry.serial);
             if (process.platform === 'win32' && loadAppSettings().pillEnabled !== false) {
@@ -319,7 +511,12 @@ async function startOnPort(
             }
             await restoreDeviceDecorations(sdk.adb, entry.serial, config['hw.device.name'] ?? '')
               .catch(() => undefined);
-            await applyPortalProbes(sdk.adb, entry.serial);
+            const probesChanged = await applyPortalProbes(sdk.adb, entry.serial).catch(
+              () => false,
+            );
+            await preferCellularNetwork(sdk.adb, entry.serial, probesChanged).catch(
+              () => undefined,
+            );
           })
           .catch(() => undefined);
         resolve(entry);

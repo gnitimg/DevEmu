@@ -9,6 +9,12 @@ function openLink(e: MouseEvent, raw: string): void {
   void api.openUrl(href);
 }
 
+/** 渲染进 DOM 的 href 只放行 http(s)：远端内容可注入 javascript:/data: 等协议值，
+ *  点击虽被 preventDefault 拦下，但 href 原样留在 DOM 仍会被中键/复制链接触发 */
+function domHref(raw: string): string {
+  return /^https?:\/\//i.test(raw) ? raw : '#';
+}
+
 /** 行内格式：**加粗**、`代码` 与 [链接](url) */
 function inline(text: string, keyBase: string): ReactNode[] {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g).filter(Boolean);
@@ -17,8 +23,9 @@ function inline(text: string, keyBase: string): ReactNode[] {
     if (p.startsWith('`') && p.endsWith('`')) return <code key={`${keyBase}-c${i}`}>{p.slice(1, -1)}</code>;
     const link = p.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (link) {
+      const raw = link[2]!.trim();
       return (
-        <a key={`${keyBase}-l${i}`} href={link[2]!.trim()} onClick={(e) => openLink(e, link[2]!.trim())}>
+        <a key={`${keyBase}-l${i}`} href={domHref(raw)} onClick={(e) => openLink(e, raw)}>
           {link[1]!}
         </a>
       );

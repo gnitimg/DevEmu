@@ -171,7 +171,6 @@ export function renderPill(): void {
       let timer: number | undefined;
       let longFired = false;
       const fire = (id: PillActionId) => {
-        console.log('[pill] fire', id);
         btn.classList.add('busy');
         void bridge()
           .pillAction(serial, id)
@@ -181,7 +180,6 @@ export function renderPill(): void {
           });
       };
       btn.addEventListener('pointerdown', (e) => {
-        console.log('[pill] power pointerdown, button =', e.button);
         if (e.button !== 0) return;
         longFired = false;
         btn.classList.add('power-pressing');

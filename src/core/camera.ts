@@ -61,22 +61,30 @@ let feedTimer: NodeJS.Timeout | undefined;
 let feedUsers = 0;
 let feedFile = '';
 let firstCapture: Promise<void> = Promise.resolve();
+let capturing = false;
 
 /** 抓主显示器一帧并原子写入画面文件；electron 只能在主进程动态引入（node --test 不会触达） */
 async function captureFrame(file: string): Promise<void> {
-  const { desktopCapturer, screen } = await import('electron');
-  const primary = screen.getPrimaryDisplay();
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: FEED_WIDTH, height: FEED_HEIGHT },
-    fetchWindowIcons: false,
-  });
-  const src =
-    sources.find((s) => s.display_id === String(primary.id)) ?? sources[0];
-  if (!src || src.thumbnail.isEmpty()) return;
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, src.thumbnail.toJPEG(80));
-  fs.renameSync(tmp, file);
+  // getSources 慢于 1s 间隔时两帧并发写同一 .tmp 会互踩出坏帧；喂屏只要最新帧，跳过即可
+  if (capturing) return;
+  capturing = true;
+  try {
+    const { desktopCapturer, screen } = await import('electron');
+    const primary = screen.getPrimaryDisplay();
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: FEED_WIDTH, height: FEED_HEIGHT },
+      fetchWindowIcons: false,
+    });
+    const src =
+      sources.find((s) => s.display_id === String(primary.id)) ?? sources[0];
+    if (!src || src.thumbnail.isEmpty()) return;
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, src.thumbnail.toJPEG(80));
+    fs.renameSync(tmp, file);
+  } finally {
+    capturing = false;
+  }
 }
 
 /** 引用计数启动屏幕馈送；返回启动参数应引用的画面文件路径 */

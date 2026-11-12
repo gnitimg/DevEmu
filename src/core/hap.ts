@@ -103,19 +103,22 @@ export async function importHap(appsDir: string, srcPath: string): Promise<ApkMe
   await fs.promises.copyFile(srcPath, dest);
 
   let meta: ApkMeta = { id, fileName, kind: 'hap', size: stat.size, importedAt: new Date().toISOString() };
-  try {
-    const info = parseHapManifest(await fs.promises.readFile(dest));
-    if (info.bundleName || info.label || info.ability) {
-      meta = {
-        ...meta,
-        packageName: info.bundleName,
-        versionName: info.versionName,
-        label: info.label ?? fileName.replace(/\.hap$/i, ''),
-        activity: info.ability,
-      };
+  // 清单只是小条目，整包读进内存却只为读它：超大包跳过解析，元数据退化用文件名
+  if (stat.size <= 256 * 1024 * 1024) {
+    try {
+      const info = parseHapManifest(await fs.promises.readFile(dest));
+      if (info.bundleName || info.label || info.ability) {
+        meta = {
+          ...meta,
+          packageName: info.bundleName,
+          versionName: info.versionName,
+          label: info.label ?? fileName.replace(/\.hap$/i, ''),
+          activity: info.ability,
+        };
+      }
+    } catch {
+      // 清单解析失败不阻塞导入，仅缺元数据
     }
-  } catch {
-    // 清单解析失败不阻塞导入，仅缺元数据
   }
   if (!meta.label) meta.label = fileName.replace(/\.hap$/i, '');
   fs.writeFileSync(path.join(appsDir, `${id}.meta.json`), JSON.stringify(meta, null, 2), 'utf8');

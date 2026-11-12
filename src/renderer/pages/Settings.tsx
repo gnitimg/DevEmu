@@ -110,12 +110,22 @@ export function Settings({
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [confirmAsk, setConfirmAsk] = useState<ConfirmOp | null>(null);
   // 数据根迁移（跨盘复制数 GB、期间主进程同步执行）需确认后才执行
-  const [rootAsk, setRootAsk] = useState<{ dir: string } | null>(null);
+  const [rootAsk, setRootAsk] = useState<{
+    dir: string;
+    projects: { id: string; name: string }[];
+  } | null>(null);
   const [busy, setBusy] = useState(false);
-  const dirty = useRef(false);
+  // 改动序号：设置一有变化就 +1；自动保存按“已落盘序号”判断是否仍需写盘。
+  // 卸载时若仍有未落盘改动就立即补写——600ms 防抖定时器会随卸载被清掉
+  const saveRev = useRef(0);
+  const savedRev = useRef(0);
+  const touch = () => {
+    saveRev.current += 1;
+  };
   // 只在首次拿到 env 时回填一次；之后一律以用户输入为准，
   // 避免保存后的 env 刷新把正在编辑的值跳回旧值
   const syncedOnce = useRef(false);
+  const envPaths = useRef<{ sdk?: string; harmony?: string; java?: string }>({});
 
   useEffect(() => {
     if (env && !syncedOnce.current) {
@@ -161,16 +171,38 @@ export function Settings({
   }, [env]);
 
   useEffect(() => {
+    if (!env) return;
+    // 首次已由上面的回填处理；之后只跟随"设置里真正变化"的路径，
+    // 避免导入 HarmonyOS SDK 后 env 刷新了、字段却还保留旧值被自动保存写回
+    const prev = envPaths.current;
+    const next = {
+      sdk: env.settings.sdkPath ?? env.sdk?.root ?? '',
+      harmony: env.settings.harmonySdkPath ?? env.harmony?.sdkRoot ?? '',
+      java: env.settings.javaPath ?? env.java ?? '',
+    };
+    if (prev.sdk === undefined) {
+      envPaths.current = next;
+      return;
+    }
+    if (next.sdk !== prev.sdk) setSdkPath(next.sdk);
+    if (next.harmony !== prev.harmony) setHarmonyPath(next.harmony);
+    if (next.java !== prev.java) setJavaPath(next.java);
+    envPaths.current = next;
+  }, [env]);
+
+  useEffect(() => {
     if (!savedAt) return;
     setHintOn(true);
     const t = setTimeout(() => setHintOn(false), 1800);
     return () => clearTimeout(t);
   }, [savedAt]);
 
-  // 自动保存：改动 600ms 后落盘
-  useEffect(() => {
-    if (!dirty.current || !dataRoot.trim()) return;
-    const timer = setTimeout(async () => {
+  const persistNow = useCallback(
+    async (overrides?: {
+      cameraMode?: CameraMode;
+      webcam?: string;
+    }): Promise<boolean> => {
+      if (!dataRoot.trim()) return false;
       setError('');
       const port = Number(proxyPort);
       const r = await api.saveSettings({
@@ -179,8 +211,8 @@ export function Settings({
         javaPath: javaPath.trim() || undefined,
         harmonySdkPath: harmonyPath.trim() || undefined,
         gpuMode: gpuMode || undefined,
-        cameraMode,
-        webcam,
+        cameraMode: overrides?.cameraMode ?? cameraMode,
+        webcam: overrides?.webcam ?? webcam,
         pillEnabled,
         proxyEnabled,
         proxyPort:
@@ -192,11 +224,39 @@ export function Settings({
         androidDownloadRoute: androidRoute,
         harmonyDownloadRoute: harmonyRoute,
       });
-      if (!r.ok) setError(r.error);
-      else {
-        setSavedAt(Date.now());
-        refreshEnv();
+      if (!r.ok) {
+        setError(r.error);
+        return false;
       }
+      setSavedAt(Date.now());
+      refreshEnv();
+      return true;
+    },
+    [
+      dataRoot,
+      sdkPath,
+      harmonyPath,
+      javaPath,
+      gpuMode,
+      cameraMode,
+      webcam,
+      pillEnabled,
+      proxyEnabled,
+      proxyPort,
+      maxKbps,
+      parallel,
+      androidRoute,
+      harmonyRoute,
+      refreshEnv,
+    ],
+  );
+
+  // 自动保存：改动 600ms 后落盘
+  useEffect(() => {
+    if (saveRev.current === savedRev.current || !dataRoot.trim()) return;
+    const rev = saveRev.current;
+    const timer = setTimeout(async () => {
+      if (await persistNow()) savedRev.current = rev;
     }, 600);
     return () => clearTimeout(timer);
   }, [
@@ -215,7 +275,62 @@ export function Settings({
     androidRoute,
     harmonyRoute,
     refreshEnv,
+    persistNow,
   ]);
+
+  const persistRef = useRef(persistNow);
+  useEffect(() => {
+    persistRef.current = persistNow;
+  });
+  useEffect(
+    () => () => {
+      // 卸载后 setError 落在已卸载树＝静默丢失：flush 失败用全局 toast 反馈
+      if (saveRev.current !== savedRev.current)
+        void persistRef.current().then((ok) => {
+          if (!ok) toast('设置未能自动保存，请回到设置页重新保存');
+        });
+    },
+    [],
+  );
+
+  /** 相机来源是启动期参数：先落盘，再询问是否重启运行中的 Android 虚拟机 */
+  async function changeCameraSource(overrides: {
+    cameraMode?: CameraMode;
+    webcam?: string;
+  }) {
+    touch();
+    if (overrides.cameraMode) setCameraMode(overrides.cameraMode);
+    if (overrides.webcam) setWebcam(overrides.webcam);
+    const rev = saveRev.current;
+    if (!(await persistNow(overrides))) return;
+    savedRev.current = rev;
+    const list = await api.listEmulators();
+    if (!list.ok) return;
+    const running = list.data.filter((d) => d.type !== 'harmonyos');
+    if (running.length === 0) return;
+    if (
+      !window.confirm(
+        `相机来源在虚拟机启动时生效，现在重启运行中的 ${running.length} 台 Android 虚拟机？`,
+      )
+    )
+      return;
+    toast(`正在重启 ${running.length} 台虚拟机…`);
+    const r = await api.restartRunningEmus();
+    if (!r.ok) {
+      setError(r.error);
+      return;
+    }
+    if (r.data.length === 0) {
+      toast('未发现由本应用启动的虚拟机，请手动重启后生效');
+      return;
+    }
+    const failed = r.data.filter((x) => !x.ok);
+    toast(
+      failed.length
+        ? `${r.data.length - failed.length} 台已重启，${failed.length} 台失败：${failed[0]!.error ?? ''}`
+        : `已重启 ${r.data.length} 台虚拟机`,
+    );
+  }
 
   // 选了摄像头直通时拉取宿主摄像头列表（进入模拟器分区且切到 webcam 时）
   useEffect(() => {
@@ -282,7 +397,7 @@ export function Settings({
   };
 
   function applyPick(field: PickField, dir: string) {
-    dirty.current = true;
+    touch();
     if (field === 'dataRoot') setDataRoot(dir);
     else if (field === 'sdkPath') setSdkPath(dir);
     else if (field === 'harmonyPath') setHarmonyPath(dir);
@@ -293,7 +408,16 @@ export function Settings({
     const r = await api.openDirDialog(title);
     if (!r.ok || !r.data) return;
     if (field === 'dataRoot') {
-      setRootAsk({ dir: r.data });
+      const c = await api.checkDataRoot(r.data);
+      if (!c.ok) {
+        toast(c.error);
+        return;
+      }
+      if (c.data.nested) {
+        toast('新数据根不能位于当前数据根内部');
+        return;
+      }
+      setRootAsk({ dir: r.data, projects: c.data.projects });
       return;
     }
     const kind = FIELD_KIND[field];
@@ -347,7 +471,7 @@ export function Settings({
   const mark =
     <T,>(setter: (v: T) => void) =>
     (v: T) => {
-      dirty.current = true;
+      touch();
       setter(v);
     };
 
@@ -465,6 +589,13 @@ export function Settings({
                   ，并清空原目录。迁移同步执行，数据量大（跨盘搬迁）时应用会
                   短暂无响应，期间请勿关闭应用或操作虚拟机。
                 </p>
+                {rootAsk.projects.length > 0 && (
+                  <p style={{ color: 'var(--danger)' }}>
+                    目标目录已存在同名项目（
+                    {rootAsk.projects.map((p) => p.name).join('、')}
+                    ），迁移会用当前数据覆盖它们的同名文件。
+                  </p>
+                )}
               </Modal>
             )}
 
@@ -584,7 +715,7 @@ export function Settings({
                       type="checkbox"
                       checked={proxyEnabled}
                       onChange={(e) => {
-                        dirty.current = true;
+                        touch();
                         setProxyEnabled(e.target.checked);
                       }}
                     />
@@ -595,7 +726,7 @@ export function Settings({
                     className="proxy-port"
                     value={proxyPort}
                     onChange={(e) => {
-                      dirty.current = true;
+                      touch();
                       setProxyPort(e.target.value.replace(/[^\d]/g, ''));
                     }}
                     placeholder="7890"
@@ -677,7 +808,9 @@ export function Settings({
                     { value: 'screen', label: '识别 Windows 屏幕' },
                     { value: 'webcam', label: '调用 Windows 摄像头' },
                   ]}
-                  onChange={(v) => mark(setCameraMode)(v)}
+                  onChange={(v) =>
+                    void changeCameraSource({ cameraMode: v as CameraMode })
+                  }
                 />
               </div>
             </div>
@@ -692,7 +825,7 @@ export function Settings({
                         ? webcams.map((w) => ({ value: w.id, label: w.label }))
                         : [{ value: webcam, label: webcam }]
                     }
-                    onChange={(v) => mark(setWebcam)(v)}
+                    onChange={(v) => void changeCameraSource({ webcam: v })}
                   />
                 </div>
               </div>
@@ -704,7 +837,7 @@ export function Settings({
                   type="checkbox"
                   checked={pillEnabled}
                   onChange={(e) => {
-                    dirty.current = true;
+                    touch();
                     setPillEnabled(e.target.checked);
                   }}
                 />

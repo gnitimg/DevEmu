@@ -19,7 +19,7 @@ export function storageItems(dataRoot: string): StorageItem[] {
     { id: 'agent', label: 'Agent 接入脚本', path: agentScriptFile(dataRoot) },
     { id: 'avd', label: '共享虚拟机', path: path.join(dataRoot, 'devices', 'avd') },
     { id: 'apps', label: '共享应用库', path: path.join(dataRoot, 'devices', 'apps') },
-    { id: 'runs', label: '运行记录', path: path.join(dataRoot, 'devices', 'runs') },
+    { id: 'crashes', label: '崩溃记录', path: path.join(dataRoot, 'devices', 'crashes') },
   ];
 }
 
@@ -94,10 +94,10 @@ export async function factoryReset(
 ): Promise<string[]> {
   const targets = [
     path.join(dataRoot, 'projects'),
-    // devices 拆成子目录：avd 被残留进程锁住时，应用库与测试记录仍能清掉
+    // devices 拆成子目录：avd 被残留进程锁住时，应用库与崩溃记录仍能清掉
     path.join(dataRoot, 'devices', 'avd'),
     path.join(dataRoot, 'devices', 'apps'),
-    path.join(dataRoot, 'devices', 'runs'),
+    path.join(dataRoot, 'devices', 'crashes'),
     path.join(dataRoot, 'agent'),
     path.join(dataRoot, 'logs'),
     path.join(dataRoot, 'downloads.json'),

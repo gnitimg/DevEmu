@@ -9,6 +9,7 @@ import {
   ensureDataDirs,
   settingsPath,
   migrateDataRoot,
+  dataRootConflicts,
 } from './settings.ts';
 
 function tmpRoot(): string {
@@ -67,7 +68,7 @@ test('migrateDataRoot 全量随迁且源目录清空', () => {
     [path.join('projects', 'p1', 'meta.json'), 'p1'],
     [path.join('devices', 'avd', 'a.ini'), 'ini'],
     [path.join('devices', 'apps', 'x.apk'), 'apk'],
-    [path.join('devices', 'runs', 'r.json'), 'run'],
+    [path.join('devices', 'crashes', 'c.json'), 'crash'],
     [path.join('agent', 'agent-mcp.mjs'), 'mjs'],
     [path.join('logs', 'app.log'), 'log'],
     [path.join('location', 'routes', 'r1.json'), 'route'],
@@ -85,7 +86,7 @@ test('migrateDataRoot 全量随迁且源目录清空', () => {
       'projects',
       path.join('devices', 'avd'),
       path.join('devices', 'apps'),
-      path.join('devices', 'runs'),
+      path.join('devices', 'crashes'),
       'agent',
       'logs',
       'location',
@@ -166,6 +167,46 @@ test('migrateDataRoot 同一目录为空操作', () => {
   assert.deepEqual(r, { moved: [], failed: [], iniFixed: 0 });
   assert.ok(fs.existsSync(path.join(root, 'logs', 'app.log')));
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('dataRootConflicts 新旧根相同时不报冲突', () => {
+  const root = tmpRoot();
+  writeFile(path.join(root, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
+  assert.deepEqual(dataRootConflicts(root, root), { nested: false, projects: [] });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('dataRootConflicts 新根在旧根子树内判定为嵌套', () => {
+  const from = tmpRoot();
+  const to = path.join(from, 'projects', 'custom', 'data');
+  fs.mkdirSync(to, { recursive: true });
+  assert.equal(dataRootConflicts(from, to).nested, true);
+  fs.rmSync(from, { recursive: true, force: true });
+});
+
+test('dataRootConflicts 列出目标里同 ID 的项目并带名称', () => {
+  const from = tmpRoot();
+  const to = tmpRoot();
+  writeFile(path.join(from, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
+  writeFile(path.join(from, 'projects', 'p2', 'project.json'), '{"name":"乙"}');
+  writeFile(path.join(to, 'projects', 'p1', 'project.json'), '{"name":"旧甲"}');
+  writeFile(path.join(to, 'projects', 'p3', 'project.json'), '{"name":"丙"}');
+  const r = dataRootConflicts(from, to);
+  assert.equal(r.nested, false);
+  assert.deepEqual(r.projects, [{ id: 'p1', name: '旧甲' }]);
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.rmSync(from, { recursive: true, force: true });
+});
+
+test('dataRootConflicts 目标同 ID 目录损坏时仍按 ID 提示', () => {
+  const from = tmpRoot();
+  const to = tmpRoot();
+  writeFile(path.join(from, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
+  fs.mkdirSync(path.join(to, 'projects', 'p1'), { recursive: true });
+  fs.writeFileSync(path.join(to, 'projects', 'p1', 'project.json'), '{broken', 'utf8');
+  assert.deepEqual(dataRootConflicts(from, to).projects, [{ id: 'p1', name: 'p1' }]);
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.rmSync(from, { recursive: true, force: true });
 });
 
 test('migrateDataRoot 改写 AVD ini 里指向旧数据根的绝对路径', () => {
