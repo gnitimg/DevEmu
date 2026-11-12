@@ -150,6 +150,8 @@ export type DownloadItem = {
   startedAt: number;
   finishedAt?: number;
   error?: string;
+  /** 解压落位的组件目录：卸载时删它；缺省表示无落位目录，只能删记录 */
+  installDir?: string;
 };
 
 export function onDownloadsChanged(

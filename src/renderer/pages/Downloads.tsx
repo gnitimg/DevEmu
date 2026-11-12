@@ -121,35 +121,40 @@ export function Downloads() {
         </div>
         <div style={{ padding: '6px 14px 12px' }}>
           {done.length === 0 && <div className="empty" style={{ padding: '16px 0' }}>暂无记录</div>}
-          {done.map((d) => (
-            <div key={d.pkg + d.startedAt} className="dl-item dl-done">
-              <div className="dl-head">
-                <span className={`dl-name${d.desc && d.desc !== d.pkg ? '' : ' mono'}`}>
-                  {d.desc && d.desc !== d.pkg ? d.desc : d.pkg}
-                </span>
-                <button
-                  className="btn btn-sm btn-danger dl-del"
-                  disabled={removing !== ''}
-                  title="卸载组件并删除记录"
-                  onClick={async () => {
-                    if (!window.confirm(`卸载「${d.desc || d.pkg}」并删除记录？`)) return;
-                    setRemoving(`${d.pkg}${d.startedAt}`);
-                    const r = await api.downloadsRemove(d.pkg, d.startedAt);
-                    setRemoving('');
-                    if (!r.ok) toast(r.error);
-                    else if (r.data.uninstalled) toast(`已卸载「${d.desc || d.pkg}」`, 'ok');
-                    else toast('已删除记录');
-                  }}
-                >
-                  {removing === `${d.pkg}${d.startedAt}` ? '卸载中' : '卸载'}
-                </button>
+          {done.map((d) => {
+            // 有落位目录的组件可真卸载；无落位目录的任务（如应用更新包）只能删记录
+            const canUninstall = !!d.installDir;
+            const label = d.desc || d.pkg;
+            return (
+              <div key={d.pkg + d.startedAt} className="dl-item dl-done">
+                <div className="dl-head">
+                  <span className={`dl-name${d.desc && d.desc !== d.pkg ? '' : ' mono'}`}>
+                    {d.desc && d.desc !== d.pkg ? d.desc : d.pkg}
+                  </span>
+                  <button
+                    className="btn btn-sm btn-danger dl-del"
+                    disabled={removing !== ''}
+                    title={canUninstall ? '卸载组件并删除记录' : '删除下载记录'}
+                    onClick={async () => {
+                      if (!window.confirm(canUninstall ? `卸载「${label}」并删除记录？` : `删除「${label}」的下载记录？`)) return;
+                      setRemoving(`${d.pkg}${d.startedAt}`);
+                      const r = await api.downloadsRemove(d.pkg, d.startedAt);
+                      setRemoving('');
+                      if (!r.ok) toast(r.error);
+                      else if (r.data.uninstalled) toast(`已卸载「${label}」`, 'ok');
+                      else toast('已删除记录');
+                    }}
+                  >
+                    {removing === `${d.pkg}${d.startedAt}` ? (canUninstall ? '卸载中' : '删除中') : canUninstall ? '卸载' : '删除'}
+                  </button>
+                </div>
+                <div className="dl-meta">
+                  <span>{d.total > 0 ? fmtBytes(d.total) : ''}</span>
+                  <span>{fmtTime(new Date(d.finishedAt ?? d.startedAt).toISOString())}</span>
+                </div>
               </div>
-              <div className="dl-meta">
-                <span>{d.total > 0 ? fmtBytes(d.total) : ''}</span>
-                <span>{fmtTime(new Date(d.finishedAt ?? d.startedAt).toISOString())}</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

@@ -1551,8 +1551,12 @@ export function registerIpc(): void {
         if (r.ok && exePathOut) {
           downloadedExePath = exePathOut;
           broadcast('update:downloaded', { version: release.version });
-        } else if (!r.ok && !r.cancelled) {
-          broadcast('update:error', { message: r.error ?? '未知错误' });
+        } else if (!r.ok) {
+          // 取消也广播（message=已取消）：渲染层把“正在下载”卡片回退到可重下状态；
+          // 弹窗对“已取消”不弹提示，取消反馈由下载管理的 toast 统一给出
+          broadcast('update:error', {
+            message: r.cancelled ? '已取消' : (r.error ?? '未知错误'),
+          });
         }
       },
     });

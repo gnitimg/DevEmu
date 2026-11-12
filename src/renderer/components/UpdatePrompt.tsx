@@ -29,11 +29,12 @@ export function UpdatePrompt() {
     });
     const un2 = onUpdateDownloaded((p) => {
       // 渲染层中途重载（dev HMR）会丢 info：payload 里带版本号兜底恢复
-      setInfo((cur) => cur ?? { latest: p.version, current: '', notes: '' });
+      setInfo((cur) => cur ?? (p.version ? { latest: p.version, current: '', notes: '' } : null));
       setPhase((cur) => (cur === 'restarting' ? cur : 'downloaded'));
     });
     const un3 = onUpdateError((p) => {
-      toast(p.message);
+      // 主动取消由下载管理 toast 统一反馈，这里不重复弹
+      if (p.message !== '已取消') toast(p.message);
       setPhase((cur) => (cur === 'restarting' ? cur : 'hidden'));
     });
     return () => {

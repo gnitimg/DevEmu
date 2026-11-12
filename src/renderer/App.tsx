@@ -131,7 +131,12 @@ export function App() {
     const un2 = onUpdateProgress(() =>
       setUpdateNotice((cur) => (cur && cur.phase === 'available' ? { ...cur, phase: 'downloading' } : cur)),
     );
-    const un3 = onUpdateDownloaded(() => setUpdateNotice((cur) => (cur ? { ...cur, phase: 'ready' } : cur)));
+    const un3 = onUpdateDownloaded((p) =>
+      setUpdateNotice((cur) =>
+        // 渲染层重载后卡片可能还没建立：用就绪广播的版本号重建
+        cur ? { ...cur, phase: 'ready' } : { latest: p.version, current: '', phase: 'ready' },
+      ),
+    );
     const un4 = onUpdateError(() =>
       setUpdateNotice((cur) => (cur && cur.phase === 'downloading' ? { ...cur, phase: 'available' } : cur)),
     );
