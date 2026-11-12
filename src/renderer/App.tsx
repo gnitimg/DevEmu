@@ -203,6 +203,10 @@ export function App() {
   // 侧栏通知：HarmonyOS SDK 提醒 + 新版本提醒，数量驱动收起态铃铛红点
   const hosNotice = !!env && !env.harmony && huaweiLogin !== null;
   const noticeCount = (hosNotice ? 1 : 0) + (updateNotice ? 1 : 0);
+  // 通知中心条目：展开态内联与收起态浮层共用同一组卡片，多通知时单卡轮播
+  const noticeItems: React.ReactNode[] = [];
+  if (hosNotice) noticeItems.push(<HosNoticeContent loggedIn={huaweiLogin === true} />);
+  if (updateNotice) noticeItems.push(<UpdateNoticeContent notice={updateNotice} />);
 
   const toggleSideFly = (kind: 'projects' | 'devices' | 'notice', e: React.MouseEvent) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -483,8 +487,7 @@ export function App() {
             )}
           </SideItem>
           </div>
-          {hosNotice && <HosNoticeCard loggedIn={huaweiLogin === true} />}
-          {updateNotice && <UpdateNoticeCard notice={updateNotice} />}
+          {noticeItems.length > 0 && <NoticeCarousel items={noticeItems} />}
           <div className="side-footer">
             {!sideOpen && (
               <button
@@ -532,9 +535,7 @@ export function App() {
         </aside>
         {sideFly && !sideOpen && sideFly.kind === 'notice' && (
           <div ref={sideFlyRef} className="side-fly side-fly-notice" style={{ left: sideFly.x, bottom: sideFly.bottom }}>
-            {noticeCount === 0 && <div className="side-fly-empty">暂无通知</div>}
-            {hosNotice && <HosNoticeCard loggedIn={huaweiLogin === true} />}
-            {updateNotice && <UpdateNoticeCard notice={updateNotice} />}
+            {noticeCount === 0 ? <div className="side-fly-empty">暂无通知</div> : <NoticeCarousel items={noticeItems} />}
           </div>
         )}
         {sideFly && !sideOpen && sideFly.kind !== 'notice' && (
@@ -744,10 +745,10 @@ function SideItem({
   );
 }
 
-/** HarmonyOS SDK 提醒卡：展开态内联展示，收起态进通知浮层 */
-function HosNoticeCard({ loggedIn }: { loggedIn: boolean }) {
+/** HarmonyOS SDK 提醒内容（不带卡片外框）：展开态与收起态浮层共用 */
+function HosNoticeContent({ loggedIn }: { loggedIn: boolean }) {
   return (
-    <div className="side-notice">
+    <>
       <div className="side-notice-head">
         <svg
           className="side-notice-icon"
@@ -789,14 +790,14 @@ function HosNoticeCard({ loggedIn }: { loggedIn: boolean }) {
           </button>
         </>
       )}
-    </div>
+    </>
   );
 }
 
-/** 新版本提醒卡：phase 与 UpdatePrompt 弹窗同步，动作可直接重入下载/安装 */
-function UpdateNoticeCard({ notice }: { notice: UpdateNotice }) {
+/** 新版本提醒内容（不带卡片外框）：phase 与 UpdatePrompt 弹窗同步，动作可直接重入下载/安装 */
+function UpdateNoticeContent({ notice }: { notice: UpdateNotice }) {
   return (
-    <div className="side-notice">
+    <>
       <div className="side-notice-head">
         <svg
           className="side-notice-icon"
@@ -838,6 +839,53 @@ function UpdateNoticeCard({ notice }: { notice: UpdateNotice }) {
             立即安装并重启 ›
           </button>
         </>
+      )}
+    </>
+  );
+}
+
+/** 通知轮播：单卡展示 + 卡内底部圆点；多通知时自动轮换（5s，悬停暂停），圆点可点跳 */
+function NoticeCarousel({ items }: { items: React.ReactNode[] }) {
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const count = items.length;
+  // 通知减少时把游标收回有效范围
+  useEffect(() => {
+    setIndex((i) => Math.min(i, count - 1));
+  }, [count]);
+  // index 进依赖：手动跳点后重新计时，保证两次切换间隔一致
+  useEffect(() => {
+    if (paused || count <= 1) return;
+    const timer = setInterval(() => setIndex((i) => (i + 1) % count), 5000);
+    return () => clearInterval(timer);
+  }, [paused, count, index]);
+  if (count === 0) return null;
+  return (
+    <div
+      className="side-notice notice-carousel"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      <div className="notice-viewport">
+        <div className="notice-track" style={{ transform: `translateX(-${index * 100}%)` }}>
+          {items.map((node, i) => (
+            <div key={i} className="notice-slide">
+              {node}
+            </div>
+          ))}
+        </div>
+      </div>
+      {count > 1 && (
+        <div className="notice-dots">
+          {items.map((_, i) => (
+            <button
+              key={i}
+              className={`notice-dot${i === index ? ' on' : ''}`}
+              aria-label={`第 ${i + 1} 条通知`}
+              onClick={() => setIndex(i)}
+            />
+          ))}
+        </div>
       )}
     </div>
   );

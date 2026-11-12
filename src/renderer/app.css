@@ -603,8 +603,7 @@ textarea:focus {
   font-size: 12px;
 }
 
-/* 通知浮层：与展开侧栏同宽，提醒卡片去掉外边距改为纵向堆叠；
-   bottom 锚点向上展开，高度同时受视口约束 */
+/* 通知浮层：与展开侧栏同宽，内嵌通知轮播单卡 */
 .side-fly-notice {
   width: 232px;
   max-width: none;
@@ -615,8 +614,46 @@ textarea:focus {
   margin: 0;
 }
 
-.side-fly-notice .side-notice + .side-notice {
-  margin-top: 6px;
+/* 通知轮播：多通知时单卡轮换，滑动动画 + 卡内底部圆点 */
+.notice-carousel .notice-viewport {
+  overflow: hidden;
+}
+
+.notice-carousel .notice-track {
+  display: flex;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.notice-carousel .notice-slide {
+  flex: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.notice-dots {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.notice-dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.28;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s;
+}
+
+.notice-dot:hover {
+  opacity: 0.55;
+}
+
+.notice-dot.on {
+  width: 14px;
+  opacity: 1;
 }
 
 .content {

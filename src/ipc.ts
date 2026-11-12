@@ -1494,6 +1494,14 @@ export function registerIpc(): void {
     const release = await fetchLatestRelease();
     lastRelease = release;
     const current = app.getVersion();
+    // 手动检查发现新版本与自动检查走同一广播：全局更新弹窗与侧栏通知卡接手展示，
+    // 关于页只做一次性反馈（错误 / 已是最新走临时弹窗），不内联渲染更新卡片
+    if (compareVersions(release.version, current) > 0)
+      broadcast('update:available', {
+        latest: release.version,
+        current,
+        notes: release.notes,
+      });
     return ok({
       latest: release.version,
       current,

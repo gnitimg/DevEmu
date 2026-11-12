@@ -51,8 +51,6 @@ const CHANGELOGS = parseChangelog(changelogMd);
 export function About({ env }: { env: EnvStatus | null }) {
   const [doc, setDoc] = useState<{ title: string; body: string } | null>(null);
   const [checking, setChecking] = useState(false);
-  const [update, setUpdate] = useState<{ upToDate: boolean; latest: string; current: string; url: string; hasAsset: boolean } | null>(null);
-  const [downloading, setDownloading] = useState(false);
   const [autoOn, setAutoOn] = useState(true);
 
   useEffect(() => {
@@ -61,19 +59,12 @@ export function About({ env }: { env: EnvStatus | null }) {
 
   async function checkUpdate() {
     setChecking(true);
-    setUpdate(null);
     const r = await api.checkUpdate();
     setChecking(false);
-    // 检查结果是一次性反馈，统一走右上角临时弹窗；只有“发现新版本”留下内联卡片供操作
-    if (!r.ok) {
-      toast(r.error);
-      return;
-    }
-    if (r.data.upToDate) {
-      toast('您使用的已是最新版本', 'ok');
-      return;
-    }
-    setUpdate(r.data);
+    // 一次性反馈走右上角临时弹窗；发现新版本由主进程广播进全局更新弹窗与
+    // 侧栏通知卡（本页不内联渲染更新卡片，避免与通知中心重复）
+    if (!r.ok) toast(r.error);
+    else if (r.data.upToDate) toast('您使用的已是最新版本', 'ok');
   }
 
   async function toggleAutoCheck(on: boolean) {
@@ -84,14 +75,6 @@ export function About({ env }: { env: EnvStatus | null }) {
       toast(r.error);
       setAutoOn(!on);
     }
-  }
-
-  async function downloadUpdate() {
-    setDownloading(true);
-    const r = await api.updateDownload();
-    setDownloading(false);
-    if (!r.ok) return; // 失败由主进程 update:error 广播统一提示，避免双弹
-    // 开始/完成提示由下载管理统一弹出，这里不再重复
   }
 
   return (
@@ -134,31 +117,6 @@ export function About({ env }: { env: EnvStatus | null }) {
                 启用
               </label>
             </div>
-            {update && (
-              <div className="about-body">
-                <p>
-                  发现新版本 <span className="mono">v{update.latest}</span>（当前 v{update.current}）
-                  {update.hasAsset ? (
-                    <button
-                      className="btn"
-                      style={{ marginLeft: 10 }}
-                      disabled={downloading}
-                      onClick={() => void downloadUpdate()}
-                    >
-                      {downloading ? '已开始下载' : '下载并安装'}
-                    </button>
-                  ) : (
-                    <button
-                      className="link-btn"
-                      style={{ marginLeft: 10 }}
-                      onClick={() => void api.openUrl(update.url)}
-                    >
-                      打开下载页
-                    </button>
-                  )}
-                </p>
-              </div>
-            )}
           </div>
         </div>
         <div className="section changelog-panel">
