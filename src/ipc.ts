@@ -1495,13 +1495,18 @@ export function registerIpc(): void {
     lastRelease = release;
     const current = app.getVersion();
     // 手动检查发现新版本与自动检查走同一广播：全局更新弹窗与侧栏通知卡接手展示，
-    // 关于页只做一次性反馈（错误 / 已是最新走临时弹窗），不内联渲染更新卡片
-    if (compareVersions(release.version, current) > 0)
-      broadcast('update:available', {
-        latest: release.version,
-        current,
-        notes: release.notes,
-      });
+    // 关于页只做一次性反馈（错误 / 已是最新走临时弹窗），不内联渲染更新卡片。
+    // 安装包已在本地时广播就绪态：避免把已就绪的通知卡/弹窗重置回"发现新版本"诱导重复下载
+    if (compareVersions(release.version, current) > 0) {
+      if (downloadedExePath)
+        broadcast('update:downloaded', { version: release.version });
+      else
+        broadcast('update:available', {
+          latest: release.version,
+          current,
+          notes: release.notes,
+        });
+    }
     return ok({
       latest: release.version,
       current,
@@ -1516,6 +1521,11 @@ export function registerIpc(): void {
   let lastProgressAt = 0;
 
   handle('update:download', async () => {
+    // 安装包已在本地：绝不重复下载，直接广播就绪态驱动弹窗与通知卡
+    if (downloadedExePath) {
+      broadcast('update:downloaded', { version: lastRelease?.version ?? '' });
+      return ok(true);
+    }
     if (downloading) return ok(true);
     const release = lastRelease;
     // 失败一律经 update:error 广播：UpdatePrompt 只信广播，避免 invoke
@@ -1605,12 +1615,17 @@ export function registerIpc(): void {
     try {
       const release = await fetchLatestRelease();
       lastRelease = release;
-      if (compareVersions(release.version, app.getVersion()) > 0)
-        broadcast('update:available', {
-          latest: release.version,
-          current: app.getVersion(),
-          notes: release.notes,
-        });
+      if (compareVersions(release.version, app.getVersion()) > 0) {
+        // 与手动检查一致：已下载过该版本时广播就绪态，不重置回"发现新版本"
+        if (downloadedExePath)
+          broadcast('update:downloaded', { version: release.version });
+        else
+          broadcast('update:available', {
+            latest: release.version,
+            current: app.getVersion(),
+            notes: release.notes,
+          });
+      }
     } catch {
       // 自动检查静默失败
     }

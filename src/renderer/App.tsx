@@ -118,9 +118,16 @@ export function App() {
     return onHuaweiChanged(setHuaweiLogin);
   }, []);
 
-  // 新版本提醒跟随主进程更新事件；错误只回退卡片状态，失败原因由 update:error 统一弹窗
+  // 新版本提醒跟随主进程更新事件；错误只回退卡片状态，失败原因由 update:error 统一弹窗。
+  // 同版本且卡片已进入下载中/就绪态时保持相位不回退（下载完成后再点检查更新的场景）
   useEffect(() => {
-    const un1 = onUpdateAvailable((p) => setUpdateNotice({ latest: p.latest, current: p.current, phase: 'available' }));
+    const un1 = onUpdateAvailable((p) =>
+      setUpdateNotice((cur) =>
+        cur && cur.phase !== 'available' && cur.latest === p.latest
+          ? cur
+          : { latest: p.latest, current: p.current, phase: 'available' },
+      ),
+    );
     const un2 = onUpdateProgress(() =>
       setUpdateNotice((cur) => (cur && cur.phase === 'available' ? { ...cur, phase: 'downloading' } : cur)),
     );
