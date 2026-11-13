@@ -213,6 +213,8 @@ export interface DlOptions {
   isCancelled?: () => boolean;
   /** 注册中断函数（下载管理取消按钮调用） */
   registerAbort?: (abort: () => void) => void;
+  /** 断点续传起点（downloadToFile 重试时传入，调用方无需关心） */
+  resumeFrom?: number;
 }
 
 const DL_REDIRECT_LIMIT = 6;
@@ -228,14 +230,17 @@ function parseHeaders(header: string): { status: number; location?: string; tota
   return { status, location, total };
 }
 
-/** 发起一次 GET，把响应体逐块交给 sink（自动处理 chunked 编码）；3xx 返回 Location 由上层重连 */
+/** 发起一次 GET，把响应体逐块交给 sink（自动处理 chunked 编码）；3xx 返回 Location 由上层重连。
+ *  offset > 0 时携带 Range 头续传：206 按剩余量计数，200 表示服务端不支持 Range，
+ *  以 restart 信号让调用方丢弃半截文件重下 */
 async function getOnce(
   target: DlTarget,
   viaProxy: boolean,
   proxyPort: number,
   opts: DlOptions,
   sink: (chunk: Buffer) => Promise<void>,
-): Promise<{ status: number; location?: string; bytes: number; total: number }> {
+): Promise<{ status: number; location?: string; bytes: number; total: number; restart?: boolean }> {
+  const offset = opts.resumeFrom ?? 0;
   const s = await connect(target, viaProxy, proxyPort, 10_000, false);
   return new Promise((resolve, reject) => {
     let header = '';
@@ -266,8 +271,9 @@ async function getOnce(
     s.on('error', fail);
     s.setTimeout(DL_IDLE_TIMEOUT_MS, () => fail(new Error('下载超时（30 秒无数据）')));
 
+    const range = offset > 0 ? `Range: bytes=${offset}-\r\n` : '';
     s.write(
-      `GET ${target.path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: DevEmu\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
+      `GET ${target.path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: DevEmu\r\nAccept: */*\r\n${range}Connection: close\r\n\r\n`,
     );
 
     const emit = async (body: Buffer) => {
@@ -287,7 +293,7 @@ async function getOnce(
       }
       if (opts.isCancelled?.()) throw new Error('已取消');
       await sink(body);
-      opts.onProgress?.(bytes, meta!.total);
+      opts.onProgress?.(offset + bytes, offset > 0 && meta ? offset + meta.total : meta!.total);
     };
 
     /** chunked 解码：从 pending+buf 中切出完整数据块交给 emit */
@@ -338,6 +344,12 @@ async function getOnce(
           done(() => resolve({ status: meta!.status, location: meta!.location, bytes: 0, total: 0 }));
           return;
         }
+        if (offset > 0 && meta.status === 200) {
+          // 服务端不支持 Range 续传：丢弃半截文件从头重下
+          s.destroy();
+          done(() => resolve({ status: 200, bytes: 0, total: meta!.total, restart: true }));
+          return;
+        }
         if (meta.status < 200 || meta.status >= 300) {
           fail(new Error(`HTTP ${meta.status}`));
           return;
@@ -363,7 +375,7 @@ async function getOnce(
     });
     s.on('end', () => {
       if (!meta) return fail(new Error('连接被中断'));
-      done(() => resolve({ status: meta!.status, bytes, total: meta!.total }));
+      done(() => resolve({ status: meta!.status, bytes: offset + bytes, total: offset + meta!.total }));
     });
     s.on('close', () => {
       const m = meta;
@@ -371,8 +383,8 @@ async function getOnce(
       // 带 Content-Length 却未收满即断开：残缺文件不能按"下载成功"返回，
       // 否则解压/校验阶段报出的错误会掩盖真正的中断原因
       if (m.total > 0 && bytes < m.total)
-        return fail(new Error(`下载被中断（${bytes}/${m.total} 字节）`));
-      done(() => resolve({ status: m.status, bytes, total: m.total }));
+        return fail(new Error(`下载被中断（${offset + bytes}/${offset + m.total} 字节）`));
+      done(() => resolve({ status: m.status, bytes: offset + bytes, total: offset + m.total }));
     });
   });
 }
@@ -391,10 +403,11 @@ async function download(
   first: DlTarget,
   opts: DlOptions,
   sink: (chunk: Buffer) => Promise<void>,
-): Promise<{ bytes: number; total: number }> {
+): Promise<{ bytes: number; total: number; restart?: boolean }> {
   let target = first;
   for (let hop = 0; hop < DL_REDIRECT_LIMIT; hop++) {
     const r = await getOnce(target, !!opts.viaProxy, opts.proxyPort ?? 0, opts, sink);
+    if (r.restart) return { bytes: 0, total: r.total, restart: true };
     if (r.location) {
       const next = applyRedirect(target, r.location);
       if (!next) throw new Error('不支持的下载地址');
@@ -406,37 +419,73 @@ async function download(
   throw new Error('重定向次数过多');
 }
 
-/** 下载到文件（失败时删除残留文件） */
+const DL_ATTEMPTS = 3;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** 下载到文件。网络瞬断（ECONNRESET 等）自动断点续传重试（最多 3 次，退避 1.2s/2.4s）；
+ *  服务端不支持 Range 时丢弃半截文件从头重下。仅最终失败才删残留文件。 */
 export async function downloadToFile(target: DlTarget, dest: string, opts: DlOptions = {}): Promise<{ bytes: number; total: number }> {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const out = fs.createWriteStream(dest);
-  let fileErr: Error | null = null;
-  out.on('error', (e) => {
-    fileErr = e;
-  });
-  const writeChunk = (b: Buffer) =>
-    new Promise<void>((resolve, reject) => {
-      if (fileErr) return reject(fileErr);
-      if (out.write(b)) return resolve();
-      // drain 之外 error/close 也要唤醒：文件流出错时等 drain 会永久挂起。
-      // 三个监听互斥摘除，否则每个背压块都会在同一个流上累积 error/close 监听
-      const settle = (err?: Error) => {
-        out.off('drain', onDrain);
-        out.off('error', onError);
-        out.off('close', onClose);
-        const e = err ?? fileErr;
-        if (e) reject(e);
-        else resolve();
-      };
-      const onDrain = () => settle();
-      const onError = (e: Error) => settle(e);
-      const onClose = () => settle();
-      out.once('drain', onDrain);
-      out.once('error', onError);
-      out.once('close', onClose);
-    });
+  let downloaded = 0;
   try {
-    return await download(target, opts, writeChunk);
+    for (let attempt = 1; attempt <= DL_ATTEMPTS; attempt++) {
+      const resumed = downloaded > 0;
+      const out = fs.createWriteStream(dest, resumed ? { flags: 'a' } : undefined);
+      let fileErr: Error | null = null;
+      out.on('error', (e) => {
+        fileErr = e;
+      });
+      const writeChunk = (b: Buffer) =>
+        new Promise<void>((resolve, reject) => {
+          if (fileErr) return reject(fileErr);
+          if (out.write(b)) return resolve();
+          // drain 之外 error/close 也要唤醒：文件流出错时等 drain 会永久挂起。
+          // 三个监听互斥摘除，否则每个背压块都会在同一个流上累积 error/close 监听
+          const settle = (err?: Error) => {
+            out.off('drain', onDrain);
+            out.off('error', onError);
+            out.off('close', onClose);
+            const e = err ?? fileErr;
+            if (e) reject(e);
+            else resolve();
+          };
+          const onDrain = () => settle();
+          const onError = (e: Error) => settle(e);
+          const onClose = () => settle();
+          out.once('drain', onDrain);
+          out.once('error', onError);
+          out.once('close', onClose);
+        });
+      try {
+        const r = await download(
+          target,
+          {
+            ...opts,
+            resumeFrom: downloaded,
+            onProgress: (bytes, total) => {
+              downloaded = bytes;
+              opts.onProgress?.(bytes, total);
+            },
+          },
+          writeChunk,
+        );
+        if (r.restart) {
+          downloaded = 0;
+          continue;
+        }
+        return { bytes: r.bytes, total: r.total };
+      } catch (e) {
+        if (opts.isCancelled?.()) throw new Error('已取消');
+        if (attempt >= DL_ATTEMPTS) throw e;
+        // 半截文件留在盘上供下一轮续传，退避后重试
+        await sleep(1200 * attempt);
+        if (opts.isCancelled?.()) throw new Error('已取消');
+      } finally {
+        await new Promise<void>((resolve) => out.end(() => resolve()));
+      }
+    }
+    throw new Error('下载重试次数用尽');
   } catch (e) {
     try {
       fs.rmSync(dest, { force: true });
@@ -444,8 +493,6 @@ export async function downloadToFile(target: DlTarget, dest: string, opts: DlOpt
       // 清理失败忽略
     }
     throw e;
-  } finally {
-    await new Promise<void>((resolve) => out.end(() => resolve()));
   }
 }
 

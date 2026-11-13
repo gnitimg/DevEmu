@@ -152,6 +152,8 @@ export type DownloadItem = {
   error?: string;
   /** 解压落位的组件目录：卸载时删它；缺省表示无落位目录，只能删记录 */
   installDir?: string;
+  /** 应用更新包等临时任务：完成/失败不弹通用 toast */
+  ephemeral?: boolean;
 };
 
 export function onDownloadsChanged(

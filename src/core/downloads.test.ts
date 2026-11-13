@@ -104,6 +104,12 @@ test('临时任务（应用更新包）完成不写入持久化历史', async ()
     onCancel: () => undefined,
     postProcess: async () => undefined,
   });
+  // 快照带 ephemeral 标记：渲染层据此跳过通用完成/失败 toast
+  assert.equal(
+    listDownloads().active.find((d) => d.pkg === 'app-update-ephemeral')
+      ?.ephemeral,
+    true,
+  );
   await task.complete('C:/tmp/update.exe');
   await settleArchive();
   const raw = JSON.parse(

@@ -179,6 +179,8 @@ export function App() {
         }
         for (const d of s.finished) {
           if (prevFinished.has(dlId(d))) continue;
+          // 应用更新包的完成/失败由更新弹窗与 update:error 广播承接，不重复弹 toast
+          if (d.ephemeral && d.state !== 'cancelled') continue;
           if (d.state === 'done') toast(`${d.desc} 下载完成`, 'ok');
           else if (d.state === 'failed') toast(`${d.desc} 失败：${d.error ?? '未知错误'}`);
           else toast(`${d.desc} 已取消`, 'ok');

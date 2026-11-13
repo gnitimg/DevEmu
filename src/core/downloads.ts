@@ -25,6 +25,8 @@ export interface DownloadItem {
   error?: string;
   /** 解压落位的组件目录：卸载时删它；缺省表示走 sdkmanager 或无法自动卸载 */
   installDir?: string;
+  /** 应用更新包等临时任务：完成/失败不弹通用 toast（由更新链路承接），不写持久化历史 */
+  ephemeral?: boolean;
 }
 
 /** 并行与限速选项（来自设置页） */
@@ -218,6 +220,7 @@ function snapshot(entry: Entry): DownloadItem {
     finishedAt: entry.finishedAt,
     error: entry.error,
     installDir: entry.installDir,
+    ephemeral: entry.ephemeral === true,
   };
 }
 
