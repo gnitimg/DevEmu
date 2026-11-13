@@ -2,6 +2,8 @@
 ; - 首装展示目录选择页，用户可自选安装位置（默认 LocalAppData，无需管理员）
 ; - 应用内静默升级（/S）回读注册表里的既有安装目录，覆盖后自动重启应用
 ; - 卸载默认保留安装目录下的 .data 用户数据，询问后可选一并删除
+; 固态压缩必须最先声明：MUI 语言数据写入后不可再改压缩器
+SetCompressor /SOLID lzma
 !include MUI2.nsh
 !include LogicLib.nsh
 
@@ -29,9 +31,6 @@ UninstallIcon "..\assets\icon.ico"
 ; 首装默认落 LocalAppData；有既有安装时回读注册表目录（升级不换位置）
 InstallDir "$LOCALAPPDATA\DevEmu"
 InstallDirRegKey ${REG_ROOT} "${REG_KEY}" "InstallLocation"
-
-; 固态压缩：安装包体积优先
-SetCompressor /SOLID lzma
 
 Section "Install"
   SetOutPath $INSTDIR
