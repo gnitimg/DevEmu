@@ -458,9 +458,28 @@ export const api = {
   storageClearLogs: () => call<number>('storageClearLogs'),
   storageClearAvds: () => call<number>('storageClearAvds'),
   storageReset: () => call<boolean>('storageReset'),
-  storageMigrateData: (dir: string) => call<boolean>('storageMigrateData', dir),
+  migrateProbe: (dir: string) =>
+    call<{ target: string; exists: boolean; empty: boolean }>(
+      'storageMigrateProbe',
+      dir,
+    ),
+  storageMigrateData: (target: string, mode: 'wipe' | 'merge') =>
+    call<boolean>('storageMigrateData', target, mode),
   restartApp: () => call<boolean>('restartApp'),
 };
+
+export function onMigrateProgress(
+  cb: (p: { moved: number; total: number }) => void,
+): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onMigrateProgress?: (cb: (p: unknown) => void) => () => void };
+    }
+  ).devemu.onMigrateProgress;
+  return fn
+    ? fn((p) => cb(p as { moved: number; total: number }))
+    : () => undefined;
+}
 
 /** 设置页存储分区：常用文件位置 + 虚拟机数量 */
 export type StorageItem = {

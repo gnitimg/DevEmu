@@ -982,6 +982,63 @@ table.tbl {
   border-top: 1px solid var(--border);
 }
 
+/* ---------- 数据迁移进度圆环 ---------- */
+
+.migrate-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0 2px;
+}
+
+.migrate-progress-text {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* rotate(180deg)：circle 起笔点从三点钟方向转到九点钟方向，顺时针推进 */
+.migrate-ring {
+  width: 116px;
+  height: 116px;
+  transform: rotate(180deg);
+}
+
+.migrate-ring-bg {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 9;
+}
+
+.migrate-ring-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 9;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.45s ease;
+}
+
+.migrate-ring.ok .migrate-ring-fill {
+  stroke: var(--ok);
+}
+
+.migrate-check {
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 64;
+  stroke-dashoffset: 64;
+  animation: checkDraw 0.4s ease-out 0.12s forwards;
+}
+
+@keyframes checkDraw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 .spinner {
   display: inline-block;
   width: 13px;

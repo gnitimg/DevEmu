@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
   ENV_LABELS,
+  onMigrateProgress,
   type CameraMode,
   type EnvKind,
   type StorageInfo,
@@ -109,9 +110,10 @@ export function Settings({
   const [installing, setInstalling] = useState(false);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [confirmAsk, setConfirmAsk] = useState<ConfirmOp | null>(null);
-  // 数据迁移：选目标目录 → 确认 → 迁移并断开全部设备 → 提示重启
-  const [migrateAsk, setMigrateAsk] = useState<string | null>(null);
-  const [migrating, setMigrating] = useState(false);
+  // 数据迁移：探测目标 .data →（非空时三选）→ 确认 → 进度圆环（界面锁定）→ 重启提示
+  const [migrateAsk, setMigrateAsk] = useState<{ target: string } | null>(null);
+  const [migrateChoiceAsk, setMigrateChoiceAsk] = useState<{ target: string } | null>(null);
+  const [migrating, setMigrating] = useState<{ done: number; total: number; fin: boolean } | null>(null);
   const [migrateDone, setMigrateDone] = useState(false);
   // 数据根迁移（跨盘复制数 GB、期间主进程同步执行）需确认后才执行
   const [rootAsk, setRootAsk] = useState<{
@@ -230,6 +232,8 @@ export function Settings({
       });
       if (!r.ok) {
         setError(r.error);
+        // 数据根变更失败（迁移被拒/回滚）时表单显示回滚到已生效值，避免误导
+        setDataRoot(env?.settings.dataRoot ?? dataRoot);
         return false;
       }
       setSavedAt(Date.now());
@@ -252,6 +256,7 @@ export function Settings({
       androidRoute,
       harmonyRoute,
       refreshEnv,
+      env,
     ],
   );
 
@@ -355,6 +360,17 @@ export function Settings({
     if (section === 'storage') loadStorage();
   }, [section, loadStorage]);
 
+  // 主进程逐项迁移进度 → 圆环
+  useEffect(
+    () =>
+      onMigrateProgress((p) =>
+        setMigrating((cur) =>
+          cur ? { ...cur, done: p.moved, total: p.total } : cur,
+        ),
+      ),
+    [],
+  );
+
   async function revealStorage(p: string) {
     const r = await api.storageReveal(p);
     if (!r.ok) toast(r.error);
@@ -395,34 +411,41 @@ export function Settings({
 
   type PickField = 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath';
 
-  /** 迁移数据：选目标目录 → 前置检查 → 确认弹窗 */
+  /** 迁移数据：选目标目录 → 探测 <目录>\.data 状态 → 直接确认或三选 */
   async function startMigrate() {
     const r = await api.openDirDialog('选择迁移目标目录');
     if (!r.ok || !r.data) return;
-    const c = await api.checkDataRoot(r.data);
+    const c = await api.migrateProbe(r.data);
     if (!c.ok) {
       toast(c.error);
       return;
     }
-    if (c.data.blocked) {
-      toast('目标目录不能位于数据项目录内部（projects/devices 等），请选择其他目录');
-      return;
-    }
-    setMigrateAsk(r.data);
+    if (c.data.exists && !c.data.empty) setMigrateChoiceAsk({ target: c.data.target });
+    else setMigrateAsk({ target: c.data.target });
   }
 
-  /** 执行迁移：主进程断开全部设备与控制桥后随迁，完成弹重启提示 */
-  async function doMigrate() {
-    if (!migrateAsk) return;
-    setMigrating(true);
-    const r = await api.storageMigrateData(migrateAsk);
-    setMigrating(false);
+  /** 执行迁移：主进程断开全部设备与控制桥后随迁（进度圆环），完成先展示
+   *  绿环打勾再弹重启提示 */
+  async function doMigrate(mode: 'wipe' | 'merge') {
+    const target = migrateAsk?.target ?? migrateChoiceAsk?.target;
+    if (!target) return;
     setMigrateAsk(null);
+    setMigrateChoiceAsk(null);
+    setMigrating({ done: 0, total: 10, fin: false });
+    const r = await api.storageMigrateData(target, mode);
     if (!r.ok) {
+      setMigrating(null);
       toast(r.error);
+      loadStorage();
       return;
     }
-    setMigrateDone(true);
+    // 绿环打勾停留一拍，再切“需要重启”提示
+    setMigrating((cur) => (cur ? { ...cur, fin: true } : cur));
+    setTimeout(() => {
+      setMigrating(null);
+      setMigrateDone(true);
+      loadStorage();
+    }, 1000);
   }
 
   const FIELD_KIND: Partial<Record<PickField, EnvKind>> = {
@@ -672,36 +695,90 @@ export function Settings({
             {migrateAsk && (
               <Modal
                 title="迁移数据"
-                onClose={() => {
-                  if (!migrating) setMigrateAsk(null);
-                }}
+                onClose={() => setMigrateAsk(null)}
                 footer={
                   <>
-                    <button
-                      className="btn"
-                      disabled={migrating}
-                      onClick={() => setMigrateAsk(null)}
-                    >
+                    <button className="btn" onClick={() => setMigrateAsk(null)}>
                       取消
                     </button>
                     <button
                       className="btn btn-primary"
-                      disabled={migrating}
-                      onClick={() => void doMigrate()}
+                      onClick={() => void doMigrate('merge')}
                     >
-                      {migrating ? '迁移中…' : '开始迁移'}
+                      开始迁移
                     </button>
                   </>
                 }
               >
                 <p>
                   将断开所有设备连接并停止控制桥，把项目、虚拟机、应用库、崩溃
-                  记录与下载记录全部迁移到 {migrateAsk}，完成后需要重启应用。
+                  记录与下载记录全部迁移到 {migrateAsk.target}，完成后需要重启
+                  应用。
                 </p>
                 <p>
                   迁移同步执行，数据量大（跨盘搬迁）时应用会短暂无响应，期间请
                   勿关闭应用。
                 </p>
+              </Modal>
+            )}
+
+            {migrateChoiceAsk && (
+              <Modal
+                title="迁移数据"
+                onClose={() => setMigrateChoiceAsk(null)}
+                footer={
+                  <>
+                    <button
+                      className="btn"
+                      onClick={() => setMigrateChoiceAsk(null)}
+                    >
+                      取消迁移
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() => void doMigrate('merge')}
+                    >
+                      合并迁移
+                    </button>
+                    <button
+                      className="btn btn-danger"
+                      onClick={() => void doMigrate('wipe')}
+                    >
+                      抹掉并迁移
+                    </button>
+                  </>
+                }
+              >
+                <p>目标 {migrateChoiceAsk.target} 已存在数据，请选择处理方式：</p>
+                <p>
+                  <strong>合并迁移</strong>：同名数据以当前数据为准，目标独有的
+                  内容保留。
+                </p>
+                <p>
+                  <strong>抹掉并迁移</strong>：先清空目标中的原有数据，再迁入
+                  当前数据。
+                </p>
+              </Modal>
+            )}
+
+            {migrating && (
+              <Modal
+                title={migrating.fin ? '迁移完成' : '正在迁移数据'}
+                locked
+                onClose={() => undefined}
+              >
+                <div className="migrate-progress">
+                  <MigrateRing
+                    done={migrating.done}
+                    total={migrating.total}
+                    fin={migrating.fin}
+                  />
+                  <p className="migrate-progress-text">
+                    {migrating.fin
+                      ? '数据迁移完成'
+                      : `正在迁移 ${migrating.done} / ${migrating.total} 项…`}
+                  </p>
+                </div>
               </Modal>
             )}
 
@@ -996,5 +1073,38 @@ export function Settings({
         </Modal>
       )}
     </div>
+  );
+}
+
+/** 数据迁移进度圆环：进度从九点钟方向起笔顺时针推进；fin 时变绿并中央打勾 */
+function MigrateRing({
+  done,
+  total,
+  fin,
+}: {
+  done: number;
+  total: number;
+  fin: boolean;
+}) {
+  const R = 52;
+  const C = 2 * Math.PI * R;
+  const pct = fin ? 1 : total > 0 ? done / total : 0;
+  return (
+    <svg
+      className={`migrate-ring${fin ? ' ok' : ''}`}
+      viewBox="0 0 120 120"
+      aria-hidden
+    >
+      <circle className="migrate-ring-bg" cx="60" cy="60" r={R} />
+      <circle
+        className="migrate-ring-fill"
+        cx="60"
+        cy="60"
+        r={R}
+        strokeDasharray={C}
+        strokeDashoffset={C * (1 - pct)}
+      />
+      {fin && <path className="migrate-check" d="M40 63l15 14 27-30" />}
+    </svg>
   );
 }

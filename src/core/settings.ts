@@ -356,31 +356,50 @@ function rewriteAvdIniPaths(newRoot: string, oldRoot: string): number {
 /**
  * 把旧数据根下的全部已知数据迁到新数据根对应子路径，迁完清掉搬空的空壳目录。
  * 旧根里还有别的内容（settings.json、用户自放文件）时旧根本身删不掉，自然保留。
+ * wipe：迁入前抹掉目标中同名数据项（"保留"模式覆盖目标旧数据）；
+ * 缺省为合并语义（同名以源为准递归归并，目标独有内容保留）。
+ * onProgress：每处理完一项回调（含失败项），供迁移进度圆环展示。
  */
 export function migrateDataRoot(
   oldRoot: string,
   newRoot: string,
+  options: { wipe?: boolean; onProgress?: (done: number, total: number) => void } = {},
 ): DataRootMigration {
   const result: DataRootMigration = { moved: [], failed: [], iniFixed: 0 };
   const from = path.resolve(oldRoot);
   const to = path.resolve(newRoot);
   if (samePath(from, to)) return result;
+  let processed = 0;
   for (const rel of MIGRATE_ITEMS) {
     const src = path.join(from, rel);
     const dest = path.join(to, rel);
     // 新数据根落在某一项内部时该项不能动（目录移不进自己的子树）
     if (isInside(src, dest)) continue;
-    try {
-      fs.statSync(src);
-    } catch {
-      continue;
+    const exists = (() => {
+      try {
+        fs.statSync(src);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    if (exists && options.wipe) {
+      try {
+        fs.rmSync(dest, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 });
+      } catch {
+        // 抹不掉按合并语义兜底（同名以源为准）
+      }
     }
-    try {
-      moveInto(src, dest);
-      result.moved.push(rel);
-    } catch {
-      result.failed.push(rel);
+    if (exists) {
+      try {
+        moveInto(src, dest);
+        result.moved.push(rel);
+      } catch {
+        result.failed.push(rel);
+      }
     }
+    processed += 1;
+    options.onProgress?.(processed, MIGRATE_ITEMS.length);
   }
   // 有部分项失败也不跳过改写：已迁走的 ini 同样要指到新根
   result.iniFixed = rewriteAvdIniPaths(to, from);

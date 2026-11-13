@@ -10,6 +10,8 @@ export function Modal({
   children,
   footer,
   className,
+  /** 迁移等不可中断操作：隐藏关闭按钮且 Esc/遮罩点击不关闭 */
+  locked,
 }: {
   title: string;
   onClose: () => void;
@@ -17,6 +19,7 @@ export function Modal({
   footer?: ReactNode;
   /** 特殊弹窗的附加样式（如宽版 doc-modal） */
   className?: string;
+  locked?: boolean;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -32,7 +35,7 @@ export function Modal({
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        if (!locked) onClose();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -62,16 +65,21 @@ export function Modal({
       // 关闭后把焦点还给打开弹窗的元素，键盘操作不会失去落点
       if (previous && document.contains(previous)) previous.focus();
     };
-  }, [onClose]);
+  }, [onClose, locked]);
 
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="overlay"
+      onMouseDown={(e) => e.target === e.currentTarget && !locked && onClose()}
+    >
       <div ref={boxRef} className={className ? `modal ${className}` : 'modal'} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h3 className="modal-title">{title}</h3>
-          <button className="modal-close" onClick={onClose} aria-label="关闭">
-            ×
-          </button>
+          {!locked && (
+            <button className="modal-close" onClick={onClose} aria-label="关闭">
+              ×
+            </button>
+          )}
         </div>
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}

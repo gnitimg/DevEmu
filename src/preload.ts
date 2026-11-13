@@ -159,6 +159,12 @@ contextBridge.exposeInMainWorld('devemu', {
   storageClearLogs: invoke('storage:clearLogs'),
   storageClearAvds: invoke('storage:clearAvds'),
   storageReset: invoke('storage:reset'),
+  storageMigrateProbe: invoke('storage:migrateProbe'),
   storageMigrateData: invoke('storage:migrateData'),
+  onMigrateProgress: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('storage:migrateProgress', listener);
+    return () => ipcRenderer.removeListener('storage:migrateProgress', listener);
+  },
   restartApp: invoke('app:restart'),
 });

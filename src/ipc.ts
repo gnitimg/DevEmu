@@ -1402,14 +1402,38 @@ export function registerIpc(): void {
     return ok(true);
   });
 
-  // 迁移数据：断开全部设备连接与控制桥，随迁到用户指定目录并切换数据根；
-  // 完成后由渲染层弹窗提示重启（app:restart），不再走"虚拟机运行中"的拒绝分支
-  handle('storage:migrateData', async (rawDir: unknown) => {
-    const dir = typeof rawDir === 'string' && path.isAbsolute(rawDir) ? rawDir : '';
+  // 迁移目标探测：目标统一为 <所选目录>\.data，返回存在与否供渲染层决策
+  // （不存在/空 → 直接迁入；非空 → 由用户选“保留抹掉/合并/取消”）
+  handle('storage:migrateProbe', (rawDir: unknown) => {
+    const dir =
+      typeof rawDir === 'string' && path.isAbsolute(rawDir) ? rawDir : '';
     if (!dir) return fail('非法的目录');
     const settings = loadAppSettings();
+    const target = path.resolve(path.join(dir, '.data'));
+    if (dataRootConflicts(path.resolve(settings.dataRoot), target).blocked)
+      return fail('目标目录不能位于数据项目录内部（projects/devices 等），请选择其他目录');
+    let exists = false;
+    let empty = true;
+    try {
+      empty = fs.readdirSync(target).length === 0;
+      exists = true;
+    } catch {
+      exists = false;
+    }
+    return ok({ target, exists, empty });
+  });
+
+  // 迁移数据：断开全部设备连接与控制桥，随迁到用户指定目录并切换数据根；
+  // 完成后由渲染层弹窗提示重启（app:restart），不再走"虚拟机运行中"的拒绝分支
+  handle('storage:migrateData', async (rawTarget: unknown, rawMode: unknown) => {
+    const targetDir =
+      typeof rawTarget === 'string' && path.isAbsolute(rawTarget)
+        ? rawTarget
+        : '';
+    if (!targetDir) return fail('非法的目录');
+    const settings = loadAppSettings();
     const oldRoot = path.resolve(settings.dataRoot);
-    const newRoot = path.resolve(dir);
+    const newRoot = path.resolve(targetDir);
     if (path.relative(oldRoot, newRoot) === '') return ok(true);
     // 新根落在随迁项内部时迁移会静默跳过该项导致数据分裂
     if (dataRootConflicts(oldRoot, newRoot).blocked)
@@ -1418,7 +1442,11 @@ export function registerIpc(): void {
     closeAllPills();
     await stopAllEmulators();
     await stopAgentBridge().catch(() => undefined);
-    const migration = migrateDataRoot(oldRoot, newRoot);
+    const migration = migrateDataRoot(oldRoot, newRoot, {
+      wipe: rawMode === 'wipe',
+      onProgress: (moved, total) =>
+        broadcast('storage:migrateProgress', { moved, total }),
+    });
     if (migration.failed.length) {
       const stuck = rollbackMigration(migration, oldRoot, newRoot);
       appendLog(
@@ -1430,7 +1458,7 @@ export function registerIpc(): void {
       return fail(
         stuck.length
           ? `迁移失败并已回滚：${stuck.join('、')} 未迁完，请手动处理`
-          : '迁移失败已回滚，数据根保持不变',
+          : `迁移失败已回滚（${migration.failed.join('、')} 未迁完），数据根保持不变`,
       );
     }
     saveAppSettings({ ...settings, dataRoot: newRoot });
