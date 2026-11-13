@@ -175,35 +175,37 @@ function isInside(parent: string, child: string): boolean {
 
 /**
  * 把 src 移到 dest：目标已存在时递归合并，同名冲突以迁移源为准
- * （迁移的是当前生效数据，旧目标里缺失的项才从源补齐）
+ * （迁移的是当前生效数据，旧目标里缺失的项才从源补齐）。
+ * 全程 fs.promises：大目录跨盘复制走线程池，不阻塞主进程事件循环
+ * （迁移在 ipcMain handler 内执行，同步复制会把整窗卡成“未响应”）。
  */
-function moveInto(src: string, dest: string): void {
-  const srcStat = fs.statSync(src);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
+async function moveInto(src: string, dest: string): Promise<void> {
+  const srcStat = await fs.promises.stat(src);
+  await fs.promises.mkdir(path.dirname(dest), { recursive: true });
   if (srcStat.isDirectory()) {
     let destStat: fs.Stats | undefined;
     try {
-      destStat = fs.statSync(dest);
+      destStat = await fs.promises.stat(dest);
     } catch {
       // 目标不存在
     }
     if (destStat && !destStat.isDirectory()) {
       // 同名文件挡路：以迁移源目录为准
-      fs.rmSync(dest, { force: true, maxRetries: 10, retryDelay: 500 });
+      await fs.promises.rm(dest, { force: true, maxRetries: 10, retryDelay: 500 });
       destStat = undefined;
     }
     if (!destStat) {
       try {
-        fs.renameSync(src, dest);
+        await fs.promises.rename(src, dest);
         return;
       } catch {
         // 跨卷 rename（EXDEV）或目标目录已存在：退回逐项合并
       }
     }
-    fs.mkdirSync(dest, { recursive: true });
-    for (const entry of fs.readdirSync(src))
-      moveInto(path.join(src, entry), path.join(dest, entry));
-    fs.rmSync(src, {
+    await fs.promises.mkdir(dest, { recursive: true });
+    for (const entry of await fs.promises.readdir(src))
+      await moveInto(path.join(src, entry), path.join(dest, entry));
+    await fs.promises.rm(src, {
       recursive: true,
       force: true,
       maxRetries: 10,
@@ -213,8 +215,8 @@ function moveInto(src: string, dest: string): void {
   }
   // 同名目录挡路时以迁移源文件为准（文件 rename 不到目录上）
   try {
-    if (fs.statSync(dest).isDirectory())
-      fs.rmSync(dest, {
+    if ((await fs.promises.stat(dest)).isDirectory())
+      await fs.promises.rm(dest, {
         recursive: true,
         force: true,
         maxRetries: 10,
@@ -224,13 +226,13 @@ function moveInto(src: string, dest: string): void {
     // 目标不存在，直接 rename
   }
   try {
-    fs.renameSync(src, dest);
+    await fs.promises.rename(src, dest);
     return;
   } catch {
     // 跨卷（EXDEV）：复制后删源
   }
-  fs.copyFileSync(src, dest);
-  fs.rmSync(src, { force: true, maxRetries: 10, retryDelay: 500 });
+  await fs.promises.copyFile(src, dest);
+  await fs.promises.rm(src, { force: true, maxRetries: 10, retryDelay: 500 });
 }
 
 export interface DataRootMigration {
@@ -359,12 +361,13 @@ function rewriteAvdIniPaths(newRoot: string, oldRoot: string): number {
  * wipe：迁入前抹掉目标中同名数据项（"保留"模式覆盖目标旧数据）；
  * 缺省为合并语义（同名以源为准递归归并，目标独有内容保留）。
  * onProgress：每处理完一项回调（含失败项），供迁移进度圆环展示。
+ * 异步执行：每项之间让出事件循环，跨盘复制走线程池，主进程全程可响应。
  */
-export function migrateDataRoot(
+export async function migrateDataRoot(
   oldRoot: string,
   newRoot: string,
   options: { wipe?: boolean; onProgress?: (done: number, total: number) => void } = {},
-): DataRootMigration {
+): Promise<DataRootMigration> {
   const result: DataRootMigration = { moved: [], failed: [], iniFixed: 0 };
   const from = path.resolve(oldRoot);
   const to = path.resolve(newRoot);
@@ -375,30 +378,27 @@ export function migrateDataRoot(
     const dest = path.join(to, rel);
     // 新数据根落在某一项内部时该项不能动（目录移不进自己的子树）
     if (isInside(src, dest)) continue;
-    const exists = (() => {
-      try {
-        fs.statSync(src);
-        return true;
-      } catch {
-        return false;
-      }
-    })();
+    const exists = await fs.promises
+      .stat(src)
+      .then(() => true, () => false);
     if (exists && options.wipe) {
       try {
-        fs.rmSync(dest, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 });
+        await fs.promises.rm(dest, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 });
       } catch {
         // 抹不掉按合并语义兜底（同名以源为准）
       }
     }
     if (exists) {
       try {
-        moveInto(src, dest);
+        await moveInto(src, dest);
         result.moved.push(rel);
       } catch {
         result.failed.push(rel);
       }
     }
     processed += 1;
+    // 让出一轮事件循环：进度广播与圆环重绘及时落地
+    await new Promise<void>((resolve) => setImmediate(resolve));
     options.onProgress?.(processed, MIGRATE_ITEMS.length);
   }
   // 有部分项失败也不跳过改写：已迁走的 ini 同样要指到新根
@@ -423,23 +423,23 @@ export function migrateDataRoot(
  * 处理而非只看 moved。并回沿用 moveInto 的合并语义：极少数同名冲突以新根
  * 副本为准——保数据不保位置。返回仍卡在新根、无法搬回的项。
  */
-export function rollbackMigration(
+export async function rollbackMigration(
   migration: DataRootMigration,
   oldRoot: string,
   newRoot: string,
-): string[] {
+): Promise<string[]> {
   const stuck: string[] = [];
   const from = path.resolve(newRoot);
   const to = path.resolve(oldRoot);
   for (const rel of [...migration.moved, ...migration.failed].reverse()) {
     const src = path.join(from, rel);
     try {
-      fs.statSync(src);
+      await fs.promises.stat(src);
     } catch {
       continue;
     }
     try {
-      moveInto(src, path.join(to, rel));
+      await moveInto(src, path.join(to, rel));
     } catch {
       stuck.push(rel);
     }

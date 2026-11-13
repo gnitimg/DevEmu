@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +21,7 @@ function writeFile(p: string, content: string): void {
   fs.writeFileSync(p, content, 'utf8');
 }
 
-test('settings 往返保存加载', () => {
+test('settings 往返保存加载', async () => {
   const root = tmpRoot();
   saveSettings({ dataRoot: root, sdkPath: 'C:\\sdk', javaPath: 'C:\\java' });
   const loaded = loadSettings(root);
@@ -31,7 +31,7 @@ test('settings 往返保存加载', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('settings cameraMode 往返保存加载', () => {
+test('settings cameraMode 往返保存加载', async () => {
   const root = tmpRoot();
   saveSettings({ dataRoot: root, cameraMode: 'screen' });
   assert.equal(loadSettings(root).cameraMode, 'screen');
@@ -40,7 +40,7 @@ test('settings cameraMode 往返保存加载', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('settings 损坏时回退默认', () => {
+test('settings 损坏时回退默认', async () => {
   const root = tmpRoot();
   fs.writeFileSync(settingsPath(root), '{broken json', 'utf8');
   const loaded = loadSettings(root);
@@ -48,7 +48,7 @@ test('settings 损坏时回退默认', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('ensureDataDirs 建齐目录结构', () => {
+test('ensureDataDirs 建齐目录结构', async () => {
   const root = tmpRoot();
   ensureDataDirs(root);
   for (const sub of [
@@ -61,7 +61,7 @@ test('ensureDataDirs 建齐目录结构', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 全量随迁且源目录清空', () => {
+test('migrateDataRoot 全量随迁且源目录清空', async () => {
   const from = tmpRoot();
   const to = path.join(tmpRoot(), 'dest');
   const pairs: [string, string][] = [
@@ -78,7 +78,7 @@ test('migrateDataRoot 全量随迁且源目录清空', () => {
     ['downloads.json', 'dl'],
   ];
   for (const [rel, content] of pairs) writeFile(path.join(from, rel), content);
-  const r = migrateDataRoot(from, to);
+  const r = await migrateDataRoot(from, to);
   assert.deepEqual(r.failed, []);
   assert.deepEqual(
     r.moved.slice().sort(),
@@ -105,7 +105,7 @@ test('migrateDataRoot 全量随迁且源目录清空', () => {
   fs.rmSync(to, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 目标已有同名内容：以迁移源为准，目标独有项保留', () => {
+test('migrateDataRoot 目标已有同名内容：以迁移源为准，目标独有项保留', async () => {
   const from = tmpRoot();
   const to = tmpRoot();
   writeFile(path.join(from, 'projects', 'p1', 'meta.json'), 'new');
@@ -113,7 +113,7 @@ test('migrateDataRoot 目标已有同名内容：以迁移源为准，目标独�
   writeFile(path.join(to, 'projects', 'p1', 'meta.json'), 'old');
   writeFile(path.join(to, 'projects', 'p2', 'meta.json'), 'keep');
   writeFile(path.join(to, 'logs', 'app.log'), 'keep-log');
-  const r = migrateDataRoot(from, to);
+  const r = await migrateDataRoot(from, to);
   assert.deepEqual(r.failed, []);
   assert.equal(
     fs.readFileSync(path.join(to, 'projects', 'p1', 'meta.json'), 'utf8'),
@@ -132,12 +132,12 @@ test('migrateDataRoot 目标已有同名内容：以迁移源为准，目标独�
   fs.rmSync(to, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 源缺项按跳过处理，settings.json 不随迁也不被删', () => {
+test('migrateDataRoot 源缺项按跳过处理，settings.json 不随迁也不被删', async () => {
   const from = tmpRoot();
   const to = tmpRoot();
   writeFile(path.join(from, 'logs', 'app.log'), 'log');
   writeFile(settingsPath(from), '{"dataRoot":"x"}');
-  const r = migrateDataRoot(from, to);
+  const r = await migrateDataRoot(from, to);
   assert.deepEqual(r.failed, []);
   assert.ok(fs.existsSync(path.join(to, 'logs', 'app.log')));
   assert.ok(fs.existsSync(settingsPath(from)));
@@ -146,12 +146,12 @@ test('migrateDataRoot 源缺项按跳过处理，settings.json 不随迁也不�
   fs.rmSync(from, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 新根在旧根子树内：安全项照迁，含新根的项跳过', () => {
+test('migrateDataRoot 新根在旧根子树内：安全项照迁，含新根的项跳过', async () => {
   const from = tmpRoot();
   const to = path.join(from, 'projects', 'custom', 'data');
   writeFile(path.join(to, 'seed.txt'), 'seed');
   writeFile(path.join(from, 'logs', 'app.log'), 'log');
-  const r = migrateDataRoot(from, to);
+  const r = await migrateDataRoot(from, to);
   assert.deepEqual(r.failed, []);
   assert.ok(r.moved.includes('logs'));
   assert.ok(!r.moved.includes('projects'));
@@ -160,16 +160,16 @@ test('migrateDataRoot 新根在旧根子树内：安全项照迁，含新根的�
   fs.rmSync(from, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 同一目录为空操作', () => {
+test('migrateDataRoot 同一目录为空操作', async () => {
   const root = tmpRoot();
   writeFile(path.join(root, 'logs', 'app.log'), 'log');
-  const r = migrateDataRoot(root, root);
+  const r = await migrateDataRoot(root, root);
   assert.deepEqual(r, { moved: [], failed: [], iniFixed: 0 });
   assert.ok(fs.existsSync(path.join(root, 'logs', 'app.log')));
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('dataRootConflicts 新旧根相同时不报冲突', () => {
+test('dataRootConflicts 新旧根相同时不报冲突', async () => {
   const root = tmpRoot();
   writeFile(path.join(root, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
   assert.deepEqual(dataRootConflicts(root, root), {
@@ -180,7 +180,7 @@ test('dataRootConflicts 新旧根相同时不报冲突', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('dataRootConflicts 新根在随迁项子树内判定为 blocked', () => {
+test('dataRootConflicts 新根在随迁项子树内判定为 blocked', async () => {
   const from = tmpRoot();
   const to = path.join(from, 'projects', 'custom', 'data');
   fs.mkdirSync(to, { recursive: true });
@@ -190,7 +190,7 @@ test('dataRootConflicts 新根在随迁项子树内判定为 blocked', () => {
   fs.rmSync(from, { recursive: true, force: true });
 });
 
-test('dataRootConflicts 新根为旧根下 .data 子目录允许迁移（升级新布局）', () => {
+test('dataRootConflicts 新根为旧根下 .data 子目录允许迁移（升级新布局）', async () => {
   const from = tmpRoot();
   const to = path.join(from, '.data');
   fs.mkdirSync(to, { recursive: true });
@@ -200,7 +200,7 @@ test('dataRootConflicts 新根为旧根下 .data 子目录允许迁移（升级�
   fs.rmSync(from, { recursive: true, force: true });
 });
 
-test('dataRootConflicts 列出目标里同 ID 的项目并带名称', () => {
+test('dataRootConflicts 列出目标里同 ID 的项目并带名称', async () => {
   const from = tmpRoot();
   const to = tmpRoot();
   writeFile(path.join(from, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
@@ -215,7 +215,7 @@ test('dataRootConflicts 列出目标里同 ID 的项目并带名称', () => {
   fs.rmSync(from, { recursive: true, force: true });
 });
 
-test('dataRootConflicts 目标同 ID 目录损坏时仍按 ID 提示', () => {
+test('dataRootConflicts 目标同 ID 目录损坏时仍按 ID 提示', async () => {
   const from = tmpRoot();
   const to = tmpRoot();
   writeFile(path.join(from, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
@@ -226,7 +226,7 @@ test('dataRootConflicts 目标同 ID 目录损坏时仍按 ID 提示', () => {
   fs.rmSync(from, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 改写 AVD ini 里指向旧数据根的绝对路径', () => {
+test('migrateDataRoot 改写 AVD ini 里指向旧数据根的绝对路径', async () => {
   const from = tmpRoot();
   const to = tmpRoot();
   writeFile(
@@ -242,7 +242,7 @@ test('migrateDataRoot 改写 AVD ini 里指向旧数据根的绝对路径', () =
     path.join(from, 'devices', 'avd', 'keep.ini'),
     'path=C:\\elsewhere\\x.avd\n',
   );
-  const r = migrateDataRoot(from, to);
+  const r = await migrateDataRoot(from, to);
   assert.deepEqual(r.failed, []);
   assert.equal(r.iniFixed, 2);
   const a = fs.readFileSync(path.join(to, 'devices', 'avd', 'a.ini'), 'utf8');
@@ -256,12 +256,12 @@ test('migrateDataRoot 改写 AVD ini 里指向旧数据根的绝对路径', () =
   fs.rmSync(from, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 支持迁入旧根下 .data 子目录（升级新布局）', () => {
+test('migrateDataRoot 支持迁入旧根下 .data 子目录（升级新布局）', async () => {
   const from = tmpRoot();
   const to = path.join(from, '.data');
   writeFile(path.join(from, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
   writeFile(path.join(from, 'devices', 'avd', 'v1.ini'), 'path=x\n');
-  const r = migrateDataRoot(from, to);
+  const r = await migrateDataRoot(from, to);
   assert.deepEqual(r.failed, []);
   assert.ok(fs.existsSync(path.join(to, 'projects', 'p1', 'project.json')));
   assert.ok(fs.existsSync(path.join(to, 'devices', 'avd', 'v1.ini')));

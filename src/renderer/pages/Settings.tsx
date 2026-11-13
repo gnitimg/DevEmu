@@ -115,11 +115,6 @@ export function Settings({
   const [migrateChoiceAsk, setMigrateChoiceAsk] = useState<{ target: string } | null>(null);
   const [migrating, setMigrating] = useState<{ done: number; total: number; fin: boolean } | null>(null);
   const [migrateDone, setMigrateDone] = useState(false);
-  // 数据根迁移（跨盘复制数 GB、期间主进程同步执行）需确认后才执行
-  const [rootAsk, setRootAsk] = useState<{
-    dir: string;
-    projects: { id: string; name: string }[];
-  } | null>(null);
   const [busy, setBusy] = useState(false);
   // 改动序号：设置一有变化就 +1；自动保存按“已落盘序号”判断是否仍需写盘。
   // 卸载时若仍有未落盘改动就立即补写——600ms 防抖定时器会随卸载被清掉
@@ -439,11 +434,13 @@ export function Settings({
       loadStorage();
       return;
     }
-    // 绿环打勾停留一拍，再切“需要重启”提示
+    // 圆环补满+绿勾停一拍，再切“需要重启”提示；同步刷新表单行与文件位置列表
     setMigrating((cur) => (cur ? { ...cur, fin: true } : cur));
     setTimeout(() => {
       setMigrating(null);
       setMigrateDone(true);
+      setDataRoot(target);
+      refreshEnv();
       loadStorage();
     }, 1000);
   }
@@ -456,8 +453,7 @@ export function Settings({
 
   function applyPick(field: PickField, dir: string) {
     touch();
-    if (field === 'dataRoot') setDataRoot(dir);
-    else if (field === 'sdkPath') setSdkPath(dir);
+    if (field === 'sdkPath') setSdkPath(dir);
     else if (field === 'harmonyPath') setHarmonyPath(dir);
     else setJavaPath(dir);
   }
@@ -466,16 +462,15 @@ export function Settings({
     const r = await api.openDirDialog(title);
     if (!r.ok || !r.data) return;
     if (field === 'dataRoot') {
-      const c = await api.checkDataRoot(r.data);
+      // 数据根变更即数据迁移：与“迁移数据”按钮走同一条管线
+      //（目标 <目录>\.data、非空三选、进度圆环、断连与重启提示）
+      const c = await api.migrateProbe(r.data);
       if (!c.ok) {
         toast(c.error);
         return;
       }
-      if (c.data.blocked) {
-        toast('新数据根不能位于数据项目录内部（projects/devices 等），请选择其他目录');
-        return;
-      }
-      setRootAsk({ dir: r.data, projects: c.data.projects });
+      if (c.data.exists && !c.data.empty) setMigrateChoiceAsk({ target: c.data.target });
+      else setMigrateAsk({ target: c.data.target });
       return;
     }
     const kind = FIELD_KIND[field];
@@ -625,43 +620,6 @@ export function Settings({
                 </button>
               </div>
             </div>
-
-            {rootAsk && (
-              <Modal
-                title="更改数据根目录"
-                onClose={() => setRootAsk(null)}
-                footer={
-                  <>
-                    <button className="btn" onClick={() => setRootAsk(null)}>
-                      取消
-                    </button>
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => {
-                        const dir = rootAsk.dir;
-                        setRootAsk(null);
-                        applyPick('dataRoot', dir);
-                      }}
-                    >
-                      迁移并切换
-                    </button>
-                  </>
-                }
-              >
-                <p>
-                  将把项目、虚拟机、应用库与测试记录全部迁移到 {rootAsk.dir}
-                  ，并清空原目录。迁移同步执行，数据量大（跨盘搬迁）时应用会
-                  短暂无响应，期间请勿关闭应用或操作虚拟机。
-                </p>
-                {rootAsk.projects.length > 0 && (
-                  <p style={{ color: 'var(--danger)' }}>
-                    目标目录已存在同名项目（
-                    {rootAsk.projects.map((p) => p.name).join('、')}
-                    ），迁移会用当前数据覆盖它们的同名文件。
-                  </p>
-                )}
-              </Modal>
-            )}
 
             {confirmAsk && (
               <Modal

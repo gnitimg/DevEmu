@@ -1165,11 +1165,11 @@ export function registerIpc(): void {
         return fail('有虚拟机正在运行，请先全部关闭后再更改数据根目录');
       // 桥进程持有旧数据根里的脚本路径，先停，保存完成后按新数据根重启
       if (agentBridgeRunning()) await stopAgentBridge().catch(() => undefined);
-      migration = migrateDataRoot(oldRoot, newRoot);
+      migration = await migrateDataRoot(oldRoot, newRoot);
       if (migration.failed.length) {
         // failed 项也可能是半迁移态（moveInto 子项递归抛错），不回滚会让已迁
         // 数据从活动视图消失
-        const stuck = rollbackMigration(migration, oldRoot, newRoot);
+        const stuck = await rollbackMigration(migration, oldRoot, newRoot);
         appendLog(
           defaultDataRoot(),
           stuck.length
@@ -1232,7 +1232,7 @@ export function registerIpc(): void {
     if (saveErr) {
       // 数据已在新根而 settings.json 仍指旧根是最彻底的分裂：回滚并重挂下载存储
       if (migration) {
-        const stuck = rollbackMigration(migration, oldRoot, newRoot);
+        const stuck = await rollbackMigration(migration, oldRoot, newRoot);
         initDownloadStore(oldRoot);
         appendLog(
           defaultDataRoot(),
@@ -1442,13 +1442,13 @@ export function registerIpc(): void {
     closeAllPills();
     await stopAllEmulators();
     await stopAgentBridge().catch(() => undefined);
-    const migration = migrateDataRoot(oldRoot, newRoot, {
+    const migration = await migrateDataRoot(oldRoot, newRoot, {
       wipe: rawMode === 'wipe',
       onProgress: (moved, total) =>
         broadcast('storage:migrateProgress', { moved, total }),
     });
     if (migration.failed.length) {
-      const stuck = rollbackMigration(migration, oldRoot, newRoot);
+      const stuck = await rollbackMigration(migration, oldRoot, newRoot);
       appendLog(
         defaultDataRoot(),
         stuck.length
