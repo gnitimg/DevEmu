@@ -12,8 +12,9 @@
 
 Name "${APP_NAME}"
 OutFile "${OUT_FILE}"
-Icon "assets\icon.ico"
-UninstallIcon "assets\icon.ico"
+; NSIS 相对路径按 .nsi 脚本目录解析，引用仓库根 assets
+Icon "..\assets\icon.ico"
+UninstallIcon "..\assets\icon.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
