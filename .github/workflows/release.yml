@@ -48,7 +48,9 @@ jobs:
           $pkgDir = (Get-ChildItem out -Directory -Filter "*-win32-x64" | Select-Object -First 1).FullName
           if (-not $pkgDir) { throw "未找到 forge package 产物目录" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          & $makensis /DAPP_VERSION=$version "/DPKG_DIR=$pkgDir" "/DOUT_FILE=dist\DevEmu-Setup-$version.exe" installer\installer.nsi
+          # NSIS 的相对路径按脚本目录解析，产出与输入都必须传绝对路径
+          $distAbs = (Resolve-Path dist).Path
+          & $makensis /DAPP_VERSION=$version "/DPKG_DIR=$pkgDir" "/DOUT_FILE=$distAbs\DevEmu-Setup-$version.exe" installer\installer.nsi
           if ($LASTEXITCODE -ne 0) { throw "NSIS 构建失败" }
 
       # 安装包统一改名 DevEmu-Setup-<version>.exe：应用内更新按这个固定资产名
