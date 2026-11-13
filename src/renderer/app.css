@@ -1532,7 +1532,8 @@ table.tbl.crash-tbl {
   bottom: 0;
   border-radius: 999px;
   background: var(--accent);
-  transition: width 0.7s ease;
+  /* 与下载管理条目条 .dl-fill 一致：取值同源后动画节奏也同步 */
+  transition: width 0.9s linear;
 }
 
 .side-dl-fill.indet {

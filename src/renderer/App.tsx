@@ -187,14 +187,12 @@ export function App() {
     [],
   );
   const dlTotal = dlActive.reduce((a, d) => a + d.total, 0);
-  const dlDone = dlActive.reduce((a, d) => a + d.downloaded, 0);
-  // 文件任务用字节；sdkmanager 任务无字节量，用阶段化显示进度均值
+  // 与下载管理条目条同源：字节任务的 percent 为真实比值×95（为解压/落位保留上限），
+  // 若按原始字节比值画，胶囊会跑在条目条前面（用户可见的两条不一致）
   const dlPct =
-    dlTotal > 0
-      ? Math.min(100, Math.round((dlDone / dlTotal) * 100))
-      : dlActive.length > 0
-        ? Math.round(dlActive.reduce((a, d) => a + d.percent, 0) / dlActive.length)
-        : 0;
+    dlActive.length > 0
+      ? Math.round(dlActive.reduce((a, d) => a + d.percent, 0) / dlActive.length)
+      : 0;
 
   // scope 按 deviceScope memoize：内联对象每次渲染都是新身份，
   // 会把 DeviceDetail 内 useCallback([scope]) 的列表回调每轮重建、反复重拉
