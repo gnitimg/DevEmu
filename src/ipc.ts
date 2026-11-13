@@ -1156,9 +1156,10 @@ export function registerIpc(): void {
     const newRoot = path.resolve(s.dataRoot);
     let migration: DataRootMigration | null = null;
     if (path.relative(oldRoot, newRoot) !== '') {
-      // 新根落在旧根内部时 projects 会搬进自己的子树，切换后列表为空
-      if (dataRootConflicts(oldRoot, newRoot).nested)
-        return fail('新数据根不能位于当前数据根内部，请选择其他目录');
+      // 新根落在随迁项内部时迁移会静默跳过该项导致数据分裂；
+      // 旧根直接子目录（如升级到 .data 新版式）不在随迁项内，允许并正常随迁
+      if (dataRootConflicts(oldRoot, newRoot).blocked)
+        return fail('新数据根不能位于数据项目录内部（projects/devices 等），请选择其他目录');
       // 虚拟机磁盘文件被进程持有，不关干净迁移必留残缺
       if (listRunning().length > 0)
         return fail('有虚拟机正在运行，请先全部关闭后再更改数据根目录');
@@ -1398,6 +1399,50 @@ export function registerIpc(): void {
       app.relaunch();
       app.exit(0);
     }, 500);
+    return ok(true);
+  });
+
+  // 迁移数据：断开全部设备连接与控制桥，随迁到用户指定目录并切换数据根；
+  // 完成后由渲染层弹窗提示重启（app:restart），不再走"虚拟机运行中"的拒绝分支
+  handle('storage:migrateData', async (rawDir: unknown) => {
+    const dir = typeof rawDir === 'string' && path.isAbsolute(rawDir) ? rawDir : '';
+    if (!dir) return fail('非法的目录');
+    const settings = loadAppSettings();
+    const oldRoot = path.resolve(settings.dataRoot);
+    const newRoot = path.resolve(dir);
+    if (path.relative(oldRoot, newRoot) === '') return ok(true);
+    // 新根落在随迁项内部时迁移会静默跳过该项导致数据分裂
+    if (dataRootConflicts(oldRoot, newRoot).blocked)
+      return fail('目标目录不能位于数据项目录内部（projects/devices 等），请选择其他目录');
+    closeLocationPanels();
+    closeAllPills();
+    await stopAllEmulators();
+    await stopAgentBridge().catch(() => undefined);
+    const migration = migrateDataRoot(oldRoot, newRoot);
+    if (migration.failed.length) {
+      const stuck = rollbackMigration(migration, oldRoot, newRoot);
+      appendLog(
+        defaultDataRoot(),
+        stuck.length
+          ? `数据迁移失败并已回滚：${migration.failed.join('、')} 未迁完，${stuck.join('、')} 仍留在新根，请手动处理`
+          : `数据迁移失败：${migration.failed.join('、')} 未迁完，已回滚，数据根保持不变`,
+      );
+      return fail(
+        stuck.length
+          ? `迁移失败并已回滚：${stuck.join('、')} 未迁完，请手动处理`
+          : '迁移失败已回滚，数据根保持不变',
+      );
+    }
+    saveAppSettings({ ...settings, dataRoot: newRoot });
+    // 下载存储改挂新根，否则后续任务会把文件写回旧根
+    initDownloadStore(newRoot);
+    appendLog(defaultDataRoot(), `数据已迁移到 ${newRoot}，等待应用重启`);
+    return ok(true);
+  });
+
+  handle('app:restart', () => {
+    app.relaunch();
+    app.exit(0);
     return ok(true);
   });
 

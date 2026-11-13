@@ -109,6 +109,10 @@ export function Settings({
   const [installing, setInstalling] = useState(false);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [confirmAsk, setConfirmAsk] = useState<ConfirmOp | null>(null);
+  // 数据迁移：选目标目录 → 确认 → 迁移并断开全部设备 → 提示重启
+  const [migrateAsk, setMigrateAsk] = useState<string | null>(null);
+  const [migrating, setMigrating] = useState(false);
+  const [migrateDone, setMigrateDone] = useState(false);
   // 数据根迁移（跨盘复制数 GB、期间主进程同步执行）需确认后才执行
   const [rootAsk, setRootAsk] = useState<{
     dir: string;
@@ -390,6 +394,37 @@ export function Settings({
   }
 
   type PickField = 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath';
+
+  /** 迁移数据：选目标目录 → 前置检查 → 确认弹窗 */
+  async function startMigrate() {
+    const r = await api.openDirDialog('选择迁移目标目录');
+    if (!r.ok || !r.data) return;
+    const c = await api.checkDataRoot(r.data);
+    if (!c.ok) {
+      toast(c.error);
+      return;
+    }
+    if (c.data.blocked) {
+      toast('目标目录不能位于数据项目录内部（projects/devices 等），请选择其他目录');
+      return;
+    }
+    setMigrateAsk(r.data);
+  }
+
+  /** 执行迁移：主进程断开全部设备与控制桥后随迁，完成弹重启提示 */
+  async function doMigrate() {
+    if (!migrateAsk) return;
+    setMigrating(true);
+    const r = await api.storageMigrateData(migrateAsk);
+    setMigrating(false);
+    setMigrateAsk(null);
+    if (!r.ok) {
+      toast(r.error);
+      return;
+    }
+    setMigrateDone(true);
+  }
+
   const FIELD_KIND: Partial<Record<PickField, EnvKind>> = {
     sdkPath: 'android',
     harmonyPath: 'harmonyos',
@@ -413,8 +448,8 @@ export function Settings({
         toast(c.error);
         return;
       }
-      if (c.data.nested) {
-        toast('新数据根不能位于当前数据根内部');
+      if (c.data.blocked) {
+        toast('新数据根不能位于数据项目录内部（projects/devices 等），请选择其他目录');
         return;
       }
       setRootAsk({ dir: r.data, projects: c.data.projects });
@@ -532,6 +567,12 @@ export function Settings({
             </div>
             <div className="section">
               <div className="settings-row">
+                <span className="settings-row-label">迁移数据</span>
+                <button className="btn" onClick={() => void startMigrate()}>
+                  迁移到新目录
+                </button>
+              </div>
+              <div className="settings-row">
                 <span className="settings-row-label">清除日志</span>
                 <button
                   className="btn btn-danger"
@@ -625,6 +666,64 @@ export function Settings({
                 }
               >
                 <p>{CONFIRM_META[confirmAsk].text}</p>
+              </Modal>
+            )}
+
+            {migrateAsk && (
+              <Modal
+                title="迁移数据"
+                onClose={() => {
+                  if (!migrating) setMigrateAsk(null);
+                }}
+                footer={
+                  <>
+                    <button
+                      className="btn"
+                      disabled={migrating}
+                      onClick={() => setMigrateAsk(null)}
+                    >
+                      取消
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      disabled={migrating}
+                      onClick={() => void doMigrate()}
+                    >
+                      {migrating ? '迁移中…' : '开始迁移'}
+                    </button>
+                  </>
+                }
+              >
+                <p>
+                  将断开所有设备连接并停止控制桥，把项目、虚拟机、应用库、崩溃
+                  记录与下载记录全部迁移到 {migrateAsk}，完成后需要重启应用。
+                </p>
+                <p>
+                  迁移同步执行，数据量大（跨盘搬迁）时应用会短暂无响应，期间请
+                  勿关闭应用。
+                </p>
+              </Modal>
+            )}
+
+            {migrateDone && (
+              <Modal
+                title="迁移完成"
+                onClose={() => setMigrateDone(false)}
+                footer={
+                  <>
+                    <button className="btn" onClick={() => setMigrateDone(false)}>
+                      稍后手动重启
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => void api.restartApp()}
+                    >
+                      立即重启
+                    </button>
+                  </>
+                }
+              >
+                <p>数据已迁移并切换到新目录，重启应用后生效。</p>
               </Modal>
             )}
           </>

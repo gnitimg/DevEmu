@@ -172,15 +172,31 @@ test('migrateDataRoot 同一目录为空操作', () => {
 test('dataRootConflicts 新旧根相同时不报冲突', () => {
   const root = tmpRoot();
   writeFile(path.join(root, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
-  assert.deepEqual(dataRootConflicts(root, root), { nested: false, projects: [] });
+  assert.deepEqual(dataRootConflicts(root, root), {
+    nested: false,
+    blocked: false,
+    projects: [],
+  });
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('dataRootConflicts 新根在旧根子树内判定为嵌套', () => {
+test('dataRootConflicts 新根在随迁项子树内判定为 blocked', () => {
   const from = tmpRoot();
   const to = path.join(from, 'projects', 'custom', 'data');
   fs.mkdirSync(to, { recursive: true });
-  assert.equal(dataRootConflicts(from, to).nested, true);
+  const r = dataRootConflicts(from, to);
+  assert.equal(r.nested, true);
+  assert.equal(r.blocked, true);
+  fs.rmSync(from, { recursive: true, force: true });
+});
+
+test('dataRootConflicts 新根为旧根下 .data 子目录允许迁移（升级新布局）', () => {
+  const from = tmpRoot();
+  const to = path.join(from, '.data');
+  fs.mkdirSync(to, { recursive: true });
+  const r = dataRootConflicts(from, to);
+  assert.equal(r.nested, true);
+  assert.equal(r.blocked, false);
   fs.rmSync(from, { recursive: true, force: true });
 });
 
@@ -193,6 +209,7 @@ test('dataRootConflicts 列出目标里同 ID 的项目并带名称', () => {
   writeFile(path.join(to, 'projects', 'p3', 'project.json'), '{"name":"丙"}');
   const r = dataRootConflicts(from, to);
   assert.equal(r.nested, false);
+  assert.equal(r.blocked, false);
   assert.deepEqual(r.projects, [{ id: 'p1', name: '旧甲' }]);
   fs.rmSync(to, { recursive: true, force: true });
   fs.rmSync(from, { recursive: true, force: true });
@@ -237,4 +254,17 @@ test('migrateDataRoot 改写 AVD ini 里指向旧数据根的绝对路径', () =
   assert.equal(keep, 'path=C:\\elsewhere\\x.avd\n');
   fs.rmSync(to, { recursive: true, force: true });
   fs.rmSync(from, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 支持迁入旧根下 .data 子目录（升级新布局）', () => {
+  const from = tmpRoot();
+  const to = path.join(from, '.data');
+  writeFile(path.join(from, 'projects', 'p1', 'project.json'), '{"name":"甲"}');
+  writeFile(path.join(from, 'devices', 'avd', 'v1.ini'), 'path=x\n');
+  const r = migrateDataRoot(from, to);
+  assert.deepEqual(r.failed, []);
+  assert.ok(fs.existsSync(path.join(to, 'projects', 'p1', 'project.json')));
+  assert.ok(fs.existsSync(path.join(to, 'devices', 'avd', 'v1.ini')));
+  // 旧根只剩 .data 本身，settings.json 类引导文件不随迁
+  assert.deepEqual(fs.readdirSync(from), ['.data']);
 });

@@ -159,4 +159,6 @@ contextBridge.exposeInMainWorld('devemu', {
   storageClearLogs: invoke('storage:clearLogs'),
   storageClearAvds: invoke('storage:clearAvds'),
   storageReset: invoke('storage:reset'),
+  storageMigrateData: invoke('storage:migrateData'),
+  restartApp: invoke('app:restart'),
 });

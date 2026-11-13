@@ -323,7 +323,11 @@ export const api = {
     }>('envStatus'),
   saveSettings: (s: Settings) => call<Settings>('saveSettings', s),
   checkDataRoot: (dir: string) =>
-    call<{ nested: boolean; projects: { id: string; name: string }[] }>(
+    call<{
+      nested: boolean;
+      blocked: boolean;
+      projects: { id: string; name: string }[];
+    }>(
       'checkDataRoot',
       dir,
     ),
@@ -452,6 +456,8 @@ export const api = {
   storageClearLogs: () => call<number>('storageClearLogs'),
   storageClearAvds: () => call<number>('storageClearAvds'),
   storageReset: () => call<boolean>('storageReset'),
+  storageMigrateData: (dir: string) => call<boolean>('storageMigrateData', dir),
+  restartApp: () => call<boolean>('restartApp'),
 };
 
 /** 设置页存储分区：常用文件位置 + 虚拟机数量 */

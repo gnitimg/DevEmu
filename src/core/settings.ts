@@ -242,29 +242,45 @@ export interface DataRootMigration {
   iniFixed: number;
 }
 
+export interface DataRootConflicts {
+  /** 新根落在旧根子树内（信息位：仅当同时落入随迁项内部才是硬冲突） */
+  nested: boolean;
+  /** 新根落在随迁数据项（projects/devices 等）内部：迁移会静默跳过该项导致数据分裂，必须拒绝 */
+  blocked: boolean;
+  /** 改写指向旧数据根的 AVD ini 数量 */
+  projects: DataRootConflict[];
+}
+
 export interface DataRootConflict {
   id: string;
   name: string;
 }
 
 /**
- * 迁移前置检查：新根不能落在旧根内部（否则 projects 会搬进自己的子树，
- * 切换后项目列表为空）；目标里已存在同 ID 项目时迁移会覆盖，需要先告知用户。
+ * 迁移前置检查：随迁项内部不能作为新根（否则该项会搬进自己的子树被静默跳过，
+ * 切换后数据分裂）；目标里已存在同 ID 项目时迁移会覆盖，需要先告知用户。
+ * 新根是旧根的直接子目录（如升级到 <旧根>\.data 新版式）且不在随迁项内时允许。
  */
 export function dataRootConflicts(
   oldRoot: string,
   newRoot: string,
-): { nested: boolean; projects: DataRootConflict[] } {
+): DataRootConflicts {
   const from = path.resolve(oldRoot);
   const to = path.resolve(newRoot);
   const nested = isInside(from, to) && !samePath(from, to);
+  const blocked =
+    nested &&
+    MIGRATE_ITEMS.some((rel) => {
+      const itemDir = path.join(from, rel);
+      return isInside(itemDir, to) && !samePath(itemDir, to);
+    });
   const projects: DataRootConflict[] = [];
-  if (nested || samePath(from, to)) return { nested, projects };
+  if (nested || samePath(from, to)) return { nested, blocked, projects };
   let ids: string[] = [];
   try {
     ids = fs.readdirSync(path.join(from, 'projects'));
   } catch {
-    return { nested, projects };
+    return { nested, blocked, projects };
   }
   for (const id of ids) {
     const file = path.join(to, 'projects', id, 'project.json');
@@ -280,7 +296,7 @@ export function dataRootConflicts(
     }
     projects.push({ id, name });
   }
-  return { nested, projects };
+  return { nested, blocked, projects };
 }
 
 /**
