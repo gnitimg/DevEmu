@@ -32,21 +32,35 @@ jobs:
           npm run typecheck
           npm test
 
-      - name: Build installer
-        run: npx electron-forge make --platform win32
+      - name: Build app bundle
+        run: npx electron-forge package --platform win32
+
+      # NSIS 安装包（runner 预装 NSIS；缺失时 choco 兜底）：
+      # 支持首装自选安装目录，静默升级回读注册表既有目录
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source
+          if (-not $makensis -and (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
+          if (-not $makensis) { choco install nsis -y --no-progress | Out-Null; $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
+          if (-not (Test-Path $makensis)) { throw "未找到 makensis" }
+          $pkgDir = (Get-ChildItem out -Directory -Filter "*-win32-x64" | Select-Object -First 1).FullName
+          if (-not $pkgDir) { throw "未找到 forge package 产物目录" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          & $makensis /DAPP_VERSION=$version "/DPKG_DIR=$pkgDir" "/DOUT_FILE=dist\DevEmu-Setup-$version.exe" installer\installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "NSIS 构建失败" }
 
       # 安装包统一改名 DevEmu-Setup-<version>.exe：应用内更新按这个固定资产名
-      # 在 release 资产里匹配下载地址，与 forge 本地产物命名解耦
+      # 在 release 资产里匹配下载地址，与打包产物命名解耦
       - name: Collect artifacts
         id: collect
         shell: pwsh
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $exe = Get-ChildItem "out/make/squirrel.windows/x64/*.exe" | Select-Object -First 1
-          if (-not $exe) { throw "未找到 Squirrel 安装包产物" }
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item $exe.FullName "dist/DevEmu-Setup-$version.exe"
-          node scripts/checksums.mjs "dist/DevEmu-Setup-$version.exe" > dist/checksums.txt
+          $exe = "dist/DevEmu-Setup-$version.exe"
+          if (-not (Test-Path $exe)) { throw "未找到 NSIS 安装包产物" }
+          node scripts/checksums.mjs "$exe" > dist/checksums.txt
           Get-Content dist/checksums.txt
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 

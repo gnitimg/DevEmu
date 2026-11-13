@@ -1,5 +1,4 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -15,7 +14,9 @@ const config: ForgeConfig = {
     extraResource: ['resources/agent-mcp.mjs', 'assets/icon.png'],
   },
   rebuildConfig: {},
-  makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin'])],
+  // Windows 安装包不再走 Squirrel（不支持自选安装目录）：release.yml 用
+  // electron-forge package 产物 + installer/installer.nsi 构建 NSIS 安装包
+  makers: [new MakerZIP({}, ['darwin'])],
   plugins: [
     new VitePlugin({
       build: [

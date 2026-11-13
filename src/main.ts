@@ -1,15 +1,10 @@
 import { app, BrowserWindow, Menu, globalShortcut } from 'electron';
 import path from 'node:path';
-import started from 'electron-squirrel-startup';
 import { registerIpc } from './ipc.ts';
 import { appendLog } from './core/log.ts';
 import { loadAppSettings } from './core/settings.ts';
 import { stopAllLocations } from './core/location.ts';
 import { stopWindowGuards } from './core/win.ts';
-
-if (started) {
-  app.quit();
-}
 
 // 运行日志统一写 <dataRoot>/logs/app.log；dataRoot 每次现读，重置后也能拿到最新值
 function logLine(line: string): void {

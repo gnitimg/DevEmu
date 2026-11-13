@@ -4,23 +4,53 @@ import os from 'node:os';
 import type { Settings } from './types.ts';
 import { appendLog } from './log.ts';
 
-export const DEFAULT_DATA_ROOT = path.join(os.homedir(), 'DevEmu');
+/** v1.1.x 及此前版本的数据根与引导配置位置，升级时用于发现既有数据 */
+export const LEGACY_DATA_ROOT = path.join(os.homedir(), 'DevEmu');
+
+/**
+ * 打包版的数据引导目录：安装目录下的 .data（默认数据根与 settings.json 都在这里，
+ * NSIS 安装包允许用户自选安装目录，数据跟着装到所选盘）；dev（electron.exe）与
+ * node 测试进程没有安装目录概念，沿用主目录传统位置，本地调试数据不迁移
+ */
+export function defaultDataRoot(): string {
+  if (/^(electron|node)(\.exe)?$/i.test(path.basename(process.execPath))) return LEGACY_DATA_ROOT;
+  return path.join(path.dirname(process.execPath), '.data');
+}
 
 export function settingsPath(dataRoot: string): string {
   return path.join(dataRoot, 'settings.json');
 }
 
 /**
- * settings.json 固定存放在 DEFAULT_DATA_ROOT（dataRoot 字段只是指向数据目录），
- * 否则修改 dataRoot 后主配置会"漂移"到新目录导致不生效
+ * settings.json 固定存放在 defaultDataRoot()（dataRoot 字段只是指向数据目录），
+ * 否则修改 dataRoot 后主配置会"漂移"到新目录导致不生效。
+ * 从 v1.1.x 升级上来时首次读取会把 ~/DevEmu 的引导配置复制进 .data：
+ * dataRoot 保持指向既有数据目录（虚拟机不搬家），用户可在设置里再切换。
  */
 export function loadAppSettings(): Settings {
-  return loadSettings(DEFAULT_DATA_ROOT);
+  const root = defaultDataRoot();
+  if (root !== LEGACY_DATA_ROOT && !fs.existsSync(settingsPath(root))) {
+    const legacy = settingsPath(LEGACY_DATA_ROOT);
+    if (fs.existsSync(legacy)) {
+      try {
+        fs.mkdirSync(root, { recursive: true });
+        fs.copyFileSync(legacy, settingsPath(root));
+      } catch {
+        // 引导配置迁移失败按全新安装处理，不影响启动
+      }
+    }
+  }
+  return loadSettings(root);
+}
+
+/** 首次启动判定：引导配置不存在即首次安装（旧版升级在读取前已完成引导配置迁移） */
+export function isBootstrapFresh(): boolean {
+  return !fs.existsSync(settingsPath(defaultDataRoot()));
 }
 
 export function saveAppSettings(settings: Settings): void {
   ensureDataDirs(settings.dataRoot);
-  const file = settingsPath(DEFAULT_DATA_ROOT);
+  const file = settingsPath(defaultDataRoot());
   const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf8');
   fs.renameSync(tmp, file);

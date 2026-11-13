@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
+import usageMd from '../../assets/docs/usage.md?raw';
 import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onUpdateAvailable, onUpdateDownloaded, onUpdateError, onUpdateProgress, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
@@ -11,6 +12,8 @@ import { Settings } from './pages/Settings.tsx';
 import { Toaster, toast } from './components/Toast.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
 import { FlyLayer } from './components/Fly.tsx';
+import { Modal } from './components/Modal.tsx';
+import { Markdown } from './components/Markdown.tsx';
 import type { AvdInfo, HosAvd, ProjectMeta, Settings as SettingsData } from '../core/types.ts';
 
 type DeviceSystem = 'android' | 'harmonyos';
@@ -87,6 +90,8 @@ export function App() {
   const [huaweiLogin, setHuaweiLogin] = useState<boolean | null>(null);
   // 新版本提醒：弹窗负责完整流程，这里只保留可重入的下载/安装入口
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
+  // 首次安装完成打开后主动展示使用说明（引导配置已存在即老用户，不打扰）
+  const [firstRunDoc, setFirstRunDoc] = useState(false);
 
   useEffect(() => {
     ss.set('de.page', page);
@@ -105,6 +110,12 @@ export function App() {
       if (r.ok) setMaximized(r.data);
     });
     return onWinMaximized(setMaximized);
+  }, []);
+
+  useEffect(() => {
+    api.isFirstRun().then((r) => {
+      if (r.ok && r.data) setFirstRunDoc(true);
+    });
   }, []);
 
   // 华为账号登录状态：侧栏提醒卡片跟随（登录窗口里登录成功后自动消失）
@@ -351,6 +362,11 @@ export function App() {
       <Toaster />
       <FlyLayer />
       <UpdatePrompt />
+      {firstRunDoc && (
+        <Modal title="使用说明" className="doc-modal" onClose={() => setFirstRunDoc(false)}>
+          <Markdown src={usageMd} />
+        </Modal>
+      )}
       <header className="topbar">
         <button className="brand" onClick={() => setSideOpen((v) => !v)} title={sideOpen ? '收起侧栏' : '展开侧栏'}>
           <img className="brand-logo" src={logoUrl} alt="DevEmu" draggable={false} />

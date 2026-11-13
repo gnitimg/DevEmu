@@ -19,7 +19,8 @@ import {
   rollbackMigration,
   dataRootConflicts,
   type DataRootMigration,
-  DEFAULT_DATA_ROOT,
+  defaultDataRoot,
+  isBootstrapFresh,
 } from './core/settings.ts';
 import { appendLog, clearLogs } from './core/log.ts';
 import {
@@ -1169,7 +1170,7 @@ export function registerIpc(): void {
         // 数据从活动视图消失
         const stuck = rollbackMigration(migration, oldRoot, newRoot);
         appendLog(
-          DEFAULT_DATA_ROOT,
+          defaultDataRoot(),
           stuck.length
             ? `数据根迁移失败并已回滚：${migration.failed.join('、')} 未迁完，${stuck.join('、')} 仍留在新根，请手动处理`
             : `数据根迁移失败：${migration.failed.join('、')} 未迁完，已回滚，数据根保持不变`,
@@ -1177,7 +1178,7 @@ export function registerIpc(): void {
         // 桥已按迁移前置条件停下：数据根未变更，按旧根恢复，避免设置页显示
         // 已启用而桥实际停摆
         void syncAgentBridge().then((startError) => {
-          if (startError) appendLog(DEFAULT_DATA_ROOT, `迁移回滚后控制桥同步失败：${startError}`);
+          if (startError) appendLog(defaultDataRoot(), `迁移回滚后控制桥同步失败：${startError}`);
         });
         return fail(
           `以下内容未能迁入新数据根（可能被占用）：${migration.failed.join('、')}，数据根未变更`,
@@ -1186,7 +1187,7 @@ export function registerIpc(): void {
       // 下载记录已迁到新根，下载存储改挂新位置，否则后续任务会把文件写回旧根
       initDownloadStore(newRoot);
       appendLog(
-        DEFAULT_DATA_ROOT,
+        defaultDataRoot(),
         `数据根迁移：${migration.moved.length} 项已迁至 ${newRoot}（改写 ${migration.iniFixed} 个虚拟机配置）`,
       );
     }
@@ -1233,11 +1234,11 @@ export function registerIpc(): void {
         const stuck = rollbackMigration(migration, oldRoot, newRoot);
         initDownloadStore(oldRoot);
         appendLog(
-          DEFAULT_DATA_ROOT,
+          defaultDataRoot(),
           `设置保存失败（${saveErr}），迁移已回滚${stuck.length ? `，${stuck.join('、')} 仍留在新根` : ''}`,
         );
         void syncAgentBridge().then((startError) => {
-          if (startError) appendLog(DEFAULT_DATA_ROOT, `设置保存失败回滚后控制桥同步失败：${startError}`);
+          if (startError) appendLog(defaultDataRoot(), `设置保存失败回滚后控制桥同步失败：${startError}`);
         });
       }
       return fail(`设置保存失败：${saveErr}`);
@@ -1351,7 +1352,7 @@ export function registerIpc(): void {
     };
     if (
       !underRoot(settings.dataRoot) &&
-      resolved !== path.resolve(settingsPath(DEFAULT_DATA_ROOT))
+      resolved !== path.resolve(settingsPath(defaultDataRoot()))
     ) {
       return fail('路径不在数据目录内');
     }
@@ -1387,7 +1388,7 @@ export function registerIpc(): void {
     await stopAgentBridge().catch(() => undefined);
     const failed = await factoryReset(settings.dataRoot);
     appendLog(
-      DEFAULT_DATA_ROOT,
+      defaultDataRoot(),
       failed.length
         ? `软件重置：完成，但 ${failed.length} 个位置被占用未能删除（${failed.map((f) => path.basename(f)).join('、')}）`
         : `软件重置：已清除数据并恢复默认设置 v${app.getVersion()}`,
@@ -1489,6 +1490,12 @@ export function registerIpc(): void {
   // 最近一次检查到的发布缓存：手动与自动检查共用，下载/安装不重发请求
   let lastRelease: ReleaseInfo | null = null;
   let downloading = false;
+
+  // 首启判定先于任何设置保存：loadAppSettings 会把旧版引导配置迁进 .data（升级场景），
+  // 迁移完成后 bootstrap 文件存在即不算首次安装
+  loadAppSettings();
+  const firstRun = isBootstrapFresh();
+  handle('app:firstRun', () => ok(firstRun));
 
   handle('app:checkUpdate', async () => {
     const release = await fetchLatestRelease();

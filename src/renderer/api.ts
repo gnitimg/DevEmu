@@ -291,6 +291,7 @@ export const api = {
   winToggleMaximize: () => call<boolean>('winToggleMaximize'),
   winClose: () => call<boolean>('winClose'),
   winIsMaximized: () => call<boolean>('winIsMaximized'),
+  isFirstRun: () => call<boolean>('app:firstRun'),
   checkUpdate: () =>
     call<{
       latest: string;

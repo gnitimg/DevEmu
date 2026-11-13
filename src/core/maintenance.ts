@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_DATA_ROOT, settingsPath } from './settings.ts';
+import { defaultDataRoot, settingsPath } from './settings.ts';
 import { agentScriptFile } from './agent.ts';
 import { logFile } from './log.ts';
 
@@ -13,7 +13,7 @@ export interface StorageItem {
 /** 设置页“文件位置”清单：常用文件的存放位置（只读展示 + 一键打开） */
 export function storageItems(dataRoot: string): StorageItem[] {
   return [
-    { id: 'settings', label: '设置文件', path: settingsPath(DEFAULT_DATA_ROOT) },
+    { id: 'settings', label: '设置文件', path: settingsPath(defaultDataRoot()) },
     { id: 'logs', label: '应用日志', path: logFile(dataRoot) },
     { id: 'downloads', label: '下载记录', path: path.join(dataRoot, 'downloads.json') },
     { id: 'agent', label: 'Agent 接入脚本', path: agentScriptFile(dataRoot) },
@@ -90,7 +90,7 @@ export async function clearAllAvds(dataRoot: string): Promise<number> {
  */
 export async function factoryReset(
   dataRoot: string,
-  settingsRoot: string = DEFAULT_DATA_ROOT,
+  settingsRoot: string = defaultDataRoot(),
 ): Promise<string[]> {
   const targets = [
     path.join(dataRoot, 'projects'),

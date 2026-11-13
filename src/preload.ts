@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('devemu', {
   saveSettings: invoke('settings:save'),
   checkDataRoot: invoke('settings:checkDataRoot'),
   probeRoutes: invoke('settings:probe'),
+  firstRun: invoke('app:firstRun'),
   checkUpdate: invoke('app:checkUpdate'),
   updateDownload: invoke('update:download'),
   updateCancel: invoke('update:cancel'),

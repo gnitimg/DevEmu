@@ -9,7 +9,7 @@ import {
   clearAllAvds,
   factoryReset,
 } from './maintenance.ts';
-import { DEFAULT_DATA_ROOT, settingsPath } from './settings.ts';
+import { defaultDataRoot, settingsPath } from './settings.ts';
 import { logFile } from './log.ts';
 
 function tmpRoot(): string {
@@ -32,7 +32,7 @@ test('storageItems 覆盖常用文件，设置文件固定在默认数据目录'
     assert.ok(ids.includes(id), id);
   }
   const byId = Object.fromEntries(items.map((i) => [i.id, i.path]));
-  assert.equal(byId.settings, settingsPath(DEFAULT_DATA_ROOT));
+  assert.equal(byId.settings, settingsPath(defaultDataRoot()));
   assert.equal(byId.logs, logFile(root));
   assert.ok(byId.avd!.startsWith(root));
   fs.rmSync(root, { recursive: true, force: true });

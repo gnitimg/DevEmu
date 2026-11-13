@@ -222,11 +222,12 @@ export async function downloadUpdate(
 }
 
 /**
- * 运行 Squirrel 安装包完成更新：SETUP.exe 本身即静默安装器，
- * 装入新版本目录并自启新版；旧实例的退出由主进程配合单实例锁完成
+ * 运行 NSIS 安装包完成更新：/S 静默安装（installer.nsi 会回读注册表里的既有
+ * 安装目录），覆盖完成后自动重启应用；旧实例由调用方在启动安装器后 1.5s 退出，
+ * 安装器开头静默等待 2s 再覆盖文件，避开文件占用窗口
  */
 export function spawnInstaller(exePath: string): void {
-  const child = spawn(exePath, [], {
+  const child = spawn(exePath, ['/S'], {
     detached: true,
     stdio: 'ignore',
     cwd: path.dirname(exePath),
