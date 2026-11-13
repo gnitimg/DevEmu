@@ -191,15 +191,14 @@ export async function installAndroidCmdtools(zipPath: string, dir: string, setPc
     fs.mkdirSync(path.join(dir, 'cmdline-tools'), { recursive: true });
     const latest = path.join(dir, 'cmdline-tools', 'latest');
     // 带 bin 的 latest 在函数入口已幂等跳过；走到这里说明是上次失败的残壳，清掉再落位
-    fs.rmSync(latest, { recursive: true, force: true });
+    await fs.promises.rm(latest, { recursive: true, force: true });
     fs.renameSync(extracted, latest);
     setPct(95);
   } finally {
-    try {
-      fs.rmSync(staging, { recursive: true, force: true });
-    } catch {
-      // 清理失败忽略
-    }
+    // 目录级清理走线程池：同步递归删除会按文件数阻塞主进程
+    await fs.promises
+      .rm(staging, { recursive: true, force: true })
+      .catch(() => undefined);
   }
 }
 
@@ -223,10 +222,8 @@ export async function installJdk(zipPath: string, dir: string, setPct: (p: numbe
     setPct(95);
     return path.join(dest, 'bin', 'java.exe');
   } finally {
-    try {
-      fs.rmSync(staging, { recursive: true, force: true });
-    } catch {
-      // 清理失败忽略
-    }
+    await fs.promises
+      .rm(staging, { recursive: true, force: true })
+      .catch(() => undefined);
   }
 }

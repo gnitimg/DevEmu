@@ -34,7 +34,7 @@ export function loadAppSettings(): Settings {
     if (fs.existsSync(legacy)) {
       try {
         fs.mkdirSync(root, { recursive: true });
-        fs.copyFileSync(legacy, settingsPath(root));
+        fs.copyFileSync(legacy, settingsPath(root)); // sync-ok: KB 级引导配置，单文件
       } catch {
         // 引导配置迁移失败按全新安装处理，不影响启动
       }

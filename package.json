@@ -19,7 +19,8 @@
     "lint": "oxlint && oxfmt --check",
     "lint:fix": "oxlint --fix && oxfmt --write",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"src/core/*.test.ts\""
+    "test": "node --test \"src/core/*.test.ts\"",
+    "audit:sync-fs": "node scripts/audit-sync-fs.mjs"
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",

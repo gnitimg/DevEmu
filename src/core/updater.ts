@@ -194,6 +194,7 @@ export async function downloadUpdate(
   cancelled = false;
   const dir = updateDir();
   fs.rmSync(dir, {
+    // sync-ok: 更新目录仅含单个安装包与校验文件，unlink 为元数据级操作
     recursive: true,
     force: true,
     maxRetries: 3,

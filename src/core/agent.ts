@@ -76,7 +76,7 @@ export function ensureAgentScript(
 ): string {
   const dest = agentScriptFile(dataRoot);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(sourceFile, dest);
+  fs.copyFileSync(sourceFile, dest); // sync-ok: KB 级 MCP 桥脚本，单文件
   return dest;
 }
 
