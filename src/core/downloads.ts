@@ -663,7 +663,21 @@ async function spawnTaskImpl(
   });
 }
 
+/** 完成收尾的延迟：percent 95→100 与归档同帧发生时进度条会瞬间消失，观感是"跳变"；
+ *  先广播 done+100 让渲染层用 0.5s 动画补满，再归档移出"下载中" */
+const DONE_FILL_MS = 600;
+
 function finish(entry: Entry): void {
+  if (entry.finishedAt) return;
+  if (entry.state === 'done') {
+    notify();
+    setTimeout(() => finishNow(entry), DONE_FILL_MS);
+    return;
+  }
+  finishNow(entry);
+}
+
+function finishNow(entry: Entry): void {
   entry.finishedAt = Date.now();
   for (const [k, v] of active) {
     if (v === entry) active.delete(k);

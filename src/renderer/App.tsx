@@ -193,6 +193,8 @@ export function App() {
     dlActive.length > 0
       ? Math.round(dlActive.reduce((a, d) => a + d.percent, 0) / dlActive.length)
       : 0;
+  // 全部任务完成（归档延迟窗口内）：进度条用 0.5s 动画补满再消失
+  const dlAllDone = dlActive.length > 0 && dlActive.every((d) => d.state === 'done');
 
   // scope 按 deviceScope memoize：内联对象每次渲染都是新身份，
   // 会把 DeviceDetail 内 useCallback([scope]) 的列表回调每轮重建、反复重拉
@@ -535,7 +537,7 @@ export function App() {
               {dlActive.length > 0 && (
                 <span className="side-dl-bar">
                   <span
-                    className={`side-dl-fill${dlTotal === 0 ? ' indet' : ''}`}
+                    className={`side-dl-fill${dlAllDone ? ' done' : dlTotal === 0 ? ' indet' : ''}`}
                     style={dlTotal > 0 ? { width: `${dlPct}%` } : undefined}
                   />
                 </span>

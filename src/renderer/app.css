@@ -1465,6 +1465,12 @@ table.tbl.crash-tbl {
   transition: width 0.9s linear;
 }
 
+/* 完成收尾：95→100 用短动画补满（归档延迟 0.6s，等动画走完再移出"下载中"） */
+.dl-fill.done,
+.side-dl-fill.done {
+  transition: width 0.5s ease-out;
+}
+
 .dl-speed {
   position: absolute;
   inset: 0;

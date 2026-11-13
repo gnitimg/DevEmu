@@ -92,22 +92,24 @@ export function Downloads() {
                 </button>
               </div>
               <div className="dl-bar">
-                <div className="dl-fill" style={{ width: `${d.percent}%` }} />
+                <div className={`dl-fill${d.state === 'done' ? ' done' : ''}`} style={{ width: `${d.percent}%` }} />
                 <span className="dl-speed">
                   {d.state === 'queued'
                     ? '等待并行槽位'
-                    : d.speedBps > 0
-                      ? fmtSpeed(d.speedBps)
-                      : d.phase === 'unzip'
-                        ? '解压安装中'
-                        : d.phase === 'prepare'
-                          ? '准备中'
-                          : '下载中'}
+                    : d.state === 'done'
+                      ? '完成'
+                      : d.speedBps > 0
+                        ? fmtSpeed(d.speedBps)
+                        : d.phase === 'unzip'
+                          ? '解压安装中'
+                          : d.phase === 'prepare'
+                            ? '准备中'
+                            : '下载中'}
                 </span>
               </div>
               <div className="dl-meta">
                 <span>{d.total > 0 ? `${fmtBytes(d.downloaded)} / ${fmtBytes(d.total)}` : `${d.percent}%`}</span>
-                <span>{d.state === 'queued' ? '—' : d.etaSec > 0 ? `剩余 ${fmtEta(d.etaSec)}` : '计算中…'}</span>
+                <span>{d.state === 'queued' ? '—' : d.state === 'done' ? '完成' : d.etaSec > 0 ? `剩余 ${fmtEta(d.etaSec)}` : '计算中…'}</span>
               </div>
             </div>
           ))}

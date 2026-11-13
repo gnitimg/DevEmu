@@ -14,6 +14,11 @@ function store(): void {
   initDownloadStore(fs.mkdtempSync(path.join(os.tmpdir(), 'devemu-dl-')));
 }
 
+/** 完成态归档有 600ms 延迟（等进度条补满动画），断言历史前先等收尾 */
+function settleArchive(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 700));
+}
+
 test('adoptExternalDownload 进度入列，完成后进入历史', async () => {
   store();
   const done: { ok: boolean; cancelled?: boolean; error?: string }[] = [];
@@ -32,6 +37,7 @@ test('adoptExternalDownload 进度入列，完成后进入历史', async () => {
   assert.equal(active!.percent, 48);
 
   await task.complete('C:/tmp/none.zip');
+  await settleArchive();
   const fin = listDownloads().finished.find(
     (d) => d.pkg === 'harmony-test-done',
   );
@@ -99,6 +105,7 @@ test('临时任务（应用更新包）完成不写入持久化历史', async ()
     postProcess: async () => undefined,
   });
   await task.complete('C:/tmp/update.exe');
+  await settleArchive();
   const raw = JSON.parse(
     fs.readFileSync(path.join(root, 'downloads.json'), 'utf8'),
   ) as { finished?: { pkg: string }[] };
@@ -115,6 +122,7 @@ test('常规外部任务完成仍写入持久化历史', async () => {
     postProcess: async () => undefined,
   });
   await task.complete('C:/tmp/none.zip');
+  await settleArchive();
   const raw = JSON.parse(
     fs.readFileSync(path.join(root, 'downloads.json'), 'utf8'),
   ) as { finished?: { pkg: string }[] };
