@@ -729,6 +729,11 @@ textarea:focus {
   font-weight: 400;
 }
 
+/* 更新记录面板：版本计数靠右 */
+.changelog-panel .section-count {
+  margin-left: auto;
+}
+
 .section-actions {
   margin-left: auto;
   display: flex;
@@ -2258,10 +2263,10 @@ table.tbl.crash-tbl {
   white-space: nowrap;
 }
 
-/* 更新时间：箭头左侧一段距离，字号与版本号一致 */
+/* 更新时间：紧贴箭头，字号与版本号一致 */
 .about-row-time {
   margin-left: auto;
-  margin-right: 10px;
+  margin-right: 4px;
   flex: none;
 }
 
@@ -2273,7 +2278,7 @@ table.tbl.crash-tbl {
 }
 
 .changelog-rel {
-  font-size: 20px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -2378,7 +2383,9 @@ table.tbl.crash-tbl {
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--text-2);
-  margin-left: 20px;
+  /* 缩进两个中文字符宽（26px），压掉浏览器默认 ol 内边距 */
+  margin-left: 26px;
+  padding-left: 0;
 }
 
 .md .md-ol {
