@@ -235,21 +235,10 @@ export function SdkPackages({
     onChanged();
   }
 
-  const sysSwitch = (
-    <div style={{ marginLeft: 'auto' }}>
-      <Segmented
-        options={[
-          { id: 'android', label: 'Android' },
-          { id: 'harmonyos', label: 'HarmonyOS' },
-        ]}
-        value={system}
-        onChange={setSystem}
-      />
-    </div>
-  );
-
   const q = query.trim().toLowerCase();
-  // 派生列表记忆化：搜索框每键触发全面板重渲染，分组/过滤是可缓存的纯计算
+  // 派生列表记忆化：搜索框每键触发全面板重渲染，分组/过滤是可缓存的纯计算。
+  // 全部 hooks 必须在 system 分支返回之前执行——切 HarmonyOS 时 hook 数量
+  // 变化会直接崩溃成白屏（v1.2.0 之前的白屏事故根因）
   const harmonyShown = useMemo(
     () =>
       q
@@ -273,6 +262,14 @@ export function SdkPackages({
     list.filter((g) => g.family === activeFamily).filter(matchesHosQuery);
   const imageDesc = (g: HosImageGroup) =>
     `${g.osVersion}${g.softwareVersion ? ` · ${g.softwareVersion}` : ''}`;
+  const androidList = (tab === 'installed' ? installed : available) ?? [];
+  const shown = useMemo(
+    () =>
+      q
+        ? androidList.filter((e) => e.pkg.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q))
+        : androidList,
+    [q, androidList],
+  );
 
   function hosImageBtn(g: HosImageGroup) {
     const key = hosImageKey(g.deviceType, g.osVersion);
@@ -302,6 +299,19 @@ export function SdkPackages({
       </button>
     );
   }
+
+  const sysSwitch = (
+    <div style={{ marginLeft: 'auto' }}>
+      <Segmented
+        options={[
+          { id: 'android', label: 'Android' },
+          { id: 'harmonyos', label: 'HarmonyOS' },
+        ]}
+        value={system}
+        onChange={setSystem}
+      />
+    </div>
+  );
 
   if (system === 'harmonyos') {
     return (
@@ -434,12 +444,6 @@ export function SdkPackages({
       </div>
     );
   }
-
-  const list = (tab === 'installed' ? installed : available) ?? [];
-  const shown = useMemo(
-    () => (q ? list.filter((e) => e.pkg.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q)) : list),
-    [q, list],
-  );
 
   return (
     <div>
