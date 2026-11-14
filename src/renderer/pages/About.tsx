@@ -22,20 +22,24 @@ const DOCS: { id: string; title: string; body: string }[] = [
   { id: 'developer', title: '开发者', body: developerMd },
 ];
 
-/** changelog.md 按 `## vX.Y.Z` 标题拆分为各版本段落 */
-function parseChangelog(src: string): { version: string; body: string }[] {
-  const versions: { version: string; body: string }[] = [];
+/** changelog.md 按 `## vX.Y.Z（YYYY-MM-DD）` 标题拆分为各版本段落 */
+function parseChangelog(src: string): { version: string; date: string; body: string }[] {
+  const versions: { version: string; date: string; body: string }[] = [];
   let version = '';
+  let date = '';
   let lines: string[] = [];
   const flush = () => {
     const body = lines.join('\n').trim();
-    if (version && body) versions.push({ version, body });
+    if (version && body) versions.push({ version, date, body });
   };
   for (const line of src.split(/\r\n|\r|\n/)) {
     const h2 = line.match(/^##\s+(.+)$/);
     if (h2) {
       flush();
-      version = h2[1]!.trim();
+      // 标题形如 v1.1.7（2026-11-15），括号内为发布日期
+      const m = h2[1]!.trim().match(/^(v[\d.]+)\s*（(\d{4}-\d{2}-\d{2})）$/);
+      version = m ? m[1]! : h2[1]!.trim();
+      date = m ? m[2]! : '';
       lines = [];
     } else if (version) {
       lines.push(line);
@@ -45,11 +49,22 @@ function parseChangelog(src: string): { version: string; body: string }[] {
   return versions;
 }
 
-const CHANGELOGS = parseChangelog(changelogMd);
+/** 相对时间：今天 / 昨天 / N天前 / N周前 / N月前 / N年前 */
+function relTime(date: string): string {
+  if (!date) return '';
+  const days = Math.floor((Date.now() - new Date(`${date}T00:00:00`).getTime()) / 86_400_000);
+  if (days <= 0) return '今天';
+  if (days === 1) return '昨天';
+  if (days < 7) return `${days}天前`;
+  if (days < 30) return `${Math.max(1, Math.round(days / 7))}周前`;
+  if (days < 365) return `${Math.max(1, Math.round(days / 30))}月前`;
+  return `${Math.max(1, Math.round(days / 365))}年前`;
+}
 
+const CHANGELOGS = parseChangelog(changelogMd);
 /** 关于页：文档默认折叠，点击经 md 阅读器弹窗阅读；更新记录常驻右侧，每个版本一张子卡片 */
 export function About({ env }: { env: EnvStatus | null }) {
-  const [doc, setDoc] = useState<{ title: string; body: string } | null>(null);
+  const [doc, setDoc] = useState<{ title: string; body: string; rel?: string; version?: string } | null>(null);
   const [checking, setChecking] = useState(false);
   const [autoOn, setAutoOn] = useState(true);
 
@@ -131,9 +146,17 @@ export function About({ env }: { env: EnvStatus | null }) {
               <button
                 key={c.version}
                 className="about-row"
-                onClick={() => setDoc({ title: `更新记录 · ${c.version}`, body: c.body })}
+                onClick={() =>
+                  setDoc({
+                    title: `更新记录 · ${c.version}`,
+                    body: c.body,
+                    rel: relTime(c.date),
+                    version: c.version,
+                  })
+                }
               >
                 <span className="mono">{c.version}</span>
+                <span className="about-row-time">{relTime(c.date)}</span>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M6 3.5 10.5 8 6 12.5" />
                 </svg>
@@ -145,6 +168,12 @@ export function About({ env }: { env: EnvStatus | null }) {
 
       {doc && (
         <Modal title={doc.title} className="doc-modal" onClose={() => setDoc(null)}>
+          {doc.rel && (
+            <div className="changelog-head">
+              <span className="changelog-rel">{doc.rel}更新</span>
+              <span className="mono changelog-ver">{doc.version}</span>
+            </div>
+          )}
           <Markdown src={doc.body} />
         </Modal>
       )}

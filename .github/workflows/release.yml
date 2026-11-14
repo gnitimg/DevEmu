@@ -100,7 +100,8 @@ jobs:
         run: |
           $version = "${{ steps.collect.outputs.version }}"
           $md = Get-Content assets/docs/changelog.md -Raw
-          $m = [regex]::Match($md, "(?s)## v$version\r?\n(.*?)(?=\r?\n## |$)")
+          # 标题带日期后缀：## vX.Y.Z（YYYY-MM-DD）
+          $m = [regex]::Match($md, "(?s)## v$version（[^）]*）\r?\n(.*?)(?=\r?\n## |$)")
           $notes = if ($m.Success -and $m.Groups[1].Value.Trim()) { $m.Groups[1].Value } else { "DevEmu v$version" }
           $notes | Set-Content release-notes.md -Encoding utf8
           gh release create "v$version" "dist/DevEmu-Setup-$version.exe" dist/checksums.txt `

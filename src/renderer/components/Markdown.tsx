@@ -137,23 +137,31 @@ export function Markdown({ src }: { src: string }) {
       }
       continue;
     }
-    const ul = line.match(/^\s*[-*]\s+(.*)$/);
-    if (ul) {
+    // 连续的列表行分组为真正的 ol/ul：编号每段从 1 起（裸 li 会让浏览器
+    // 计数器跨全文档累计，"本次更新修复了以下内容"这类分段列表会接续编号）
+    const olLine = line.match(/^\s*(\d+)[.、]\s+(.*)$/);
+    const ulLine = line.match(/^\s*[-*]\s+(.*)$/);
+    if (olLine || ulLine) {
       flush();
+      const ordered = !!olLine;
+      const items: string[] = [];
+      while (i < lines.length) {
+        const l = lines[i]!.trimEnd();
+        const m = ordered
+          ? l.match(/^\s*\d+[.、]\s+(.*)$/)
+          : l.match(/^\s*[-*]\s+(.*)$/);
+        if (!m) break;
+        items.push(m[1]!);
+        i++;
+      }
+      i--;
+      const Tag = (ordered ? 'ol' : 'ul') as 'ol' | 'ul';
       out.push(
-        <li className="md-li" key={`li${key++}`}>
-          {inline(ul[1]!, `li${key}`)}
-        </li>,
-      );
-      continue;
-    }
-    const ol = line.match(/^\s*\d+[.、]\s+(.*)$/);
-    if (ol) {
-      flush();
-      out.push(
-        <li className="md-li md-ol" key={`ol${key++}`}>
-          {inline(ol[1]!, `ol${key}`)}
-        </li>,
+        <Tag key={`lst${key++}`} className="md-li">
+          {items.map((it, ii) => (
+            <li key={ii}>{inline(it, `lst${key}-${ii}`)}</li>
+          ))}
+        </Tag>,
       );
       continue;
     }

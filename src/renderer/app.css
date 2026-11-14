@@ -2258,6 +2258,29 @@ table.tbl.crash-tbl {
   white-space: nowrap;
 }
 
+/* 更新时间：箭头左侧一段距离，字号与版本号一致 */
+.about-row-time {
+  margin-left: auto;
+  margin-right: 10px;
+  flex: none;
+}
+
+.changelog-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.changelog-rel {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.changelog-ver {
+  color: var(--text-3);
+}
+
 .about-row:last-child {
   border-bottom: none;
 }
