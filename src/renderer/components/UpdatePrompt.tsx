@@ -33,9 +33,10 @@ export function UpdatePrompt() {
       setPhase((cur) => (cur === 'restarting' ? cur : 'downloaded'));
     });
     const un3 = onUpdateError((p) => {
-      // 主动取消由下载管理 toast 统一反馈，这里不重复弹
+      // 主动取消由下载管理 toast 统一反馈，这里不重复弹。
+      // 安装器启动失败也会走到这里（应用保活不退出）：restarting 相位一并复位
       if (p.message !== '已取消') toast(p.message);
-      setPhase((cur) => (cur === 'restarting' ? cur : 'hidden'));
+      setPhase('hidden');
     });
     return () => {
       un1();

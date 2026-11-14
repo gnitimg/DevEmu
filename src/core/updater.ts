@@ -224,14 +224,19 @@ export async function downloadUpdate(
 
 /**
  * 运行 NSIS 安装包完成更新：/S 静默安装（installer.nsi 会回读注册表里的既有
- * 安装目录），覆盖完成后自动重启应用；旧实例由调用方在启动安装器后 1.5s 退出，
- * 安装器开头静默等待 2s 再覆盖文件，避开文件占用窗口
+ * 安装目录），覆盖完成后自动重启应用；旧实例由调用方在启动安装器后退出。
+ * spawn 被 AV/ACL 拒绝（EACCES）时抛错，由调用方走 ShellExecute 兜底——
+ * 此前失败静默成未捕获异常，应用照常退出，用户只看到“更新了但版本没变”。
  */
-export function spawnInstaller(exePath: string): void {
-  const child = spawn(exePath, ['/S'], {
-    detached: true,
-    stdio: 'ignore',
-    cwd: path.dirname(exePath),
+export function spawnInstaller(exePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(exePath, ['/S'], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: path.dirname(exePath),
+    });
+    // spawn 与 error 二选一先到：不挂 error 监听会把 EACCES 变成未捕获异常
+    child.once('spawn', () => resolve());
+    child.once('error', (e) => reject(e));
   });
-  child.unref();
 }

@@ -1684,10 +1684,33 @@ export function registerIpc(): void {
     const exePath = downloadedExePath;
     // 立即清空：退出被延迟时重复点击会 spawn 第二个安装器
     downloadedExePath = null;
-    // 略等当前 invoke 返回、界面收尾，再交给 Squirrel 安装器；退出走 before-quit 清理
+    // 略等当前 invoke 返回、界面收尾，再启动 NSIS 安装器；成功才退出应用。
+    // spawn 被 AV/ACL 拒绝（EACCES）时降级 ShellExecute 兜底；两条路都失败则
+    // 保持应用存活、广播错误并打开安装包所在目录——此前失败静默成未捕获异常，
+    // 应用照常退出，用户只看到“更新了但版本没变”
     setTimeout(() => {
-      spawnInstaller(exePath);
-      setTimeout(() => app.quit(), 1500);
+      void spawnInstaller(exePath)
+        .then(() => {
+          appendLog(defaultDataRoot(), `更新安装器已启动：${exePath}`);
+          setTimeout(() => app.quit(), 1200);
+        })
+        .catch(async (err) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          appendLog(
+            defaultDataRoot(),
+            `更新安装器 spawn 失败（${reason}），降级 ShellExecute`,
+          );
+          const open = await shell.openPath(exePath);
+          if (open) {
+            appendLog(defaultDataRoot(), `ShellExecute 也失败：${open}`);
+            broadcast('update:error', {
+              message: `安装器无法启动（${reason}），请手动运行安装包：${exePath}`,
+            });
+            shell.showItemInFolder(exePath);
+            return;
+          }
+          setTimeout(() => app.quit(), 1200);
+        });
     }, 300);
     return ok(true);
   });

@@ -34,9 +34,9 @@ InstallDirRegKey ${REG_ROOT} "${REG_KEY}" "InstallLocation"
 
 Section "Install"
   SetOutPath $INSTDIR
-  ; 静默升级时旧实例在安装器启动 1.5s 后退出，先等它退出再覆盖文件
+  ; 静默升级：安装器由旧应用启动，等它完成退出清理（含虚拟机链路收尾）再覆盖文件
   ${If} ${Silent}
-    Sleep 2000
+    Sleep 3500
   ${EndIf}
   File /r "${PKG_DIR}\*.*"
 
