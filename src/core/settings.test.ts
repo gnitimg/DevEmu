@@ -132,18 +132,36 @@ test('migrateDataRoot 目标已有同名内容：以迁移源为准，目标独�
   fs.rmSync(to, { recursive: true, force: true });
 });
 
-test('migrateDataRoot 源缺项按跳过处理，settings.json 不随迁也不被删', async () => {
+test('migrateDataRoot 源缺项按跳过处理，可丢弃残留清完后源根整目录删除', async () => {
   const from = tmpRoot();
   const to = tmpRoot();
   writeFile(path.join(from, 'logs', 'app.log'), 'log');
   writeFile(settingsPath(from), '{"dataRoot":"x"}');
+  writeFile(path.join(from, 'running-emulators.json'), '[]');
   const r = await migrateDataRoot(from, to);
   assert.deepEqual(r.failed, []);
   assert.ok(fs.existsSync(path.join(to, 'logs', 'app.log')));
-  assert.ok(fs.existsSync(settingsPath(from)));
-  assert.ok(fs.existsSync(from), '旧根还压着 settings.json，不能被删');
+  // running-emulators.json 与旧引导 settings.json 均为可丢弃残留：
+  // 清完后源根无剩余内容，整目录删除
+  assert.ok(!fs.existsSync(from), '迁移完成且无可丢弃残留后，源根应删除');
   fs.rmSync(to, { recursive: true, force: true });
+});
+
+test('migrateDataRoot 源根含未知内容时保留源根不误删', async () => {
+  const from = tmpRoot();
+  const to = tmpRoot();
+  writeFile(path.join(from, 'logs', 'app.log'), 'log');
+  writeFile(path.join(from, '我的笔记.txt'), 'user');
+  const r = await migrateDataRoot(from, to);
+  assert.deepEqual(r.failed, []);
+  assert.ok(fs.existsSync(path.join(to, 'logs', 'app.log')));
+  assert.ok(
+    fs.existsSync(path.join(from, '我的笔记.txt')),
+    '未知内容（用户自放文件）保留',
+  );
+  assert.ok(fs.existsSync(from), '仍有未知内容时源根保留');
   fs.rmSync(from, { recursive: true, force: true });
+  fs.rmSync(to, { recursive: true, force: true });
 });
 
 test('migrateDataRoot 新根在旧根子树内：安全项照迁，含新根的项跳过', async () => {
@@ -265,7 +283,8 @@ test('migrateDataRoot 支持迁入旧根下 .data 子目录（升级新布局）
   assert.deepEqual(r.failed, []);
   assert.ok(fs.existsSync(path.join(to, 'projects', 'p1', 'project.json')));
   assert.ok(fs.existsSync(path.join(to, 'devices', 'avd', 'v1.ini')));
-  // 旧根只剩 .data 本身，settings.json 类引导文件不随迁
+  // 嵌套布局：新根（.data）就在源根内，源根必须保留装着新数据；
+  // 数据项已全部迁入，源根顶层只剩 .data
   assert.deepEqual(fs.readdirSync(from), ['.data']);
 });
 

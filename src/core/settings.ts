@@ -490,16 +490,47 @@ export async function migrateDataRoot(
   emit(true);
   // 有部分项失败也不跳过改写：已迁走的 ini 同样要指到新根
   result.iniFixed = rewriteAvdIniPaths(to, from);
-  // rmdir 只删得动空目录：非空即仍有残留，交由调用方按 failed 处理或保留
-  try {
-    fs.rmdirSync(path.join(from, 'devices'));
-  } catch {
-    // 非空或不存在
-  }
-  try {
-    fs.rmdirSync(from);
-  } catch {
-    // 非空或不存在
+
+  // 源根清理（仅全部成功时执行；部分失败走调用方回滚，残局原样保留）：
+  // 已迁走项的可丢弃残留——运行时状态（running-emulators.json 会重新生成）、
+  // 旧引导配置（settings.json 仅当源根不是当前引导目录时才算残留）——删除后，
+  // 源根无任何剩余内容即整目录删除；仍有未知内容（用户自放文件等）时保留，
+  // 绝不误删
+  if (result.failed.length === 0) {
+    const movedSet = new Set(result.moved);
+    const bootSelf = samePath(from, path.resolve(defaultDataRoot()));
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(from, { withFileTypes: true });
+    } catch {
+      return result;
+    }
+    for (const e of entries) {
+      const disposable =
+        movedSet.has(e.name) ||
+        e.name === 'running-emulators.json' ||
+        (e.name === 'settings.json' && !bootSelf);
+      if (!disposable) continue;
+      await fs.promises
+        .rm(path.join(from, e.name), {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 300,
+        })
+        .catch(() => undefined);
+    }
+    // 空目录壳逐个移除（devices 三子项迁走后的外壳等）
+    try {
+      fs.rmdirSync(path.join(from, 'devices'));
+    } catch {
+      // 非空或不存在
+    }
+    try {
+      fs.rmdirSync(from);
+    } catch {
+      // 仍有未知内容：源根保留
+    }
   }
   return result;
 }
