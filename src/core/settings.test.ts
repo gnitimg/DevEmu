@@ -268,3 +268,24 @@ test('migrateDataRoot 支持迁入旧根下 .data 子目录（升级新布局）
   // 旧根只剩 .data 本身，settings.json 类引导文件不随迁
   assert.deepEqual(fs.readdirSync(from), ['.data']);
 });
+
+test('migrateDataRoot 字节进度：首帧带总量，末帧 bytes=total=源数据大小', async () => {
+  const from = tmpRoot();
+  const to = tmpRoot();
+  const payload = 'x'.repeat(768 * 1024);
+  writeFile(path.join(from, 'projects', 'p1', 'data.bin'), payload);
+  writeFile(path.join(from, 'logs', 'app.log'), 'log');
+  const frames: { bytes: number; total: number }[] = [];
+  const r = await migrateDataRoot(from, to, {
+    onProgress: (bytes, total) => frames.push({ bytes, total }),
+  });
+  assert.deepEqual(r.failed, []);
+  assert.ok(frames.length > 0);
+  const expected = payload.length + 3; // + logs/app.log 的 'log'
+  assert.equal(frames[0]!.total, expected);
+  const last = frames[frames.length - 1]!;
+  assert.equal(last.total, expected);
+  assert.equal(last.bytes, expected);
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.rmSync(from, { recursive: true, force: true });
+});

@@ -469,7 +469,7 @@ export const api = {
 };
 
 export function onMigrateProgress(
-  cb: (p: { moved: number; total: number }) => void,
+  cb: (p: { bytes: number; total: number }) => void,
 ): () => void {
   const fn = (
     window as unknown as {
@@ -477,7 +477,7 @@ export function onMigrateProgress(
     }
   ).devemu.onMigrateProgress;
   return fn
-    ? fn((p) => cb(p as { moved: number; total: number }))
+    ? fn((p) => cb(p as { bytes: number; total: number }))
     : () => undefined;
 }
 

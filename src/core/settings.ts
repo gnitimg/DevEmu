@@ -173,13 +173,67 @@ function isInside(parent: string, child: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+/** 递归统计目录字节数（元数据操作，用于迁移进度的总量与改名瞬时计入） */
+function walkSize(dir: string): number {
+  let total = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) total += walkSize(p);
+    else if (e.isFile()) {
+      try {
+        total += fs.statSync(p).size;
+      } catch {
+        // 读不到大小的文件按 0 计
+      }
+    }
+  }
+  return total;
+}
+
+/** 流式复制单文件并逐块回报字节数（跨盘迁移的进度来源） */
+async function copyFileProgress(
+  src: string,
+  dest: string,
+  onBytes: (n: number) => void,
+): Promise<void> {
+  const rs = fs.createReadStream(src, { highWaterMark: 1 << 20 });
+  const ws = fs.createWriteStream(dest);
+  try {
+    for await (const chunk of rs) {
+      const buf = chunk as Buffer;
+      if (!ws.write(buf)) await new Promise<void>((r) => ws.once('drain', r));
+      onBytes(buf.length);
+    }
+    await new Promise<void>((resolve, reject) => {
+      ws.once('finish', resolve);
+      ws.once('error', reject);
+      ws.end();
+    });
+  } catch (e) {
+    rs.destroy();
+    ws.destroy();
+    throw e;
+  }
+}
+
 /**
  * 把 src 移到 dest：目标已存在时递归合并，同名冲突以迁移源为准
  * （迁移的是当前生效数据，旧目标里缺失的项才从源补齐）。
  * 全程 fs.promises：大目录跨盘复制走线程池，不阻塞主进程事件循环
  * （迁移在 ipcMain handler 内执行，同步复制会把整窗卡成“未响应”）。
+ * onBytes：本次移动实际落盘的字节数（改名瞬间计入整目录大小，复制逐块回报）。
  */
-async function moveInto(src: string, dest: string): Promise<void> {
+async function moveInto(
+  src: string,
+  dest: string,
+  onBytes?: (n: number) => void,
+): Promise<void> {
   const srcStat = await fs.promises.stat(src);
   await fs.promises.mkdir(path.dirname(dest), { recursive: true });
   if (srcStat.isDirectory()) {
@@ -195,8 +249,11 @@ async function moveInto(src: string, dest: string): Promise<void> {
       destStat = undefined;
     }
     if (!destStat) {
+      // 改名前先算大小：rename 后源已不在
+      const size = walkSize(src);
       try {
         await fs.promises.rename(src, dest);
+        onBytes?.(size);
         return;
       } catch {
         // 跨卷 rename（EXDEV）或目标目录已存在：退回逐项合并
@@ -204,7 +261,7 @@ async function moveInto(src: string, dest: string): Promise<void> {
     }
     await fs.promises.mkdir(dest, { recursive: true });
     for (const entry of await fs.promises.readdir(src))
-      await moveInto(path.join(src, entry), path.join(dest, entry));
+      await moveInto(path.join(src, entry), path.join(dest, entry), onBytes);
     await fs.promises.rm(src, {
       recursive: true,
       force: true,
@@ -225,13 +282,22 @@ async function moveInto(src: string, dest: string): Promise<void> {
   } catch {
     // 目标不存在，直接 rename
   }
-  try {
-    await fs.promises.rename(src, dest);
+  if (srcStat.size <= 64 * 1024 * 1024) {
+    // 同卷改名是元数据操作；小文件跨卷复制也是瞬时，按整体计入
+    try {
+      await fs.promises.rename(src, dest);
+      onBytes?.(srcStat.size);
+      return;
+    } catch {
+      // EXDEV：复制后删源
+    }
+    await fs.promises.copyFile(src, dest);
+    onBytes?.(srcStat.size);
+    await fs.promises.rm(src, { force: true, maxRetries: 10, retryDelay: 500 });
     return;
-  } catch {
-    // 跨卷（EXDEV）：复制后删源
   }
-  await fs.promises.copyFile(src, dest);
+  // 大文件跨卷：流式复制逐块回报进度
+  await copyFileProgress(src, dest, (n) => onBytes?.(n));
   await fs.promises.rm(src, { force: true, maxRetries: 10, retryDelay: 500 });
 }
 
@@ -360,47 +426,68 @@ function rewriteAvdIniPaths(newRoot: string, oldRoot: string): number {
  * 旧根里还有别的内容（settings.json、用户自放文件）时旧根本身删不掉，自然保留。
  * wipe：迁入前抹掉目标中同名数据项（"保留"模式覆盖目标旧数据）；
  * 缺省为合并语义（同名以源为准递归归并，目标独有内容保留）。
- * onProgress：每处理完一项回调（含失败项），供迁移进度圆环展示。
+ * onProgress：字节级迁移进度（已迁移/总大小），节流约 0.45s 一帧，首帧与末帧必发。
  * 异步执行：每项之间让出事件循环，跨盘复制走线程池，主进程全程可响应。
  */
 export async function migrateDataRoot(
   oldRoot: string,
   newRoot: string,
-  options: { wipe?: boolean; onProgress?: (done: number, total: number) => void } = {},
+  options: { wipe?: boolean; onProgress?: (bytes: number, total: number) => void } = {},
 ): Promise<DataRootMigration> {
   const result: DataRootMigration = { moved: [], failed: [], iniFixed: 0 };
   const from = path.resolve(oldRoot);
   const to = path.resolve(newRoot);
   if (samePath(from, to)) return result;
-  let processed = 0;
+  // 预计算总量（元数据遍历），给圆环一个稳定的分母
+  const existing: string[] = [];
+  let totalBytes = 0;
   for (const rel of MIGRATE_ITEMS) {
     const src = path.join(from, rel);
-    const dest = path.join(to, rel);
     // 新数据根落在某一项内部时该项不能动（目录移不进自己的子树）
-    if (isInside(src, dest)) continue;
-    const exists = await fs.promises
-      .stat(src)
-      .then(() => true, () => false);
-    if (exists && options.wipe) {
+    if (isInside(src, path.join(to, rel))) continue;
+    if (
+      await fs.promises
+        .stat(src)
+        .then(() => true, () => false)
+    ) {
+      existing.push(rel);
+      totalBytes += walkSize(src);
+    }
+  }
+  let movedBytes = 0;
+  let lastEmit = 0;
+  const emit = (force = false) => {
+    const now = Date.now();
+    if (force || now - lastEmit >= 450) {
+      lastEmit = now;
+      options.onProgress?.(movedBytes, totalBytes);
+    }
+  };
+  options.onProgress?.(0, totalBytes);
+  for (const rel of existing) {
+    const src = path.join(from, rel);
+    const dest = path.join(to, rel);
+    if (options.wipe) {
       try {
         await fs.promises.rm(dest, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 });
       } catch {
         // 抹不掉按合并语义兜底（同名以源为准）
       }
     }
-    if (exists) {
-      try {
-        await moveInto(src, dest);
-        result.moved.push(rel);
-      } catch {
-        result.failed.push(rel);
-      }
+    try {
+      await moveInto(src, dest, (n) => {
+        movedBytes += n;
+        emit();
+      });
+      result.moved.push(rel);
+    } catch {
+      result.failed.push(rel);
     }
-    processed += 1;
-    // 让出一轮事件循环：进度广播与圆环重绘及时落地
+    // 每项完成强制发一帧，再让出一轮事件循环
+    emit(true);
     await new Promise<void>((resolve) => setImmediate(resolve));
-    options.onProgress?.(processed, MIGRATE_ITEMS.length);
   }
+  emit(true);
   // 有部分项失败也不跳过改写：已迁走的 ini 同样要指到新根
   result.iniFixed = rewriteAvdIniPaths(to, from);
   // rmdir 只删得动空目录：非空即仍有残留，交由调用方按 failed 处理或保留

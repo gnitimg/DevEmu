@@ -113,7 +113,7 @@ export function Settings({
   // 数据迁移：探测目标 .data →（非空时三选）→ 确认 → 进度圆环（界面锁定）→ 重启提示
   const [migrateAsk, setMigrateAsk] = useState<{ target: string } | null>(null);
   const [migrateChoiceAsk, setMigrateChoiceAsk] = useState<{ target: string } | null>(null);
-  const [migrating, setMigrating] = useState<{ done: number; total: number; fin: boolean } | null>(null);
+  const [migrating, setMigrating] = useState<{ bytes: number; total: number; fin: boolean } | null>(null);
   const [migrateDone, setMigrateDone] = useState(false);
   const [busy, setBusy] = useState(false);
   // 改动序号：设置一有变化就 +1；自动保存按“已落盘序号”判断是否仍需写盘。
@@ -355,12 +355,12 @@ export function Settings({
     if (section === 'storage') loadStorage();
   }, [section, loadStorage]);
 
-  // 主进程逐项迁移进度 → 圆环
+  // 主进程字节级迁移进度（约 0.45s 一帧）→ 圆环与环心大小字
   useEffect(
     () =>
       onMigrateProgress((p) =>
         setMigrating((cur) =>
-          cur ? { ...cur, done: p.moved, total: p.total } : cur,
+          cur ? { ...cur, bytes: p.bytes, total: p.total } : cur,
         ),
       ),
     [],
@@ -426,7 +426,7 @@ export function Settings({
     if (!target) return;
     setMigrateAsk(null);
     setMigrateChoiceAsk(null);
-    setMigrating({ done: 0, total: 10, fin: false });
+    setMigrating({ bytes: 0, total: 0, fin: false });
     const r = await api.storageMigrateData(target, mode);
     if (!r.ok) {
       setMigrating(null);
@@ -722,19 +722,20 @@ export function Settings({
             {migrating && (
               <Modal
                 title={migrating.fin ? '迁移完成' : '正在迁移数据'}
+                className="migrate-modal"
                 locked
                 onClose={() => undefined}
               >
                 <div className="migrate-progress">
                   <MigrateRing
-                    done={migrating.done}
+                    bytes={migrating.bytes}
                     total={migrating.total}
                     fin={migrating.fin}
                   />
                   <p className="migrate-progress-text">
                     {migrating.fin
                       ? '数据迁移完成'
-                      : `正在迁移 ${migrating.done} / ${migrating.total} 项…`}
+                      : '正在迁移，期间请勿关闭应用…'}
                   </p>
                 </div>
               </Modal>
@@ -1034,43 +1035,73 @@ export function Settings({
   );
 }
 
-/** 数据迁移进度圆环：进度从九点钟方向起笔顺时针推进；fin 时变绿并中央打勾 */
+/** GB 文本：<10GB 保留两位小数，≥10GB 取整到一位（如 1.12GB / 22.0GB） */
+function fmtGB(bytes: number): string {
+  const gb = bytes / 1024 ** 3;
+  return `${(gb >= 10 ? gb.toFixed(1) : gb.toFixed(2))}GB`;
+}
+
+/** 进度色：黄 → 绿（--ok）按比例插值 */
+function migrateColor(t: number): string {
+  const from = [245, 192, 74];
+  const to = [23, 138, 76];
+  const c = from.map((v, i) => Math.round(v + (to[i]! - v) * t));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
+/** 数据迁移进度圆环：12 点起笔顺时针，环心实时“已迁移/总大小”；
+ *  fin 时比例到 1（插值色即绿）并在 9 点起笔画勾 */
 function MigrateRing({
-  done,
+  bytes,
   total,
   fin,
 }: {
-  done: number;
+  bytes: number;
   total: number;
   fin: boolean;
 }) {
   const R = 52;
   const C = 2 * Math.PI * R;
-  const pct = fin ? 1 : total > 0 ? done / total : 0;
+  const pct = fin ? 1 : total > 0 ? Math.min(1, bytes / total) : 0;
+  const color = migrateColor(pct);
   return (
-    <svg
-      className={`migrate-ring${fin ? ' ok' : ''}`}
-      viewBox="0 0 120 120"
-      aria-hidden
-    >
-      <circle className="migrate-ring-bg" cx="60" cy="60" r={R} />
-      <circle
-        className="migrate-ring-fill"
-        cx="60"
-        cy="60"
-        r={R}
-        strokeDasharray={C}
-        strokeDashoffset={C * (1 - pct)}
-      />
-      {/* 勾要在正立坐标系里绘制：父级 rotate(180) 是圆环起笔用的，会把它带倒，
-          这里绕圆心反旋 180° 抵消 */}
-      {fin && (
-        <path
-          className="migrate-check"
-          d="M40 63l15 14 27-30"
-          transform="rotate(180 60 60)"
+    <div className="migrate-ring-wrap">
+      <svg
+        className={`migrate-ring${fin ? ' ok' : ''}`}
+        viewBox="0 0 120 120"
+        aria-hidden
+      >
+        <circle className="migrate-ring-bg" cx="60" cy="60" r={R} />
+        <circle
+          className="migrate-ring-fill"
+          cx="60"
+          cy="60"
+          r={R}
+          strokeDasharray={C}
+          strokeDashoffset={C * (1 - pct)}
+          style={{ stroke: color }}
         />
+        {/* 勾要在正立坐标系里绘制（起点恰在九点钟方向）；父级 rotate(-90)
+            是圆环 12 点起笔用的，绕圆心反旋 90° 抵消 */}
+        {fin && (
+          <path
+            className="migrate-check"
+            d="M40 63l15 14 27-30"
+            transform="rotate(90 60 60)"
+          />
+        )}
+      </svg>
+      {/* 完成态让勾独占环心（下方已有文案），进行中展示“已迁移/总大小” */}
+      {!fin && (
+        <div className="migrate-center">
+          <span className="migrate-now" style={{ color }}>
+            {fmtGB(bytes)}
+          </span>
+          <span className="migrate-total">
+            {total > 0 ? `/${fmtGB(total)}` : ''}
+          </span>
+        </div>
       )}
-    </svg>
+    </div>
   );
 }

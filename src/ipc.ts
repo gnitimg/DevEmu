@@ -1444,8 +1444,8 @@ export function registerIpc(): void {
     await stopAgentBridge().catch(() => undefined);
     const migration = await migrateDataRoot(oldRoot, newRoot, {
       wipe: rawMode === 'wipe',
-      onProgress: (moved, total) =>
-        broadcast('storage:migrateProgress', { moved, total }),
+      onProgress: (bytes, total) =>
+        broadcast('storage:migrateProgress', { bytes, total }),
     });
     if (migration.failed.length) {
       const stuck = await rollbackMigration(migration, oldRoot, newRoot);
