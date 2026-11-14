@@ -49,16 +49,16 @@ function parseChangelog(src: string): { version: string; date: string; body: str
   return versions;
 }
 
-/** 相对时间：今天 / 昨天 / N天前 / N周前 / N月前 / N年前 */
+/** 相对时间：今日内 / 昨日内 / N天内 / N周内 / N月内 / N年内 */
 function relTime(date: string): string {
   if (!date) return '';
   const days = Math.floor((Date.now() - new Date(`${date}T00:00:00`).getTime()) / 86_400_000);
-  if (days <= 0) return '今天';
-  if (days === 1) return '昨天';
-  if (days < 7) return `${days}天前`;
-  if (days < 30) return `${Math.max(1, Math.round(days / 7))}周前`;
-  if (days < 365) return `${Math.max(1, Math.round(days / 30))}月前`;
-  return `${Math.max(1, Math.round(days / 365))}年前`;
+  if (days <= 0) return '今日内';
+  if (days === 1) return '昨日内';
+  if (days < 7) return `${days}天内`;
+  if (days < 30) return `${Math.max(1, Math.round(days / 7))}周内`;
+  if (days < 365) return `${Math.max(1, Math.round(days / 30))}月内`;
+  return `${Math.max(1, Math.round(days / 365))}年内`;
 }
 
 const CHANGELOGS = parseChangelog(changelogMd);
@@ -174,7 +174,7 @@ export function About({ env }: { env: EnvStatus | null }) {
         <Modal title={doc.title} className="doc-modal" onClose={() => setDoc(null)}>
           {doc.rel && (
             <div className="changelog-head">
-              <span className="changelog-rel">{doc.rel}更新</span>
+              <span className="changelog-rel">更新于{doc.rel}</span>
               <span className="mono changelog-ver">{doc.version}</span>
             </div>
           )}

@@ -2263,11 +2263,16 @@ table.tbl.crash-tbl {
   white-space: nowrap;
 }
 
-/* 更新时间：紧贴箭头，字号与版本号一致 */
+/* 更新时间：auto 边距推到行尾紧贴箭头（箭头的 auto 在本面板内关闭），
+   字号与版本号一致 */
 .about-row-time {
   margin-left: auto;
   margin-right: 4px;
   flex: none;
+}
+
+.changelog-panel .about-row svg {
+  margin-left: 0;
 }
 
 .changelog-head {
