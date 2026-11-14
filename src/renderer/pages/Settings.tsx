@@ -1062,7 +1062,15 @@ function MigrateRing({
         strokeDasharray={C}
         strokeDashoffset={C * (1 - pct)}
       />
-      {fin && <path className="migrate-check" d="M40 63l15 14 27-30" />}
+      {/* 勾要在正立坐标系里绘制：父级 rotate(180) 是圆环起笔用的，会把它带倒，
+          这里绕圆心反旋 180° 抵消 */}
+      {fin && (
+        <path
+          className="migrate-check"
+          d="M40 63l15 14 27-30"
+          transform="rotate(180 60 60)"
+        />
+      )}
     </svg>
   );
 }
