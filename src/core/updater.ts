@@ -31,6 +31,8 @@ export interface ReleaseInfo {
   htmlUrl: string;
   setupAsset: ReleaseAsset | null;
   checksumsAsset: ReleaseAsset | null;
+  /** CI 在 release body 尾部打的构建指纹标记；缺失 = 旧格式发布 */
+  buildSha?: string;
 }
 
 /** 解析 vX.Y.Z(-后缀) 形式的版本号；缺段按 0 处理（v1.0 等于 v1.0.0），不可解析返回 null */
@@ -112,6 +114,7 @@ export async function fetchLatestRelease(): Promise<ReleaseInfo> {
     htmlUrl: j.html_url ?? `https://github.com/${GITHUB_REPO}/releases`,
     setupAsset: pickSetupAsset(assets, version),
     checksumsAsset: pickChecksumsAsset(assets),
+    buildSha: (j.body ?? '').match(/<!--\s*devemu-build sha:([0-9a-f]+)\s*-->/)?.[1],
   };
 }
 

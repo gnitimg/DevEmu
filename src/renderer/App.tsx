@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
 import usageMd from '../../assets/docs/usage.md?raw';
-import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onUpdateAvailable, onUpdateDownloaded, onUpdateError, onUpdateProgress, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
+import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onUpdateAvailable, onUpdateDownloaded, onUpdateError, onUpdatePatch, onUpdateProgress, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -29,11 +29,13 @@ export interface EnvStatus {
   images: { pkg: string; api: number; tag: string; abi: string }[];
 }
 
-/** 侧栏新版本提醒卡状态：与 UpdatePrompt 弹窗共用主进程更新事件源 */
+/** 侧栏新版本提醒卡状态：与 UpdatePrompt 弹窗共用主进程更新事件源；
+ *  patch = 同版本补丁重新发布（不弹全局更新窗，只在通知中心提示） */
 type UpdateNotice = {
   latest: string;
   current: string;
   phase: 'available' | 'downloading' | 'ready';
+  patch?: boolean;
 };
 
 const ss = {
@@ -148,6 +150,11 @@ export function App() {
         cur ? { ...cur, phase: 'ready' } : { latest: p.version, current: '', phase: 'ready' },
       ),
     );
+    const un5 = onUpdatePatch((p) =>
+      setUpdateNotice((cur) =>
+        cur && cur.phase !== 'available' ? cur : { latest: p.version, current: p.version, phase: 'available', patch: true },
+      ),
+    );
     const un4 = onUpdateError(() =>
       setUpdateNotice((cur) => (cur && cur.phase === 'downloading' ? { ...cur, phase: 'available' } : cur)),
     );
@@ -156,6 +163,7 @@ export function App() {
       un2();
       un3();
       un4();
+      un5();
     };
   }, []);
 
@@ -228,10 +236,11 @@ export function App() {
   // 侧栏通知：HarmonyOS SDK 提醒 + 新版本提醒，数量驱动收起态铃铛红点
   const hosNotice = !!env && !env.harmony && huaweiLogin !== null;
   const noticeCount = (hosNotice ? 1 : 0) + (updateNotice ? 1 : 0);
-  // 通知中心条目：展开态内联与收起态浮层共用同一组卡片，多通知时单卡轮播
-  const noticeItems: React.ReactNode[] = [];
-  if (hosNotice) noticeItems.push(<HosNoticeContent loggedIn={huaweiLogin === true} />);
-  if (updateNotice) noticeItems.push(<UpdateNoticeContent notice={updateNotice} />);
+  // 通知中心条目：展开态内联与收起态浮层共用同一组卡片；版本更新/补丁卡片
+  // 用黄色主题（warn），HarmonyOS 提醒保持默认蓝
+  const noticeItems: { node: React.ReactNode; warn?: boolean }[] = [];
+  if (hosNotice) noticeItems.push({ node: <HosNoticeContent loggedIn={huaweiLogin === true} /> });
+  if (updateNotice) noticeItems.push({ node: <UpdateNoticeContent notice={updateNotice} />, warn: true });
 
   const toggleSideFly = (kind: 'projects' | 'devices' | 'notice', e: React.MouseEvent) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -842,22 +851,36 @@ function UpdateNoticeContent({ notice }: { notice: UpdateNotice }) {
           <path d="M5 7l3 3 3-3" />
           <path d="M3 11.5v1A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-1" />
         </svg>
-        {notice.phase === 'downloading' && <span>正在下载 v{notice.latest}</span>}
-        {notice.phase === 'ready' && <span>v{notice.latest} 已就绪</span>}
-        {notice.phase === 'available' && <span>发现新版本 v{notice.latest}</span>}
+        {notice.patch
+          ? notice.phase === 'downloading' && <span>正在下载补丁</span>
+          : notice.phase === 'downloading' && <span>正在下载 v{notice.latest}</span>}
+        {notice.phase === 'ready' && (
+          <span>{notice.patch ? '补丁已就绪' : `v${notice.latest} 已就绪`}</span>
+        )}
+        {notice.phase === 'available' && (
+          <span>{notice.patch ? `v${notice.latest} 有可用补丁` : `发现新版本 v${notice.latest}`}</span>
+        )}
       </div>
       {notice.phase === 'available' && (
         <>
-          <p className="side-notice-text">当前版本 v{notice.current}，可以更新到 v{notice.latest}</p>
+          <p className="side-notice-text">
+            {notice.patch
+              ? '当前版本已发布修复补丁，建议重新下载安装以获取全部修复'
+              : `当前版本 v${notice.current}，可以更新到 v${notice.latest}`}
+          </p>
           <button className="side-notice-link" onClick={() => void api.updateDownload()}>
-            下载并安装 ›
+            {notice.patch ? '重新下载并安装 ›' : '下载并安装 ›'}
           </button>
         </>
       )}
       {notice.phase === 'downloading' && <p className="side-notice-text">更新包正在下载</p>}
       {notice.phase === 'ready' && (
         <>
-          <p className="side-notice-text">安装包已下载并通过完整性校验，重启后将安装新版本</p>
+          <p className="side-notice-text">
+            {notice.patch
+              ? '补丁安装包已下载并通过完整性校验，重启后将完成补丁安装'
+              : '安装包已下载并通过完整性校验，重启后将安装新版本'}
+          </p>
           <button
             className="side-notice-link"
             onClick={() =>
@@ -874,8 +897,9 @@ function UpdateNoticeContent({ notice }: { notice: UpdateNotice }) {
   );
 }
 
-/** 通知轮播：单卡展示 + 卡内底部圆点；多通知时自动轮换（5s，悬停暂停），圆点可点跳 */
-function NoticeCarousel({ items }: { items: React.ReactNode[] }) {
+/** 通知轮播：单卡展示 + 卡内底部圆点；多通知时自动轮换（5s，悬停暂停），圆点可点跳。
+ *  卡片主题随当前展示项切换（版本更新/补丁为黄色主题） */
+function NoticeCarousel({ items }: { items: { node: React.ReactNode; warn?: boolean }[] }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const count = items.length;
@@ -890,17 +914,18 @@ function NoticeCarousel({ items }: { items: React.ReactNode[] }) {
     return () => clearInterval(timer);
   }, [paused, count, index]);
   if (count === 0) return null;
+  const cur = items[Math.min(index, count - 1)]!;
   return (
     <div
-      className="side-notice notice-carousel"
+      className={`side-notice notice-carousel${cur.warn ? ' side-notice-warn' : ''}`}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
       <div className="notice-viewport">
         <div className="notice-track" style={{ transform: `translateX(-${index * 100}%)` }}>
-          {items.map((node, i) => (
+          {items.map((item, i) => (
             <div key={i} className="notice-slide">
-              {node}
+              {item.node}
             </div>
           ))}
         </div>

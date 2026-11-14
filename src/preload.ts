@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld('devemu', {
     ipcRenderer.on('update:downloaded', listener);
     return () => ipcRenderer.removeListener('update:downloaded', listener);
   },
+  onUpdatePatch: (cb: (payload: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('update:patch', listener);
+    return () => ipcRenderer.removeListener('update:patch', listener);
+  },
   onUpdateError: (cb: (payload: unknown) => void) => {
     const listener = (_e: unknown, payload: unknown) => cb(payload);
     ipcRenderer.on('update:error', listener);

@@ -33,6 +33,15 @@ jobs:
           npm test
           npm run audit:sync-fs
 
+      # 构建指纹写入应用包：应用内更新用它与 release body 的标记比对，
+      # 检测“当前版本有补丁重新发布”的场景
+      - name: Stamp build info
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse --short HEAD).Trim()
+          '{ "sha": "' + $sha + '" }' | Set-Content build-info.json -Encoding utf8
+          Get-Content build-info.json
+
       - name: Build app bundle
         run: npx electron-forge package --platform win32
 
@@ -103,6 +112,9 @@ jobs:
           # 标题带日期后缀：## vX.Y.Z（YYYY-MM-DD）
           $m = [regex]::Match($md, "(?s)## v$version（[^）]*）\r?\n(.*?)(?=\r?\n## |$)")
           $notes = if ($m.Success -and $m.Groups[1].Value.Trim()) { $m.Groups[1].Value } else { "DevEmu v$version" }
+          # 构建指纹标记：应用内更新比对该标记检测“当前版本有补丁重新发布”
+          $sha = (git rev-parse --short HEAD).Trim()
+          $notes = "$notes`n`n<!-- devemu-build sha:$sha -->"
           $notes | Set-Content release-notes.md -Encoding utf8
           gh release create "v$version" "dist/DevEmu-Setup-$version.exe" dist/checksums.txt `
             --draft --title "DevEmu v$version" --notes-file release-notes.md

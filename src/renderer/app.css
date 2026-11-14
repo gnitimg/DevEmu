@@ -2674,6 +2674,17 @@ table.tbl.crash-tbl {
   text-decoration: underline;
 }
 
+/* 版本更新/补丁卡片：黄色主题（HarmonyOS 提醒卡保持默认蓝） */
+.side-notice-warn {
+  background: #fbf3dc;
+  border-color: #eed9a3;
+}
+
+.side-notice-warn .side-notice-head,
+.side-notice-warn .side-notice-link {
+  color: #8a6a15;
+}
+
 .sidebar.collapsed .side-notice {
   display: none;
 }

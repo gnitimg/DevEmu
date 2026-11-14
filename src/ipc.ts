@@ -1570,13 +1570,33 @@ export function registerIpc(): void {
   const firstRun = isBootstrapFresh();
   handle('app:firstRun', () => ok(firstRun));
 
+  // 应用自身的构建指纹：CI 打包前写入 build-info.json；缺失（dev 运行）时
+  // 不参与补丁检测
+  const ownBuildSha = (() => {
+    try {
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(app.getAppPath(), 'build-info.json'), 'utf8'),
+      ) as { sha?: unknown };
+      return typeof raw.sha === 'string' ? raw.sha : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  /** 同版本重新发布（构建指纹不一致）= 当前版本有补丁；手动与自动检查共用 */
+  const detectPatch = (release: ReleaseInfo, current: string): boolean => {
+    if (compareVersions(release.version, current) > 0) return false;
+    return !!ownBuildSha && !!release.buildSha && release.buildSha !== ownBuildSha;
+  };
+
   handle('app:checkUpdate', async () => {
     const release = await fetchLatestRelease();
     lastRelease = release;
     const current = app.getVersion();
     // 手动检查发现新版本与自动检查走同一广播：全局更新弹窗与侧栏通知卡接手展示，
     // 关于页只做一次性反馈（错误 / 已是最新走临时弹窗），不内联渲染更新卡片。
-    // 安装包已在本地时广播就绪态：避免把已就绪的通知卡/弹窗重置回"发现新版本"诱导重复下载
+    // 安装包已在本地时广播就绪态：避免把已就绪的通知卡/弹窗重置回"发现新版本"诱导重复下载；
+    // 版本号相同但构建指纹不一致 = 当前版本有补丁重新发布，广播补丁卡片
     if (compareVersions(release.version, current) > 0) {
       if (downloadedExePath)
         broadcast('update:downloaded', { version: release.version });
@@ -1586,11 +1606,14 @@ export function registerIpc(): void {
           current,
           notes: release.notes,
         });
+    } else if (detectPatch(release, current)) {
+      broadcast('update:patch', { version: current });
     }
     return ok({
       latest: release.version,
       current,
       upToDate: compareVersions(release.version, current) <= 0,
+      patchForCurrent: detectPatch(release, current),
       url: release.htmlUrl,
       notes: release.notes,
       hasAsset: !!release.setupAsset,
@@ -1735,6 +1758,8 @@ export function registerIpc(): void {
             current: app.getVersion(),
             notes: release.notes,
           });
+      } else if (detectPatch(release, app.getVersion())) {
+        broadcast('update:patch', { version: app.getVersion() });
       }
     } catch {
       // 自动检查静默失败

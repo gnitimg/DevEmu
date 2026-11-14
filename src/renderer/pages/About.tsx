@@ -78,8 +78,12 @@ export function About({ env }: { env: EnvStatus | null }) {
     setChecking(false);
     // 一次性反馈走右上角临时弹窗；发现新版本由主进程广播进全局更新弹窗与
     // 侧栏通知卡（本页不内联渲染更新卡片，避免与通知中心重复）
-    if (!r.ok) toast(r.error);
-    else if (r.data.upToDate) toast('您使用的已是最新版本', 'ok');
+    if (!r.ok) {
+      toast(r.error);
+      return;
+    }
+    // 当前版本有补丁时主进程已广播补丁卡片，这里不再说"已是最新"
+    if (r.data.upToDate && !r.data.patchForCurrent) toast('您使用的已是最新版本', 'ok');
   }
 
   async function toggleAutoCheck(on: boolean) {

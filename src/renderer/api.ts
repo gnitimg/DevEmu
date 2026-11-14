@@ -256,6 +256,17 @@ export function onUpdateProgress(
   return fn ? fn((p) => cb(p as UpdateProgressPayload)) : () => undefined;
 }
 
+export function onUpdatePatch(
+  cb: (p: { version: string }) => void,
+): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onUpdatePatch?: (cb: (p: unknown) => void) => () => void };
+    }
+  ).devemu.onUpdatePatch;
+  return fn ? fn((p) => cb(p as { version: string })) : () => undefined;
+}
+
 export function onUpdateDownloaded(
   cb: (p: { version: string }) => void,
 ): () => void {
@@ -299,6 +310,7 @@ export const api = {
       latest: string;
       current: string;
       upToDate: boolean;
+      patchForCurrent: boolean;
       url: string;
       notes: string;
       hasAsset: boolean;

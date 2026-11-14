@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Electron-Forge
 out/
+
+# CI 生成的构建指纹（打包前由 release.yml 写入）
+build-info.json
