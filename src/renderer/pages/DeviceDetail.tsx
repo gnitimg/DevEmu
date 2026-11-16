@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, osFromImagePkg, prettyModel, scopeKeyOf, type EmuDevice, type Scope } from '../api.ts';
 import { CrashesPanel } from '../components/CrashesPanel.tsx';
 import { DeviceAppsPanel } from '../components/DeviceAppsPanel.tsx';
+import { toast } from '../components/Toast.tsx';
 import { decimalInput, gbFromMb } from '../components/VmEdit.tsx';
 import { displayedStorageGb } from '../../core/storageUnits.ts';
 import type { AvdInfo } from '../../core/types.ts';
@@ -69,7 +70,11 @@ export function DeviceDetail({
       return;
     }
     const left = starting + 320_000 - Date.now();
-    const t = setTimeout(() => setStarting(null), Math.max(0, left));
+    const t = setTimeout(() => {
+      // 超时静默还原会像"没点过启动"：补一条提示（HOS 侧同款）
+      toast(`${avdName} 启动超时，请查看日志`);
+      setStarting(null);
+    }, Math.max(0, left));
     return () => clearTimeout(t);
   }, [run, starting]);
 

@@ -105,6 +105,7 @@ import {
   listDeviceDefs,
   updateAvdHardware,
   ensureAvdStorage,
+  hasPendingStorageOp,
   getAvdHardware,
   renameAvd,
   markAvdWipe,
@@ -163,7 +164,13 @@ import {
   saveRoute,
   type LocationPrefs,
 } from './core/locationStore.ts';
-import { getShellGeometry, getShellGeometryByPid, hasWindowGuard, startHosWindowGuard } from './core/win.ts';
+import {
+  getShellGeometry,
+  getShellGeometryByPid,
+  hasWindowGuard,
+  startHosWindowGuard,
+  startWindowGuard,
+} from './core/win.ts';
 import {
   cancelUpdateDownload,
   compareVersions,
@@ -470,26 +477,32 @@ async function chainAndroidComponents(
   }).catch(() => undefined);
   const dl = envDownloadOpts(settings);
   const lite = { root: dir, sdkmanager: sm }; // startDownload 仅用到 root 与 sdkmanager
-  // 前序失败（含被取消）必须中止链路：继续装 emulator 只会白耗带宽，SDK 仍不可用
-  const pt = await startDownload(
-    lite,
-    java,
-    dl.proxy,
-    'platform-tools',
-    'platform-tools',
-    undefined,
-    {
+  // 前序失败（含被取消）必须中止链路：继续装 emulator 只会白耗带宽，SDK 仍不可用。
+  // 同包任务在飞（用户手动装过）时跳过：两个 sdkmanager 并发写同一组件目录会互踩
+  if (!isPkgPending('platform-tools')) {
+    const pt = await startDownload(
+      lite,
+      java,
+      dl.proxy,
+      'platform-tools',
+      'platform-tools',
+      undefined,
+      {
+        parallel: dl.parallel,
+        maxBps: dl.maxBps,
+        upstreamPort: dl.upstreamPort,
+      },
+    );
+    if (!pt.ok) throw new Error(pt.error ?? 'platform-tools 安装失败');
+  }
+  if (!isPkgPending('emulator')) {
+    const emu = await startDownload(lite, java, dl.proxy, 'emulator', 'emulator', undefined, {
       parallel: dl.parallel,
       maxBps: dl.maxBps,
       upstreamPort: dl.upstreamPort,
-    },
-  );
-  if (!pt.ok) throw new Error(pt.error ?? 'platform-tools 安装失败');
-  await startDownload(lite, java, dl.proxy, 'emulator', 'emulator', undefined, {
-    parallel: dl.parallel,
-    maxBps: dl.maxBps,
-    upstreamPort: dl.upstreamPort,
-  });
+    });
+    if (!emu.ok) throw new Error(emu.error ?? 'emulator 安装失败');
+  }
 }
 
 // ---------- emu:list 轮询缓存（UI 每 3 秒拉一次，避免每轮全量 spawn 子进程） ----------
@@ -524,6 +537,16 @@ function invalidateHosAvdsCache(): void {
   hosAvdsCache = null;
 }
 
+/** 慢命令在飞时后来者复用同一轮结果：渲染层三路轮询共享此缓存层，不叠加 spawn */
+let hosAvdsPending: Promise<{
+  emu: string;
+  avds: Awaited<ReturnType<typeof listHosAvds>>;
+} | null> | null = null;
+
+// 数据迁移两条入口（设置页保存 / 存储页迁移）互斥：并发各跑一次会在跨盘
+// copy+rm 交错下"双双成功"而数据分落两个根
+let migrationBusy = false;
+
 async function hosAvdsCached(): Promise<{
   emu: string;
   avds: Awaited<ReturnType<typeof listHosAvds>>;
@@ -542,15 +565,21 @@ async function hosAvdsCached(): Promise<{
   ) {
     return { emu, avds: hosAvdsCache.avds };
   }
-  try {
-    const avds = await listHosAvds(emu);
-    hosAvdsCache = { at: now, emu, avds };
-    return { emu, avds };
-  } catch {
-    // 瞬时失败与"无运行实例"同形会强拆运行中的药丸并终结定位会话：
-    // 失败不上缓存，调用方跳过本轮同步，等下一次轮询
-    return null;
-  }
+  if (hosAvdsPending) return hosAvdsPending;
+  hosAvdsPending = (async () => {
+    try {
+      const avds = await listHosAvds(emu);
+      hosAvdsCache = { at: now, emu, avds };
+      return { emu, avds };
+    } catch {
+      // 瞬时失败与"无运行实例"同形会强拆运行中的药丸并终结定位会话：
+      // 失败不上缓存，调用方跳过本轮同步，等下一次轮询
+      return null;
+    } finally {
+      hosAvdsPending = null;
+    }
+  })();
+  return hosAvdsPending;
 }
 
 /** 运行中的 HarmonyOS 虚拟机各挂一份崩溃监听；实例重启后 hdc 目标会变，
@@ -639,7 +668,23 @@ async function syncHosPills(hos: {
   if (pillOn) {
     for (const avd of running) {
       const serial = hosPillSerial(avd.name);
-      if (hasPill(serial)) continue;
+      if (hasPill(serial)) {
+        // 守卫进程被杀（OOM/杀软等）后药丸仍在：补建守卫恢复拖动与 Z 序修复
+        // （startHosWindowGuard 幂等；60 秒退避防僵尸脚本反复 spawn）
+        if (!hasWindowGuard(serial)) {
+          const lastAttempt = pillRetryAt.get(serial) ?? 0;
+          if (Date.now() - lastAttempt >= PILL_RETRY_MS) {
+            pillRetryAt.set(serial, Date.now());
+            try {
+              const pid = await findHosEmulatorPid(avd.name);
+              if (pid) startHosWindowGuard(pid, serial, avd.name);
+            } catch {
+              // 单台设备失败不影响其它实例
+            }
+          }
+        }
+        continue;
+      }
       const lastAttempt = pillRetryAt.get(serial) ?? 0;
       if (Date.now() - lastAttempt < PILL_RETRY_MS) continue;
       pillRetryAt.set(serial, Date.now());
@@ -1160,37 +1205,44 @@ export function registerIpc(): void {
       // 旧根直接子目录（如升级到 .data 新版式）不在随迁项内，允许并正常随迁
       if (dataRootConflicts(oldRoot, newRoot).blocked)
         return fail('新数据根不能位于数据项目录内部（projects/devices 等），请选择其他目录');
-      // 虚拟机磁盘文件被进程持有，不关干净迁移必留残缺
-      if (listRunning().length > 0)
+      // 虚拟机磁盘文件被进程持有，不关干净迁移必留残缺；重启后 qemu 仍可能
+      // 在跑（running-emulators.json 在册），进程内 listRunning 看不到，须一并查
+      if (listRunning().length > 0 || listPersistedRunning(oldRoot).length > 0)
         return fail('有虚拟机正在运行，请先全部关闭后再更改数据根目录');
-      // 桥进程持有旧数据根里的脚本路径，先停，保存完成后按新数据根重启
-      if (agentBridgeRunning()) await stopAgentBridge().catch(() => undefined);
-      migration = await migrateDataRoot(oldRoot, newRoot);
-      if (migration.failed.length) {
-        // failed 项也可能是半迁移态（moveInto 子项递归抛错），不回滚会让已迁
-        // 数据从活动视图消失
-        const stuck = await rollbackMigration(migration, oldRoot, newRoot);
+      if (migrationBusy) return fail('数据迁移正在进行中，请稍后再试');
+      migrationBusy = true;
+      try {
+        // 桥进程持有旧数据根里的脚本路径，先停，保存完成后按新数据根重启
+        if (agentBridgeRunning()) await stopAgentBridge().catch(() => undefined);
+        migration = await migrateDataRoot(oldRoot, newRoot);
+        if (migration.failed.length) {
+          // failed 项也可能是半迁移态（moveInto 子项递归抛错），不回滚会让已迁
+          // 数据从活动视图消失
+          const stuck = await rollbackMigration(migration, oldRoot, newRoot);
+          appendLog(
+            defaultDataRoot(),
+            stuck.length
+              ? `数据根迁移失败并已回滚：${migration.failed.join('、')} 未迁完，${stuck.join('、')} 仍留在新根，请手动处理`
+              : `数据根迁移失败：${migration.failed.join('、')} 未迁完，已回滚，数据根保持不变`,
+          );
+          // 桥已按迁移前置条件停下：数据根未变更，按旧根恢复，避免设置页显示
+          // 已启用而桥实际停摆
+          void syncAgentBridge().then((startError) => {
+            if (startError) appendLog(defaultDataRoot(), `迁移回滚后控制桥同步失败：${startError}`);
+          });
+          return fail(
+            `以下内容未能迁入新数据根（可能被占用）：${migration.failed.join('、')}，数据根未变更`,
+          );
+        }
+        // 下载记录已迁到新根，下载存储改挂新位置，否则后续任务会把文件写回旧根
+        initDownloadStore(newRoot);
         appendLog(
           defaultDataRoot(),
-          stuck.length
-            ? `数据根迁移失败并已回滚：${migration.failed.join('、')} 未迁完，${stuck.join('、')} 仍留在新根，请手动处理`
-            : `数据根迁移失败：${migration.failed.join('、')} 未迁完，已回滚，数据根保持不变`,
+          `数据根迁移：${migration.moved.length} 项已迁至 ${newRoot}（改写 ${migration.iniFixed} 个虚拟机配置）`,
         );
-        // 桥已按迁移前置条件停下：数据根未变更，按旧根恢复，避免设置页显示
-        // 已启用而桥实际停摆
-        void syncAgentBridge().then((startError) => {
-          if (startError) appendLog(defaultDataRoot(), `迁移回滚后控制桥同步失败：${startError}`);
-        });
-        return fail(
-          `以下内容未能迁入新数据根（可能被占用）：${migration.failed.join('、')}，数据根未变更`,
-        );
+      } finally {
+        migrationBusy = false;
       }
-      // 下载记录已迁到新根，下载存储改挂新位置，否则后续任务会把文件写回旧根
-      initDownloadStore(newRoot);
-      appendLog(
-        defaultDataRoot(),
-        `数据根迁移：${migration.moved.length} 项已迁至 ${newRoot}（改写 ${migration.iniFixed} 个虚拟机配置）`,
-      );
     }
     // 显式注解：脱离内联调用后，字面量联合类型（如线路）会被拓宽成 string
     const settingsPatch: Settings = {
@@ -1438,34 +1490,40 @@ export function registerIpc(): void {
     // 新根落在随迁项内部时迁移会静默跳过该项导致数据分裂
     if (dataRootConflicts(oldRoot, newRoot).blocked)
       return fail('目标目录不能位于数据项目录内部（projects/devices 等），请选择其他目录');
-    closeLocationPanels();
-    closeAllPills();
-    await stopAllEmulators();
-    await stopAgentBridge().catch(() => undefined);
-    const migration = await migrateDataRoot(oldRoot, newRoot, {
-      wipe: rawMode === 'wipe',
-      onProgress: (bytes, total) =>
-        broadcast('storage:migrateProgress', { bytes, total }),
-    });
-    if (migration.failed.length) {
-      const stuck = await rollbackMigration(migration, oldRoot, newRoot);
-      appendLog(
-        defaultDataRoot(),
-        stuck.length
-          ? `数据迁移失败并已回滚：${migration.failed.join('、')} 未迁完，${stuck.join('、')} 仍留在新根，请手动处理`
-          : `数据迁移失败：${migration.failed.join('、')} 未迁完，已回滚，数据根保持不变`,
-      );
-      return fail(
-        stuck.length
-          ? `迁移失败并已回滚：${stuck.join('、')} 未迁完，请手动处理`
-          : `迁移失败已回滚（${migration.failed.join('、')} 未迁完），数据根保持不变`,
-      );
+    if (migrationBusy) return fail('数据迁移正在进行中，请稍后再试');
+    migrationBusy = true;
+    try {
+      closeLocationPanels();
+      closeAllPills();
+      await stopAllEmulators();
+      await stopAgentBridge().catch(() => undefined);
+      const migration = await migrateDataRoot(oldRoot, newRoot, {
+        wipe: rawMode === 'wipe',
+        onProgress: (bytes, total) =>
+          broadcast('storage:migrateProgress', { bytes, total }),
+      });
+      if (migration.failed.length) {
+        const stuck = await rollbackMigration(migration, oldRoot, newRoot);
+        appendLog(
+          defaultDataRoot(),
+          stuck.length
+            ? `数据迁移失败并已回滚：${migration.failed.join('、')} 未迁完，${stuck.join('、')} 仍留在新根，请手动处理`
+            : `数据迁移失败：${migration.failed.join('、')} 未迁完，已回滚，数据根保持不变`,
+        );
+        return fail(
+          stuck.length
+            ? `迁移失败并已回滚：${stuck.join('、')} 未迁完，请手动处理`
+            : `迁移失败已回滚（${migration.failed.join('、')} 未迁完），数据根保持不变`,
+        );
+      }
+      saveAppSettings({ ...settings, dataRoot: newRoot });
+      // 下载存储改挂新根，否则后续任务会把文件写回旧根
+      initDownloadStore(newRoot);
+      appendLog(defaultDataRoot(), `数据已迁移到 ${newRoot}，等待应用重启`);
+      return ok(true);
+    } finally {
+      migrationBusy = false;
     }
-    saveAppSettings({ ...settings, dataRoot: newRoot });
-    // 下载存储改挂新根，否则后续任务会把文件写回旧根
-    initDownloadStore(newRoot);
-    appendLog(defaultDataRoot(), `数据已迁移到 ${newRoot}，等待应用重启`);
-    return ok(true);
   });
 
   handle('app:restart', () => {
@@ -1498,6 +1556,7 @@ export function registerIpc(): void {
       });
     }
     const settings = loadAppSettings();
+    if (!saneSdkDir(dir)) return fail('解压目标目录不可用');
     if (!fs.existsSync(dir)) return fail('所选目录不存在');
     const dl = envDownloadOpts(settings);
     let plan;
@@ -1987,14 +2046,21 @@ export function registerIpc(): void {
     if (!AVD_NAME_RE.test(name)) return fail('虚拟机名称不合法');
     return ok(getAvdHardware(loadAppSettings().dataRoot, scope, name));
   });
+  // 运行态判定合并持久化在册实例：应用重启后 qemu 仍可能在跑（running-emulators.json
+  // 在册），进程内 findRunning 看不到，漏查会落到"文件被占用"类含混错误
+  const runningOrPersisted = (root: string, scopeId: string, name: string) =>
+    findRunning(scopeId, name) !== undefined ||
+    listPersistedRunning(root).some((e) => e.avdName === name && e.scopeKey === scopeId);
+
   handle('avd:setHardware', async (rawScope: unknown, name: string, rawHw: unknown, rawOpts?: unknown) => {
     const scope = parseScope(rawScope);
     if (!scope) return fail('非法的作用域');
     // name 直接进 config.ini 路径拼接，与 avd:hardware 同口径校验
     if (!AVD_NAME_RE.test(name)) return fail('虚拟机名称不合法');
     // qemu 退出时会用启动时的内存值回写 config.ini，运行中修改必被覆盖
-    if (findRunning(scopeKey(scope), name))
+    if (runningOrPersisted(loadAppSettings().dataRoot, scopeKey(scope), name))
       return fail('请先关闭虚拟机再修改硬件配置');
+    if (hasPendingStorageOp(scope, name)) return fail('正在扩容数据分区，请稍后再修改');
     const { sdk, settings } = status();
     const hardware = parseHardware(rawHw);
     const wipeData =
@@ -2037,8 +2103,9 @@ export function registerIpc(): void {
     (rawScope: unknown, oldName: string, newName: string) => {
       const scope = parseScope(rawScope);
       if (!scope) return fail('非法的作用域');
-      if (findRunning(scopeKey(scope), oldName))
+      if (runningOrPersisted(loadAppSettings().dataRoot, scopeKey(scope), oldName))
         return fail('请先关闭虚拟机再重命名');
+      if (hasPendingStorageOp(scope, oldName)) return fail('正在扩容数据分区，请稍后再重命名');
       return ok(renameAvd(loadAppSettings().dataRoot, scope, oldName, newName));
     },
   );
@@ -2047,7 +2114,8 @@ export function registerIpc(): void {
     const { sdk, java, settings } = status();
     if (!scope || !sdk) return fail('未检测到 Android SDK');
     // UI 层按 3 秒轮询状态禁用删除按钮，存在滞后：运行中的磁盘文件被锁，删必失败
-    if (findRunning(scopeKey(scope), name)) return fail('请先关闭虚拟机再删除');
+    if (runningOrPersisted(settings.dataRoot, scopeKey(scope), name)) return fail('请先关闭虚拟机再删除');
+    if (hasPendingStorageOp(scope, name)) return fail('正在扩容数据分区，请稍后再删除');
     return ok(await deleteAvd(sdk, settings.dataRoot, scope, name, java));
   });
   handle('avd:deviceDefs', async () => {
@@ -2082,7 +2150,6 @@ export function registerIpc(): void {
       camera: settings.cameraMode,
       webcam: settings.webcam,
     });
-    appendLog(settings.dataRoot, `启动虚拟机 ${avdName}（${entry.serial}）`);
     // 自动补装已并入核心启动链路（Agent 桥启动同样生效）
     return ok({
       avdName: entry.avdName,
@@ -2408,18 +2475,27 @@ export function registerIpc(): void {
       for (const d of devices) {
         if (d.serial.startsWith('emulator-')) {
           const avdName = await avdNameCached(sdk.adb, d.serial);
-          if (process.platform === 'win32' && d.state === 'device' && avdName && pillOn && !hasPill(d.serial)) {
-            try {
-              // 开机期窗口几何尚未就绪：失败后 60 秒内不重试，避免 3 秒轮询每次
-              // 都 spawn PowerShell 查询（冷启动期间持续空转拖慢整机）
+          if (process.platform === 'win32' && d.state === 'device' && avdName && pillOn) {
+            if (!hasPill(d.serial)) {
+              try {
+                // 开机期窗口几何尚未就绪：失败后 60 秒内不重试，避免 3 秒轮询每次
+                // 都 spawn PowerShell 查询（冷启动期间持续空转拖慢整机）
+                const lastAttempt = pillRetryAt.get(d.serial) ?? 0;
+                if (Date.now() - lastAttempt >= PILL_RETRY_MS) {
+                  pillRetryAt.set(d.serial, Date.now());
+                  const geom = await getShellGeometry(avdName);
+                  if (geom) await openPill({ ...geom, serial: d.serial, avdName });
+                }
+              } catch {
+                // 外部 AVD 名可能超出可嵌入脚本的字符集：该设备跳过药丸，列表照常返回
+              }
+            } else if (!hasWindowGuard(d.serial)) {
+              // 守卫进程被杀（OOM/杀软等）后药丸仍在：补建守卫恢复拖动与 Z 序修复
               const lastAttempt = pillRetryAt.get(d.serial) ?? 0;
               if (Date.now() - lastAttempt >= PILL_RETRY_MS) {
                 pillRetryAt.set(d.serial, Date.now());
-                const geom = await getShellGeometry(avdName);
-                if (geom) await openPill({ ...geom, serial: d.serial, avdName });
+                startWindowGuard(avdName, d.serial);
               }
-            } catch {
-              // 外部 AVD 名可能超出可嵌入脚本的字符集：该设备跳过药丸，列表照常返回
             }
           }
           result.push({

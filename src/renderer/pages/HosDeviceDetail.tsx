@@ -53,9 +53,23 @@ export function HosDeviceDetail({
     return () => clearInterval(timer);
   }, [reload]);
 
+  // 快照内容不变时整树不重渲染：超时兜底必须定时器自驱复查，不能只依赖渲染期求值
   useEffect(() => {
     if (starting === null) return;
-    if (avd?.running || Date.now() - starting > 320_000) setStarting(null);
+    const check = () => {
+      if (avd?.running) {
+        setStarting(null);
+        return;
+      }
+      // 超时静默还原会像"没点过启动"：补一条提示（VmPanel/HosVmPanel 同款）
+      if (Date.now() - starting > 320_000) {
+        toast(`${name} 启动超时，请查看日志`);
+        setStarting(null);
+      }
+    };
+    check();
+    const timer = setInterval(check, 3_000);
+    return () => clearInterval(timer);
   }, [avd, starting]);
 
   // 启动失败主进程只广播不回传：不订阅则"启动中"要挂到超时兜底才消失

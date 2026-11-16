@@ -73,17 +73,23 @@ export function HosVmPanel({
     return () => clearInterval(timer);
   }, [reload]);
 
+  // avds 快照不变时整树不重渲染：超时兜底必须定时器自驱复查，不能只依赖渲染期求值
   useEffect(() => {
     const entries = Object.entries(starting);
     if (entries.length === 0) return;
-    const running = new Set((avds ?? []).filter((a) => a.running).map((a) => a.name));
-    const next: Record<string, number> = {};
-    for (const [name, at] of entries) {
-      if (!running.has(name) && Date.now() - at < 320_000) next[name] = at;
-      // 超时兜底静默还原按钮时进程可能只是挂起：补一条提示（当轮即移出，不重复弹）
-      else if (!running.has(name)) toast(`${name} 启动超时，请查看日志`);
-    }
-    if (Object.keys(next).length !== entries.length) setStarting(next);
+    const check = () => {
+      const running = new Set((avds ?? []).filter((a) => a.running).map((a) => a.name));
+      const next: Record<string, number> = {};
+      for (const [name, at] of Object.entries(starting)) {
+        if (!running.has(name) && Date.now() - at < 320_000) next[name] = at;
+        // 超时兜底静默还原按钮时进程可能只是挂起：补一条提示（当轮即移出，不重复弹）
+        else if (!running.has(name)) toast(`${name} 启动超时，请查看日志`);
+      }
+      if (Object.keys(next).length !== Object.keys(starting).length) setStarting(next);
+    };
+    check();
+    const timer = setInterval(check, 3_000);
+    return () => clearInterval(timer);
   }, [avds, starting]);
 
   useEffect(

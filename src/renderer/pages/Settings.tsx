@@ -309,7 +309,10 @@ export function Settings({
     if (!(await persistNow(overrides))) return;
     savedRev.current = rev;
     const list = await api.listEmulators();
-    if (!list.ok) return;
+    if (!list.ok) {
+      toast(list.error);
+      return;
+    }
     const running = list.data.filter((d) => d.type !== 'harmonyos');
     if (running.length === 0) return;
     if (
@@ -409,7 +412,11 @@ export function Settings({
   /** 迁移数据：选目标目录 → 探测 <目录>\.data 状态 → 直接确认或三选 */
   async function startMigrate() {
     const r = await api.openDirDialog('选择迁移目标目录');
-    if (!r.ok || !r.data) return;
+    if (!r.ok) {
+      toast(r.error);
+      return;
+    }
+    if (!r.data) return;
     const c = await api.migrateProbe(r.data);
     if (!c.ok) {
       toast(c.error);
@@ -460,7 +467,11 @@ export function Settings({
 
   async function browse(field: PickField, title: string) {
     const r = await api.openDirDialog(title);
-    if (!r.ok || !r.data) return;
+    if (!r.ok) {
+      toast(r.error);
+      return;
+    }
+    if (!r.data) return;
     if (field === 'dataRoot') {
       // 数据根变更即数据迁移：与“迁移数据”按钮走同一条管线
       //（目标 <目录>\.data、非空三选、进度圆环、断连与重启提示）
@@ -926,7 +937,7 @@ export function Settings({
                   value={gpuMode}
                   options={[
                     { value: 'swiftshader_indirect', label: '软件渲染' },
-                    { value: 'angle_indirect', label: 'ANGLE / Direct3D' },
+                    { value: 'angle_indirect', label: 'ANGLE 兼容模式' },
                     { value: 'host', label: '宿主 GPU' },
                   ]}
                   onChange={(v) => mark(setGpuMode)(v)}

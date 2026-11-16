@@ -204,10 +204,35 @@ async function copyFileProgress(
 ): Promise<void> {
   const rs = fs.createReadStream(src, { highWaterMark: 1 << 20 });
   const ws = fs.createWriteStream(dest);
+  let wsErr: Error | undefined;
+  ws.on('error', (e) => {
+    wsErr = e;
+  });
+  const writeChunk = (b: Buffer) =>
+    new Promise<void>((resolve, reject) => {
+      if (wsErr) return reject(wsErr);
+      if (ws.write(b)) return resolve();
+      // drain 之外 error/close 也要唤醒：目标盘写满时等 drain 会永久挂起。
+      // 三个监听互斥摘除，否则每个背压块都会在同一个流上累积 error/close 监听
+      const settle = (err?: Error) => {
+        ws.off('drain', onDrain);
+        ws.off('error', onError);
+        ws.off('close', onClose);
+        const e = err ?? wsErr;
+        if (e) reject(e);
+        else resolve();
+      };
+      const onDrain = () => settle();
+      const onError = (e: Error) => settle(e);
+      const onClose = () => settle();
+      ws.once('drain', onDrain);
+      ws.once('error', onError);
+      ws.once('close', onClose);
+    });
   try {
     for await (const chunk of rs) {
       const buf = chunk as Buffer;
-      if (!ws.write(buf)) await new Promise<void>((r) => ws.once('drain', r));
+      await writeChunk(buf);
       onBytes(buf.length);
     }
     await new Promise<void>((resolve, reject) => {
@@ -536,10 +561,49 @@ export async function migrateDataRoot(
 }
 
 /**
+ * 并回（回滚）专用合并：旧根已有同名文件的一律保留原件、丢弃新根副本。
+ * 迁移失败的中间态里，新根同名文件可能是写了一半的残缺副本（磁盘满/IO
+ * 错误），moveInto 的 copyFile 覆盖语义会拿它盖掉旧根的完好原件。旧根
+ * 缺失的条目（已改名迁走）才从新根搬回。
+ */
+async function mergeBack(src: string, dest: string): Promise<void> {
+  const srcStat = await fs.promises.stat(src);
+  if (!srcStat.isDirectory()) {
+    let destExists = false;
+    try {
+      destExists = (await fs.promises.stat(dest)).isFile();
+    } catch {
+      // 旧根无此文件：整份搬回
+    }
+    if (destExists) {
+      await fs.promises.rm(src, { force: true, maxRetries: 10, retryDelay: 500 });
+      return;
+    }
+    try {
+      await fs.promises.rename(src, dest);
+    } catch {
+      await fs.promises.copyFile(src, dest);
+      await fs.promises.rm(src, { force: true, maxRetries: 10, retryDelay: 500 });
+    }
+    return;
+  }
+  await fs.promises.mkdir(dest, { recursive: true });
+  for (const entry of await fs.promises.readdir(src))
+    await mergeBack(path.join(src, entry), path.join(dest, entry));
+  await fs.promises.rm(src, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 500,
+  });
+}
+
+/**
  * 迁移半途失败时把已到新根的数据并回旧根：failed 项也可能是半迁移态
  * （moveInto 递归子项抛错时部分子内容已落新根），所以按"新根存在即并回"
- * 处理而非只看 moved。并回沿用 moveInto 的合并语义：极少数同名冲突以新根
- * 副本为准——保数据不保位置。返回仍卡在新根、无法搬回的项。
+ * 处理而非只看 moved。并回走 mergeBack：旧根仍存在的文件保留原件（失败项
+ * 的新根副本可能是写一半的残缺文件），旧根缺失的才搬回。返回仍卡在新根、
+ * 无法搬回的项。
  */
 export async function rollbackMigration(
   migration: DataRootMigration,
@@ -557,7 +621,7 @@ export async function rollbackMigration(
       continue;
     }
     try {
-      await moveInto(src, path.join(to, rel));
+      await mergeBack(src, path.join(to, rel));
     } catch {
       stuck.push(rel);
     }

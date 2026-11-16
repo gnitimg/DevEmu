@@ -71,7 +71,20 @@ export class ShapingProxy {
       return Promise.resolve();
     }
     return new Promise((resolve) => {
-      this.waiters.push({ n: need, resolve });
+      // 单隧道时 pumpDown 是唯一 take 调用方：阻塞排队期间没有其他 take 来
+      // refill（remote 已 pause），必须按缺口时长定时自醒补牌，否则令牌
+      // 永不补充、下载卡死
+      const timer = setTimeout(
+        () => this.refill(),
+        Math.max(50, Math.ceil(((need - this.tokens) / this.maxBps) * 1000)),
+      );
+      this.waiters.push({
+        n: need,
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+      });
     });
   }
 

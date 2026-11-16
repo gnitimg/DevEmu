@@ -17,14 +17,20 @@ export function AgentPanel() {
   const [st, setSt] = useState<AgentStatus | null>(null);
   const [port, setPort] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     void api.agentStatus().then((r) => {
-      if (!r.ok) return;
+      if (!r.ok) {
+        setLoadError(r.error);
+        return;
+      }
+      setLoadError('');
       setSt(r.data);
       setPort(String(r.data.port));
     });
-  }, []);
+  }, [reload]);
 
   async function apply(enabled: boolean, portValue: string) {
     setBusy(true);
@@ -51,22 +57,47 @@ export function AgentPanel() {
     toast('已换发令牌', 'ok');
   }
 
-  function copySnippet() {
+  async function copySnippet() {
     if (!st) return;
-    void navigator.clipboard.writeText(st.snippet);
-    toast('接入配置已复制（含真实令牌）', 'ok');
+    try {
+      await navigator.clipboard.writeText(st.snippet);
+      toast('接入配置已复制（含真实令牌）', 'ok');
+    } catch {
+      toast('复制失败：剪贴板不可用');
+    }
   }
 
-  function copyToken() {
+  async function copyToken() {
     if (!st) return;
-    void navigator.clipboard.writeText(st.token);
-    toast('令牌已复制', 'ok');
+    try {
+      await navigator.clipboard.writeText(st.token);
+      toast('令牌已复制', 'ok');
+    } catch {
+      toast('复制失败：剪贴板不可用');
+    }
   }
 
   // 接入配置里的令牌位置：仅用于模糊展示，真实值仍由复制按钮写入剪贴板
   const tokenAt = st && st.token ? st.snippet.indexOf(st.token) : -1;
 
-  if (!st) return <div className="section" />;
+  if (!st) {
+    return (
+      <div className="section">
+        {loadError ? (
+          <div className="error-line">
+            {loadError}
+            <button className="btn btn-sm" style={{ marginLeft: 10 }} onClick={() => setReload((n) => n + 1)}>
+              重试
+            </button>
+          </div>
+        ) : (
+          <div className="empty">
+            <span className="spinner" />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, osFromImagePkg, prettyModel, scopeKeyOf, tagLabel, type EmuDevice, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
 import { Select } from './Select.tsx';
+import { toast } from './Toast.tsx';
 import { EditVmModal, HwFields, parseHwFields } from './VmEdit.tsx';
 import { isStorageBucketGb, STORAGE_BUCKETS_GB } from '../../core/storageUnits.ts';
 import { avdDefaultName } from '../../core/vmNames.ts';
@@ -59,21 +60,21 @@ export function VmPanel({
   useEffect(() => {
     if (Object.keys(starting).length === 0) return;
     const check = () => {
-      setStarting((cur) => {
-        const now = Date.now();
-        const next: Record<string, number> = {};
-        for (const [name, at] of Object.entries(cur)) {
-          const online = emus.some(
-            (e) =>
-              e.state === 'device' &&
-              e.avdName === name &&
-              e.scopeKey === scopeId,
-          );
-          if (!online && now - at < 320_000) next[name] = at;
-        }
-        if (Object.keys(next).length === Object.keys(cur).length) return cur;
-        return next;
-      });
+      const now = Date.now();
+      const next: Record<string, number> = {};
+      for (const [name, at] of Object.entries(starting)) {
+        const online = emus.some(
+          (e) =>
+            e.state === 'device' &&
+            e.avdName === name &&
+            e.scopeKey === scopeId,
+        );
+        if (online) continue;
+        if (now - at < 320_000) next[name] = at;
+        // 超时静默还原会像"没点过启动"：补一条提示（HOS 侧同款）
+        else toast(`${name} 启动超时，请查看日志`);
+      }
+      if (Object.keys(next).length !== Object.keys(starting).length) setStarting(next);
     };
     check();
     const timer = setInterval(check, 3000);

@@ -146,6 +146,8 @@ export function prepareEmulatorSkin(
       continue;
     }
     // Qt 的轮廓与屏幕遮罩另读 AVD 配置，单传 -skin 只会加载机身背景。
+    // 补写失败必须抛错中止启动（avd.test.ts:83 既定口径）：缺遮罩的窗口
+    // 显示异常比启动失败更难排查
     if (config['skin.path'] !== dir) patchAvdConfig(avdHome, avdName, { 'skin.path': dir });
     return ['-skin', path.basename(dir), '-skindir', path.dirname(dir)];
   }
@@ -428,6 +430,13 @@ function enqueueAvdStorage<T>(key: string, op: () => Promise<T>): Promise<T> {
   return result;
 }
 
+/** 该虚拟机是否有在飞/排队的镜像操作：launch/delete/rename 必须避让，
+ *  否则与 qemu-img/resize2fs 并发写同一镜像 */
+export function hasPendingStorageOp(scope: Scope, name: string): boolean {
+  const sKey = scope.kind === 'shared' ? 'shared' : `project:${scope.projectId}`;
+  return storageOps.has(`${sKey}/${name}`);
+}
+
 export function ensureAvdStorage(
   sdk: SdkInfo,
   dataRoot: string,
@@ -564,6 +573,15 @@ async function ensureAvdStorageImpl(
     fs.writeFileSync(path.join(dir, '.cold-boot-required'), '1', 'utf8');
   } catch {
     // 标记写不进去最多导致首次仍尝试加载旧快照，模拟器会自行回退冷启动
+  }
+  // 备份只为替换失败回滚设计：替换已成功即回收，否则一次扩容永久多占一倍
+  // 镜像空间（用户扩容往往正因磁盘紧张）；backupPath 按存在性避让，残留不碍事
+  for (const [, bak] of moved) {
+    try {
+      await fs.promises.rm(bak, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+    } catch {
+      // 回收失败只浪费磁盘
+    }
   }
   return { ok: true };
 }

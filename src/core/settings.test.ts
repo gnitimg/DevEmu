@@ -10,6 +10,7 @@ import {
   settingsPath,
   migrateDataRoot,
   dataRootConflicts,
+  rollbackMigration,
 } from './settings.ts';
 
 function tmpRoot(): string {
@@ -307,4 +308,69 @@ test('migrateDataRoot 字节进度：首帧带总量，末帧 bytes=total=源数
   assert.equal(last.bytes, expected);
   fs.rmSync(to, { recursive: true, force: true });
   fs.rmSync(from, { recursive: true, force: true });
+});
+
+test('rollbackMigration moved 项整树搬回并把 ini 路径改回旧根', async () => {
+  const oldRoot = tmpRoot();
+  const newRoot = tmpRoot();
+  const img = path.join(newRoot, 'devices', 'avd', 'a.img');
+  writeFile(img, 'DATA');
+  fs.writeFileSync(
+    path.join(newRoot, 'devices', 'avd', 'a.ini'),
+    `path=${path.join(newRoot, 'devices', 'avd', 'a.img')}\n`,
+    'utf8',
+  );
+  const stuck = await rollbackMigration(
+    { moved: ['devices'], failed: [], iniFixed: 0 },
+    oldRoot,
+    newRoot,
+  );
+  assert.deepEqual(stuck, []);
+  assert.equal(fs.readFileSync(path.join(oldRoot, 'devices', 'avd', 'a.img'), 'utf8'), 'DATA');
+  // ini 已被改指新根，搬回后必须改回旧根
+  assert.equal(
+    fs.readFileSync(path.join(oldRoot, 'devices', 'avd', 'a.ini'), 'utf8'),
+    `path=${path.join(oldRoot, 'devices', 'avd', 'a.img')}\n`,
+  );
+  assert.ok(!fs.existsSync(path.join(newRoot, 'devices')));
+  fs.rmSync(oldRoot, { recursive: true, force: true });
+  fs.rmSync(newRoot, { recursive: true, force: true });
+});
+
+test('rollbackMigration 失败项保留旧根原件，仅搬回旧根缺失的条目', async () => {
+  const oldRoot = tmpRoot();
+  const newRoot = tmpRoot();
+  // 旧根完好原件（复制中途磁盘满：原件未动，新根是残缺副本）
+  writeFile(path.join(oldRoot, 'projects', 'p1', 'avd', 'snap.img'), 'INTACT');
+  writeFile(path.join(newRoot, 'projects', 'p1', 'avd', 'snap.img'), 'PARTIAL');
+  // 旧根缺失（已改名迁走）的条目要从新根搬回
+  writeFile(path.join(newRoot, 'projects', 'p1', 'extra', 'new.bin'), 'NEW-ONLY');
+  const stuck = await rollbackMigration(
+    { moved: [], failed: ['projects'], iniFixed: 0 },
+    oldRoot,
+    newRoot,
+  );
+  assert.deepEqual(stuck, []);
+  assert.equal(fs.readFileSync(path.join(oldRoot, 'projects', 'p1', 'avd', 'snap.img'), 'utf8'), 'INTACT');
+  assert.ok(!fs.existsSync(path.join(newRoot, 'projects', 'p1', 'avd')));
+  assert.equal(fs.readFileSync(path.join(oldRoot, 'projects', 'p1', 'extra', 'new.bin'), 'utf8'), 'NEW-ONLY');
+  fs.rmSync(oldRoot, { recursive: true, force: true });
+  fs.rmSync(newRoot, { recursive: true, force: true });
+});
+
+test('rollbackMigration 畸形态（旧根目录撞新根文件）进 stuck，两侧数据都不丢', async () => {
+  const oldRoot = tmpRoot();
+  const newRoot = tmpRoot();
+  fs.mkdirSync(path.join(oldRoot, 'projects'), { recursive: true });
+  writeFile(path.join(newRoot, 'projects'), 'WEIRD');
+  const stuck = await rollbackMigration(
+    { moved: ['projects'], failed: [], iniFixed: 0 },
+    oldRoot,
+    newRoot,
+  );
+  assert.deepEqual(stuck, ['projects']);
+  assert.equal(fs.readFileSync(path.join(newRoot, 'projects'), 'utf8'), 'WEIRD');
+  assert.ok(fs.statSync(path.join(oldRoot, 'projects')).isDirectory());
+  fs.rmSync(oldRoot, { recursive: true, force: true });
+  fs.rmSync(newRoot, { recursive: true, force: true });
 });

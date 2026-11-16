@@ -157,7 +157,7 @@ export function DeviceAppsPanel({
                       className="btn btn-sm btn-danger"
                       disabled={apkBusy !== ''}
                       onClick={() => {
-                        if (window.confirm(`从库中移除 ${apk.fileName}？`)) apkAction(apk, 'remove');
+                        if (window.confirm(`从库中移除 ${apk.fileName}？该操作不可恢复。`)) apkAction(apk, 'remove');
                       }}
                     >
                       删除

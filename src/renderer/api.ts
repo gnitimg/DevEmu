@@ -107,7 +107,13 @@ const raw = () => (window as unknown as { devemu: RawApi }).devemu;
 
 async function call<T>(channel: string, ...args: unknown[]): Promise<R<T>> {
   // 每次调用时现取 bridge：preload 热重载会整体替换 window.devemu，模块级引用会失效
-  return (await raw()[channel](...args)) as R<T>;
+  try {
+    return (await raw()[channel](...args)) as R<T>;
+  } catch (e) {
+    // 桥层失败（键名错配/主进程抛错）折叠为 R 失败：调用侧全部按 r.ok 分支处理，
+    // 不因意外 reject 卡死 busy 标志或留下 unhandledrejection
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export function onSdkProgress(cb: (line: string) => void): () => void {
@@ -304,7 +310,7 @@ export const api = {
   winToggleMaximize: () => call<boolean>('winToggleMaximize'),
   winClose: () => call<boolean>('winClose'),
   winIsMaximized: () => call<boolean>('winIsMaximized'),
-  isFirstRun: () => call<boolean>('app:firstRun'),
+  isFirstRun: () => call<boolean>('firstRun'),
   checkUpdate: () =>
     call<{
       latest: string;

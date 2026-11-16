@@ -258,15 +258,43 @@ export async function importCommandlineTools(  zipPath: string,
     if (!findHdcAny(staging)) {
       throw new Error('压缩包内未找到 hdc，请确认下载的是 HarmonyOS 命令行工具（commandline-tools）压缩包');
     }
+    const skipped: string[] = [];
     for (const entry of fs.readdirSync(staging)) {
       const dest = path.join(dir, entry);
-      await fs.promises.rm(dest, { recursive: true, force: true }).catch(() => undefined);
+      let aside: string | undefined;
+      if (fs.existsSync(dest)) {
+        // 先整体让位旧目录再落位：任一文件被占用（hdc server/运行中的模拟器）
+        // 时 rename 必败——此时保留旧版本并跳过该项。先删后搬会让旧 SDK 半损，
+        // 失败后重试只会撞同一把锁
+        aside = `${dest}.old-${Date.now()}`;
+        try {
+          await fs.promises.rename(dest, aside);
+        } catch {
+          skipped.push(entry);
+          continue;
+        }
+      }
       try {
         await fs.promises.rename(path.join(staging, entry), dest);
       } catch {
-        // 同卷 rename 失败（目标被占用等）：退回复制
-        await fs.promises.cp(path.join(staging, entry), dest, { recursive: true, force: true });
+        // 同卷 rename 失败（罕见）：退回复制，再失败则让回旧版
+        try {
+          await fs.promises.cp(path.join(staging, entry), dest, { recursive: true, force: true });
+        } catch {
+          if (aside) await fs.promises.rename(aside, dest).catch(() => undefined);
+          skipped.push(entry);
+          continue;
+        }
       }
+      if (aside)
+        await fs.promises
+          .rm(aside, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 })
+          .catch(() => undefined);
+    }
+    if (skipped.length) {
+      throw new Error(
+        `以下目录被占用，未升级（旧版本已保留）：${skipped.join('、')}。请关闭 HarmonyOS 模拟器与 hdc server 后重试`,
+      );
     }
     const set = findSdkSet(dir);
     const hdc = (set ? findHdc(set.set) : undefined) ?? findHdcAny(dir);

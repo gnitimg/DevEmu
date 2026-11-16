@@ -64,9 +64,17 @@ export function SdkPackages({
     setImportingZip(true);
     try {
       const zip = await api.openZipDialog();
-      if (!zip.ok || !zip.data) return;
+      if (!zip.ok) {
+        toast(zip.error);
+        return;
+      }
+      if (!zip.data) return;
       const dir = await api.openDirDialog('选择解压目标目录');
-      if (!dir.ok || !dir.data) return;
+      if (!dir.ok) {
+        toast(dir.error);
+        return;
+      }
+      if (!dir.data) return;
       const r = await api.harmonyImportZip(zip.data, dir.data);
       if (!r.ok) {
         toast(r.error);
@@ -93,6 +101,9 @@ export function SdkPackages({
 
   // 系统镜像是 Emulator.exe 管理的独立资产，与命令行组件一起在已安装/可安装中展示
   const [hosImages, setHosImages] = useState<HosImage[] | null>(null);
+  // 镜像列表错误独立成态：error 是 Android 可安装列表共用的，串台会把
+  // HOS 的失败文案显示到 Android 页签，且成功回拉后必须能清掉
+  const [hosError, setHosError] = useState('');
 
   const reloadHosImages = useCallback(() => {
     if (!env?.harmony) {
@@ -101,7 +112,12 @@ export function SdkPackages({
     }
     api
       .hosImages()
-      .then((r) => setHosImages(r.ok ? r.data : []))
+      .then((r) => {
+        // 失败仍置空数组（spinner 要收尾），但错误必须上屏：静默空态会让
+        // "没有可安装的镜像"以假乱真
+        setHosImages(r.ok ? r.data : []);
+        setHosError(r.ok ? '' : r.error);
+      })
       .catch(() => setHosImages([]));
   }, [env?.harmony]);
 
@@ -118,17 +134,22 @@ export function SdkPackages({
 
   useEffect(reloadInstalled, [reloadInstalled]);
 
-  // 可安装列表只在首次切到该页签时拉取（需联网，慢）
+  // 可安装列表只在首次切到该页签时拉取（需联网，慢）；失败置空数组哨兵停止
+  // 自动重拉，否则 loading 复位后本 effect 立即重跑守卫形成请求风暴
   useEffect(() => {
     if (tab !== 'available' || available !== null || loading) return;
     setLoading(true);
     setError('');
     api.sdkAvailable().then((r) => {
-      if (r.ok) setAvailable(r.data);
-      else setError(r.error);
+      setAvailable(r.ok ? r.data : []);
+      if (!r.ok) setError(r.error);
       setLoading(false);
     });
   }, [tab, available, loading]);
+
+  function retryAvailable() {
+    setAvailable(null);
+  }
 
   // 下载快照：多任务互不影响，各按钮只反映自己；任务从进行中消失
   // （完成/取消/失败）时刷新"已安装"列表，装完的包不再停留在"可安装"
@@ -439,7 +460,7 @@ export function SdkPackages({
                 </div>
               );
             })}
-          {error && <div className="error-line" style={{ border: 'none' }}>{error}</div>}
+          {hosError && <div className="error-line" style={{ border: 'none' }}>{hosError}</div>}
         </div>
       </div>
     );
@@ -474,7 +495,16 @@ export function SdkPackages({
             <span className="spinner" /> 正在从仓库获取列表…
           </div>
         )}
-        {error && <div className="error-line" style={{ border: 'none' }}>{error}</div>}
+        {error && (
+          <div className="error-line" style={{ border: 'none' }}>
+            {error}
+            {tab === 'available' && (
+              <button className="btn btn-sm" style={{ marginLeft: 10 }} onClick={retryAvailable}>
+                重试
+              </button>
+            )}
+          </div>
+        )}
         {!loading && !error && shown.length === 0 && <div className="empty">没有匹配的组件</div>}
         {shown.map((e) => (
           <div key={e.pkg} className="img-row">

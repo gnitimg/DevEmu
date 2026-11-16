@@ -6,9 +6,10 @@ import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
 import { loadAppSettings } from './settings.ts';
+import { appendLog } from './log.ts';
 import { cameraArgs } from './camera.ts';
 import { stopLocation } from './location.ts';
-import { prepareEmulatorSkin, readAvdConfig, WIPE_FLAG } from './avd.ts';
+import { hasPendingStorageOp, prepareEmulatorSkin, readAvdConfig, WIPE_FLAG } from './avd.ts';
 import {
   applyPortalProbes,
   installApk,
@@ -38,6 +39,7 @@ export interface RunningEmu {
 }
 
 const running = new Map<string, RunningEmu>(); // key: avdName@scopeKey
+const launching = new Set<string>();
 // pickPort 命中到 running.set 之间存在多个 await 的窗口：预留集挡住并发的
 // 第二次 launch 选中同一端口（qemu 双实例同端口必然起不来）
 const reservedPorts = new Set<number>();
@@ -179,6 +181,17 @@ export interface LaunchOptions {
   webcam?: string;
 }
 
+export function compatibleGpuMode(mode: string, help: string): string {
+  if (mode !== 'angle_indirect' && mode !== 'swiftshader_indirect') return mode;
+  const modes = new Set(
+    [...help.matchAll(/^\s*([a-z_]+)\s*(?:\([^\r\n)]*\)\s*)?->/gm)].map((match) => match[1]),
+  );
+  if (modes.has(mode)) return mode;
+  if (mode === 'angle_indirect' && modes.has('swangle')) return 'swangle';
+  if (modes.has('swiftshader')) return 'swiftshader';
+  return modes.has('software') ? 'software' : mode;
+}
+
 function pidAlive(pid: number | undefined): boolean {
   if (pid === undefined) return false;
   try {
@@ -275,18 +288,25 @@ export function launchEmulator(
   const key = `${avdName}@${sKey}`;
   registryRoot = dataRoot;
   const prev = running.get(key);
-  if (prev && pidAlive(prev.pid)) {
+  if (launching.has(key) || (prev && pidAlive(prev.pid))) {
     return Promise.reject(new Error('该虚拟机已在运行'));
   }
   // 注册表残留（qemu 已退出但 exit 未清理）：清掉放行重新启动
   if (running.delete(key)) persistRunning();
-  return pickPort().then((port) =>
-    startOnPort(sdk, dataRoot, dirs, scope, sKey, avdName, port, opts).catch((e) => {
-      // spawn 前失败（config/端口/相机馈送抛错）：释放预留端口，否则池被占死
-      reservedPorts.delete(port);
-      throw e;
-    }),
-  );
+  // 扩容（qemu-img/resize2fs）与 qemu 并发写同一镜像会损坏 ext4 尾部：
+  // 三个启动入口（emu:launch / emu:restartRunning / Agent 桥）统一在此避让
+  if (hasPendingStorageOp(scope, avdName)) {
+    return Promise.reject(new Error('正在扩容数据分区，请稍后再启动'));
+  }
+  launching.add(key);
+  return pickPort()
+    .then((port) =>
+      startOnPort(sdk, dataRoot, dirs, scope, sKey, avdName, port, opts).catch((e) => {
+        reservedPorts.delete(port);
+        throw e;
+      }),
+    )
+    .finally(() => launching.delete(key));
 }
 
 async function startOnPort(
@@ -308,12 +328,27 @@ async function startOnPort(
   const wipeData = fs.existsSync(wipeFlag);
   // 重建数据分区同样不能回放旧快照
   const coldBoot = wipeData || opts.noSnapshotLoad === true || fs.existsSync(coldBootFlag);
+  const cwd = path.dirname(sdk.emulator);
+  const env = scopeEnv(dirs);
+  if (process.platform === 'win32') {
+    const temp = path.join(dataRoot, '.runtime', 'android-emulator');
+    await fs.promises.mkdir(temp, { recursive: true });
+    // Netsim 通过 TMPDIR 查找 netsim.ini，Windows 运行日志则使用 TEMP/TMP。
+    Object.assign(env, { TEMP: temp, TMP: temp, TMPDIR: temp });
+  }
+  let gpu = opts.gpu ?? (process.platform === 'win32' ? 'angle_indirect' : undefined);
+  if (gpu === 'angle_indirect' || gpu === 'swiftshader_indirect') {
+    // 新版拒绝旧名称后会静默选到宿主 GPU；按实际安装的 SDK 保留兼容渲染语义。
+    const help = await run(sdk.emulator, ['-help-gpu'], { cwd, env, timeoutMs: 1500 }).catch(
+      () => undefined,
+    );
+    if (help?.code === 0) gpu = compatibleGpuMode(gpu, `${help.stdout}\n${help.stderr}`);
+  }
   const args = [
     '-avd',
     avdName,
     '-port',
     String(port),
-    '-no-boot-anim',
     ...prepareEmulatorSkin(sdk.root, dirs.avdHome, avdName, config),
     '-netdelay',
     'none',
@@ -336,9 +371,6 @@ async function startOnPort(
     grpcPort++;
   }
   args.push('-grpc', String(grpcPort), '-grpc-use-token');
-  // swiftshader_indirect 在 API 35+ 预览镜像上整屏全黑（2026-10 实测 guest/窗口 0% 点亮），
-  // angle_indirect 双路正常；个别机器 angle 黑屏时可在设置切回软件渲染
-  const gpu = opts.gpu ?? (process.platform === 'win32' ? 'angle_indirect' : undefined);
   if (gpu) args.push('-gpu', gpu);
   if (opts.httpProxy) args.push('-http-proxy', opts.httpProxy);
   if (wipeData) args.push('-wipe-data');
@@ -355,8 +387,8 @@ async function startOnPort(
       args.push(...cameraArgs(opts.camera, '', opts.webcam));
     }
     child = spawn(sdk.emulator, args, {
-      env: { ...process.env, ...scopeEnv(dirs) },
-      cwd: path.dirname(sdk.emulator),
+      env: { ...process.env, ...env },
+      cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     entry = {
@@ -372,6 +404,10 @@ async function startOnPort(
     // 注册表滞后选中同一端口
     running.set(`${avdName}@${sKey}`, entry);
     persistRunning();
+    appendLog(
+      dataRoot,
+      `启动虚拟机 ${avdName}（${entry.serial}，GPU=${gpu ?? 'SDK 默认'}${coldBoot ? '，冷启动' : ''}）`,
+    );
     reservedPorts.delete(port);
     reservedPorts.delete(grpcPort);
   } catch (e) {
@@ -487,7 +523,10 @@ async function startOnPort(
         }
         void waitBooted(sdk.adb, entry.serial, 300_000)
           .then(async (ok) => {
-            if (!ok || running.get(`${avdName}@${sKey}`) !== entry) return;
+            if (running.get(`${avdName}@${sKey}`) !== entry) return;
+            const elapsed = Math.round((Date.now() - entry.startedAt) / 1000);
+            appendLog(dataRoot, `虚拟机 ${avdName} ${ok ? '已就绪' : '启动超时'}（${elapsed} 秒）`);
+            if (!ok) return;
             // 设备内「设备名称」（设置 → 关于）与 DevEmu、窗口标题保持同一名称
             await setGuestDeviceName(sdk.adb, entry.serial, avdName).catch(
               () => undefined,
