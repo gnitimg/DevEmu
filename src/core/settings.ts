@@ -161,6 +161,8 @@ const MIGRATE_ITEMS = [
   'location',
   'camera',
   'screenshots',
+  // 重定向后的 Android 系统镜像根（sdkImages.ts 建链到此处），换数据根必须随迁
+  'sdk',
   'downloads.json',
 ];
 
@@ -254,7 +256,7 @@ async function copyFileProgress(
  * （迁移在 ipcMain handler 内执行，同步复制会把整窗卡成“未响应”）。
  * onBytes：本次移动实际落盘的字节数（改名瞬间计入整目录大小，复制逐块回报）。
  */
-async function moveInto(
+export async function moveInto(
   src: string,
   dest: string,
   onBytes?: (n: number) => void,

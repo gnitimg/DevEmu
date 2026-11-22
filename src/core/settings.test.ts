@@ -76,6 +76,7 @@ test('migrateDataRoot 全量随迁且源目录清空', async () => {
     [path.join('location', 'prefs.json'), 'prefs'],
     [path.join('camera', 'screen.jpg'), 'jpg'],
     [path.join('screenshots', 's.png'), 'png'],
+    [path.join('sdk', 'system-images', 'android-36', 'google_apis_playstore', 'x86_64', 'system.img'), 'img'],
     ['downloads.json', 'dl'],
   ];
   for (const [rel, content] of pairs) writeFile(path.join(from, rel), content);
@@ -93,6 +94,7 @@ test('migrateDataRoot 全量随迁且源目录清空', async () => {
       'location',
       'camera',
       'screenshots',
+      'sdk',
       'downloads.json',
     ].sort(),
   );

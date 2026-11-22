@@ -22,6 +22,10 @@ import {
   defaultDataRoot,
   isBootstrapFresh,
 } from './core/settings.ts';
+import {
+  ensureAndroidImagesRoot,
+  type EnsureImagesRootResult,
+} from './core/sdkImages.ts';
 import { appendLog, clearLogs } from './core/log.ts';
 import {
   storageItems,
@@ -65,7 +69,6 @@ import {
   patchHosHardware,
   renameHosAvd,
   startHosAvd,
-  stopHosAvd,
   uninstallHosImage,
   type CreateHosAvdOptions,
 } from './core/hosemu.ts';
@@ -114,6 +117,7 @@ import {
 } from './core/avd.ts';
 import {
   launchEmulator,
+  powerOffEmulator,
   stopEmulator,
   findRunning,
   listRunning,
@@ -140,6 +144,7 @@ import {
   openGroupSerials,
   openLocationPanel,
   openPill,
+  powerOffHosAvd,
   startHosPillMove,
   startPillMove,
   type PillAction,
@@ -309,6 +314,32 @@ function status() {
     sdk: detectSdk(settings.sdkPath),
     java: detectJava(settings.javaPath),
   };
+}
+
+function imagesEmulatorsBusy(dataRoot: string): boolean {
+  // qemu 进程内 listRunning 看不到的（应用重启后仍在跑）须查持久化在册
+  return listRunning().length > 0 || listPersistedRunning(dataRoot).length > 0;
+}
+
+/** 镜像根对齐并落日志（core 不打日志）；并发调用复用在飞任务 */
+function alignImagesRoot(
+  sdkPath: string | undefined,
+  dataRoot: string,
+  emulatorsRunning: boolean,
+  reason: string,
+): Promise<EnsureImagesRootResult> {
+  return ensureAndroidImagesRoot(sdkPath, dataRoot, { emulatorsRunning }).then(
+    (r) => {
+      if (!r.ok && r.error)
+        appendLog(defaultDataRoot(), `镜像根对齐未完成（${reason}）：${r.error}`);
+      else if (r.movedBytes > 0)
+        appendLog(
+          defaultDataRoot(),
+          `镜像根已对齐到数据根（${reason}）：搬移 ${(r.movedBytes / 1024 ** 3).toFixed(2)} GB`,
+        );
+      return r;
+    },
+  );
 }
 
 // ---------- Agent 控制桥 ----------
@@ -868,6 +899,14 @@ const hosImageTasks = new Map<string, ChildProcess>();
 
 export function registerIpc(): void {
   initDownloadStore(loadAppSettings().dataRoot);
+  // 启动即把镜像根对齐到数据根（后台执行；失败保持旧布局可用并写日志）
+  const bootSettings = loadAppSettings();
+  void alignImagesRoot(
+    bootSettings.sdkPath,
+    bootSettings.dataRoot,
+    imagesEmulatorsBusy(bootSettings.dataRoot),
+    '启动对齐',
+  );
   handle('env:status', () => {
     const settings = loadAppSettings();
     const sdk = detectSdk(settings.sdkPath);
@@ -954,7 +993,7 @@ export function registerIpc(): void {
   handle('hos:stop', async (rawName: unknown) => {
     const name = parseHosName(rawName);
     if (!name) return fail('参数错误');
-    await stopHosAvd(hosEmu(), name);
+    await powerOffHosAvd(hosEmu(), name, harmonyInfoCached()?.hdc);
     stopHosCrashWatch(name);
     invalidateHosAvdsCache();
     return ok(true);
@@ -1210,6 +1249,8 @@ export function registerIpc(): void {
       if (listRunning().length > 0 || listPersistedRunning(oldRoot).length > 0)
         return fail('有虚拟机正在运行，请先全部关闭后再更改数据根目录');
       if (migrationBusy) return fail('数据迁移正在进行中，请稍后再试');
+      // 在飞的镜像对齐先落定：它可能正搬 <数据根>\sdk，与数据根迁移互斥
+      await alignImagesRoot(agent.sdkPath, oldRoot, false, '迁移前等待');
       migrationBusy = true;
       try {
         // 桥进程持有旧数据根里的脚本路径，先停，保存完成后按新数据根重启
@@ -1236,6 +1277,13 @@ export function registerIpc(): void {
         }
         // 下载记录已迁到新根，下载存储改挂新位置，否则后续任务会把文件写回旧根
         initDownloadStore(newRoot);
+        // 数据根已切换：镜像 junction 从旧根重建到新根
+        await alignImagesRoot(
+          s.sdkPath,
+          newRoot,
+          imagesEmulatorsBusy(newRoot),
+          '数据根迁移后重建',
+        );
         appendLog(
           defaultDataRoot(),
           `数据根迁移：${migration.moved.length} 项已迁至 ${newRoot}（改写 ${migration.iniFixed} 个虚拟机配置）`,
@@ -1296,6 +1344,19 @@ export function registerIpc(): void {
       }
       return fail(`设置保存失败：${saveErr}`);
     }
+    // SDK 根变更（数据根变更的重建已在迁移分支做过）：旧 SDK 位置建链/搬镜像，
+    // 否则镜像继续落在旧盘
+    const savedSettings = loadAppSettings();
+    if (
+      savedSettings.sdkPath &&
+      path.relative(path.resolve(savedSettings.sdkPath), path.resolve(agent.sdkPath ?? '')) !== ''
+    )
+      void alignImagesRoot(
+        savedSettings.sdkPath,
+        savedSettings.dataRoot,
+        imagesEmulatorsBusy(savedSettings.dataRoot),
+        'SDK 根变更',
+      );
     // 操作中心开关实时生效：关闭立即收掉所有药丸，开启立即为在跑的模拟器补建
     if (process.platform === 'win32' && pillWasOn !== pillOn) {
       if (!pillOn) {
@@ -1519,6 +1580,8 @@ export function registerIpc(): void {
       saveAppSettings({ ...settings, dataRoot: newRoot });
       // 下载存储改挂新根，否则后续任务会把文件写回旧根
       initDownloadStore(newRoot);
+      // 镜像已随 sdk 项迁到新根：junction 从旧根重建到新根
+      await alignImagesRoot(settings.sdkPath, newRoot, false, '数据迁移后重建');
       appendLog(defaultDataRoot(), `数据已迁移到 ${newRoot}，等待应用重启`);
       return ok(true);
     } finally {
@@ -1864,6 +1927,14 @@ export function registerIpc(): void {
     // 双份 sdkmanager 同包装会互踩；渲染层防重入只覆盖单窗口，主进程守卫才闭环
     if (isPkgPending(pkg)) return fail('该包已在下载队列');
     if (!sdk?.sdkmanager) return fail('SDK 缺少 cmdline-tools');
+    // 先建链再放行 sdkmanager，否则首次对齐未完成时会在旧位置建出真实目录，镜像落回 C 盘
+    const aligned = await alignImagesRoot(
+      settings.sdkPath,
+      settings.dataRoot,
+      imagesEmulatorsBusy(settings.dataRoot),
+      '安装前对齐',
+    );
+    if (!aligned.ok) return fail('镜像目录对齐未完成：' + (aligned.error ?? ''));
     // 限速与并行数来自设置；走整形代理时上游按线路设置串接
     const kbps = Number(settings.maxDownloadKbps);
     const dlOpts = {
@@ -2359,11 +2430,11 @@ export function registerIpc(): void {
     if (!sdk) return fail('未检测到 Android SDK');
     const entry = findRunning(scopeKey(scope), avdName);
     if (entry) {
-      await stopEmulator(sdk, entry);
+      await powerOffEmulator(sdk, entry);
       appendLog(loadAppSettings().dataRoot, `关闭虚拟机 ${avdName}`);
       return ok(true);
     }
-    // 注册表丢失（应用重启过）：按 adb 设备兜底，先优雅后强杀。同名虚拟机
+    // 注册表丢失（应用重启过）：按 adb 设备兜底真关机。同名虚拟机
     // 可能同时跑在别的作用域，必须逐台认领作用域，不能按名字全杀
     const devices = await adbDevices(sdk.adb);
     const scopes = runningScopeMap(loadAppSettings().dataRoot);
@@ -2381,11 +2452,11 @@ export function registerIpc(): void {
     }
     if (matches.length === 0) return fail('该虚拟机未在运行');
     for (const serial of matches) {
-      await runCmd(adbAlias(sdk), ['-s', serial, 'emu', 'kill'], {
+      await runCmd(adbAlias(sdk), ['-s', serial, 'shell', 'reboot', '-p'], {
         timeoutMs: 8000,
       }).catch(() => undefined);
     }
-    // 等 qemu 自行退出（快照保存大内存 AVD 可超 20 秒）再兜底强杀；
+    // guest 断电到 qemu 退出实测 20 秒上下，超时才兜底强杀（也不落快照）；
     // 按 serial 判断退出即可，不必每轮都经控制台反查 avd 名
     const matchSet = new Set(matches);
     let still = true;

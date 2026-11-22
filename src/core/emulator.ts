@@ -564,8 +564,19 @@ async function startOnPort(
   });
 }
 
-/** 关闭（优先优雅）：emu kill 后等待 qemu 自行退出（快照保存大内存 AVD 可超 20 秒），
- *  超时才强杀进程树——强杀会截断快照，下次启动只能冷启动（表现为黑屏时间大幅变长） */
+async function killEmuTree(entry: RunningEmu): Promise<void> {
+  if (entry.pid === undefined || process.platform !== 'win32') {
+    entry.child.kill('SIGKILL');
+    return;
+  }
+  await run('taskkill.exe', ['/PID', String(entry.pid), '/T', '/F'], {
+    timeoutMs: 15_000,
+  }).catch(() => undefined);
+}
+
+/** 关机（保存状态的休眠退出）：emu kill 后等待 qemu 自行退出（快照保存大内存
+ *  AVD 可超 20 秒），超时才强杀进程树——强杀会截断快照，下次启动只能冷启动。
+ *  仅用于应用退出、配置重启等随后就要恢复原样的场景；用户点“关闭”走 powerOffEmulator */
 export async function stopEmulator(
   sdk: SdkInfo,
   entry: RunningEmu,
@@ -582,18 +593,32 @@ export async function stopEmulator(
     if (!running.has(key)) return true;
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (entry.pid !== undefined) {
-    if (process.platform === 'win32') {
-      await run('taskkill.exe', ['/PID', String(entry.pid), '/T', '/F'], {
-        timeoutMs: 15_000,
-      }).catch(() => undefined);
-    } else {
-      entry.child.kill('SIGKILL');
-    }
-  } else {
-    entry.child.kill('SIGKILL');
-  }
+  await killEmuTree(entry);
   // 等注册表清掉（exit 事件），最多 10 秒
+  for (let i = 0; i < 20; i++) {
+    if (!running.has(key)) return true;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return true;
+}
+
+/** 真关机：guest 内 reboot -p 让系统断电，qemu 随 ACPI 关机退出且不落快照
+ *  （实测退出后快照标记被清、下次冷启动）。emu kill 是保存快照的休眠退出，
+ *  与“关闭”的语义不符；adb 不通或 guest 拒绝时强杀，两种失败也都不落快照 */
+export async function powerOffEmulator(
+  sdk: SdkInfo,
+  entry: RunningEmu,
+): Promise<boolean> {
+  const key = `${entry.avdName}@${entry.scopeKey}`;
+  await run(sdk.adb, ['-s', entry.serial, 'shell', 'reboot', '-p'], {
+    timeoutMs: 8000,
+  }).catch(() => undefined);
+  // guest 断电到 qemu 退出实测 20 秒上下，留足窗口再兜底强杀
+  for (let i = 0; i < 60; i++) {
+    if (!running.has(key)) return true;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await killEmuTree(entry);
   for (let i = 0; i < 20; i++) {
     if (!running.has(key)) return true;
     await new Promise((r) => setTimeout(r, 500));

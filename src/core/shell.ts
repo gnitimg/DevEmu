@@ -15,7 +15,7 @@ import { listRunning } from './emulator.ts';
 import type { SdkInfo } from './types.ts';
 import { VM_GAP_DIP } from './windowGroup.ts';
 import { releaseLocationKeys, stopLocation } from './location.ts';
-import { runHosScenario } from './hosemu.ts';
+import { findHosEmulatorPid, runHosScenario, stopHosAvd } from './hosemu.ts';
 
 /**
  * 药丸窗口：模拟器屏幕右侧的竖向胶囊操作条（Electron 无边框小窗）。
@@ -429,7 +429,7 @@ const KEYCODES: Partial<Record<PillAction, number>> = {
 };
 
 /** 药丸按钮动作：按键走 adb，旋转走模拟器控制台（adb emu），截图存到数据目录；
- *  powerLong（长按电源 3 秒）尝试关闭这台虚拟机 */
+ *  powerLong（长按电源 3 秒）关机这台虚拟机（guest 内断电，不落快照） */
 export async function handlePillAction(
   sdk: SdkInfo,
   dataRoot: string,
@@ -439,8 +439,8 @@ export async function handlePillAction(
   if (action === 'powerLong') {
     const entry = listRunning().find((e) => e.serial === serial);
     if (!entry) return { ok: false, error: '虚拟机未在运行' };
-    const { stopEmulator } = await import('./emulator.ts');
-    const stopped = await stopEmulator(sdk, entry).catch(() => false);
+    const { powerOffEmulator } = await import('./emulator.ts');
+    const stopped = await powerOffEmulator(sdk, entry).catch(() => false);
     return { ok: stopped };
   }
   const code = KEYCODES[action];
@@ -519,13 +519,12 @@ export async function handleHosPillAction(
   if (!target) return { ok: false, error: '虚拟机未在运行' };
   const { emu, name } = target;
   if (action === 'powerLong') {
-    const res = await run(emu, ['-stop', name], { timeoutMs: 60_000 }).catch(
-      () => undefined,
-    );
-    return {
-      ok: !!res && res.code === 0,
-      error: res && res.code !== 0 ? res.stderr.trim() : undefined,
-    };
+    try {
+      await powerOffHosAvd(emu, name, target.hdc);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
   }
   if (action === 'screenshot') {
     return captureHosScreenshot(target, dataRoot);
@@ -604,6 +603,36 @@ async function hdcTargetOfPid(pid: number, hdc: string): Promise<string | undefi
     if (m && ports.has(Number(m[2]))) return target;
   }
   return undefined;
+}
+
+/** HarmonyOS 真关机：guest 内关机命令让系统断电，模拟器进程随 guest 退出，
+ *  下次冷启动（-stop 是保存状态的休眠退出）。hdc 通道不可用、guest 拒绝或
+ *  模拟器不随 guest 退出时，退回 -stop 保证进程结束，最差也是原有休眠行为 */
+export async function powerOffHosAvd(
+  emu: string,
+  name: string,
+  hdc?: string,
+): Promise<void> {
+  const pid = await findHosEmulatorPid(name);
+  const serial = pid && hdc ? await hdcTargetOfPid(pid, hdc) : undefined;
+  if (!pid || !hdc || !serial) {
+    await stopHosAvd(emu, name);
+    return;
+  }
+  const attempts: string[][] = [
+    ['-t', serial, 'target', 'boot', 'shutdown'],
+    ['-t', serial, 'shell', 'reboot', '-p'],
+    ['-t', serial, 'shell', 'reboot', 'shutdown'],
+  ];
+  for (const args of attempts) {
+    await run(hdc, args, { timeoutMs: 10_000 }).catch(() => undefined);
+    // guest 断电到主进程退出要等动画与落盘，逐条命令给 30 秒
+    for (let i = 0; i < 15; i++) {
+      if (!(await findHosEmulatorPid(name))) return;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  await stopHosAvd(emu, name);
 }
 
 async function captureHosScreenshot(

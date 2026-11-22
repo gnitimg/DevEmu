@@ -6,7 +6,7 @@ import { adbDevices, avdNameOf, screenshot as adbScreenshot } from './adb.ts';
 import { detectHarmony, harmonyTargets } from './harmony.ts';
 import { detectSdk } from './sdk.ts';
 import { loadAppSettings } from './settings.ts';
-import { launchEmulator, stopEmulator, findRunning } from './emulator.ts';
+import { launchEmulator, powerOffEmulator, findRunning } from './emulator.ts';
 import { killEmulatorProcess } from './win.ts';
 import { scopeKey } from './env.ts';
 import type { HarmonyInfo, SdkInfo, Scope } from './types.ts';
@@ -407,10 +407,10 @@ async function stopEmulatorOp(avdName: string, scope?: string): Promise<void> {
   const sc = parseScopeArg(scope);
   const entry = findRunning(scopeKey(sc), avdName);
   if (entry) {
-    await stopEmulator(sdk, entry);
+    await powerOffEmulator(sdk, entry);
     return;
   }
-  // 控制桥在应用重启后会丢失运行注册表：按 adb 兜底关闭
+  // 控制桥在应用重启后会丢失运行注册表：按 adb 兜底真关机
   const devices = await adbDevices(sdk.adb);
   const targets: string[] = [];
   for (const d of devices) {
@@ -421,11 +421,11 @@ async function stopEmulatorOp(avdName: string, scope?: string): Promise<void> {
   }
   if (targets.length === 0) throw new Error('该虚拟机未在运行');
   for (const serial of targets) {
-    await run(sdk.adb, ['-s', serial, 'emu', 'kill'], {
+    await run(sdk.adb, ['-s', serial, 'shell', 'reboot', '-p'], {
       timeoutMs: 8000,
     }).catch(() => undefined);
   }
-  // 等 qemu 自行退出（快照保存大内存 AVD 可超 20 秒）再兜底强杀
+  // guest 断电到 qemu 退出实测 20 秒上下，超时才兜底强杀（也不落快照）
   const matchSet = new Set(targets);
   let still = true;
   for (let i = 0; i < 40; i++) {
