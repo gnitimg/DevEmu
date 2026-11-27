@@ -3,6 +3,7 @@ import path from 'node:path';
 import { run } from './exec.ts';
 import { scopeDirs, scopeEnv } from './env.ts';
 import { cmdlineTool } from './sdk.ts';
+import { findSkinDir } from './skin.ts';
 import type { AvdInfo, DeviceDef, Scope, SdkInfo } from './types.ts';
 
 /** 虚拟机名白名单：外部工具（Android Studio 等）可创建超长名，上限放到 100
@@ -132,26 +133,66 @@ export function prepareEmulatorSkin(
   avdName: string,
   config: Record<string, string>,
 ): string[] {
-  const candidates = [config['skin.path']];
-  for (const name of [config['skin.name'], config['hw.device.name']]) {
-    if (name && /^[\w.-]+$/.test(name) && name !== '.' && name !== '..')
-      candidates.push(path.join(sdkRoot, 'skins', name));
+  const dir = findSkinDir(sdkRoot, config);
+  if (!dir) return [];
+  // Qt 的轮廓与屏幕遮罩另读 AVD 配置，单传 -skin 只会加载机身背景。
+  // 补写失败必须抛错中止启动（avd.test.ts:83 既定口径）：缺遮罩的窗口
+  // 显示异常比启动失败更难排查
+  if (config['skin.path'] !== dir) patchAvdConfig(avdHome, avdName, { 'skin.path': dir });
+  return ['-skin', path.basename(dir), '-skindir', path.dirname(dir)];
+}
+
+/** 本应用自己的虚拟机偏好。config.ini 由模拟器退出时回写，自定义键保不住，
+ *  所以放 .avd 目录内的旁挂文件（与 .cold-boot-required 标记同一模式）：
+ *  随虚拟机改名、删除一起走，模拟器不会碰 */
+export interface AvdPrefs {
+  /** 截图录屏带边框 */
+  captureFrame: boolean;
+}
+
+const PREFS_FILE = 'devemu.json';
+
+function avdPrefsPath(dataRoot: string, scope: Scope, name: string): string {
+  return path.join(scopeDirs(dataRoot, scope).avdHome, `${name}.avd`, PREFS_FILE);
+}
+
+export function readAvdPrefs(dataRoot: string, scope: Scope, name: string): AvdPrefs {
+  // 没有偏好文件、文件损坏都按默认处理
+  if (!AVD_NAME_RE.test(name)) return { captureFrame: false };
+  try {
+    const raw = JSON.parse(fs.readFileSync(avdPrefsPath(dataRoot, scope, name), 'utf8')) as {
+      captureFrame?: unknown;
+    };
+    return { captureFrame: raw.captureFrame === true };
+  } catch {
+    return { captureFrame: false };
   }
-  for (const dir of candidates) {
-    if (!dir || !path.isAbsolute(dir)) continue;
-    try {
-      if (!fs.statSync(path.join(dir, 'layout')).isFile()) continue;
-    } catch {
-      // SDK 迁移后旧 skin.path 可能失效，继续按机型查找。
-      continue;
-    }
-    // Qt 的轮廓与屏幕遮罩另读 AVD 配置，单传 -skin 只会加载机身背景。
-    // 补写失败必须抛错中止启动（avd.test.ts:83 既定口径）：缺遮罩的窗口
-    // 显示异常比启动失败更难排查
-    if (config['skin.path'] !== dir) patchAvdConfig(avdHome, avdName, { 'skin.path': dir });
-    return ['-skin', path.basename(dir), '-skindir', path.dirname(dir)];
+}
+
+/** 写入虚拟机偏好（只改给出的项）；虚拟机不存在或写不进去时报错 */
+export function writeAvdPrefs(
+  dataRoot: string,
+  scope: Scope,
+  name: string,
+  patch: Partial<AvdPrefs>,
+): { ok: boolean; error?: string } {
+  if (!AVD_NAME_RE.test(name)) return { ok: false, error: '非法的虚拟机名称' };
+  const file = avdPrefsPath(dataRoot, scope, name);
+  if (!fs.existsSync(path.dirname(file)))
+    return { ok: false, error: '虚拟机不存在' };
+  try {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ ...readAvdPrefs(dataRoot, scope, name), ...patch }, null, 2),
+      'utf8',
+    );
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      error: `写入虚拟机偏好失败：${e instanceof Error ? e.message : String(e)}`,
+    };
   }
-  return [];
 }
 
 export interface AvdHardware {

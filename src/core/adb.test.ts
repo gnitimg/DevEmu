@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mobileConnected, parseDecorOverlays, parseDevices, parseWmSize, portalProbeApplied, stripToPng, translateInstallError, wifiDisabled } from './adb.ts';
+import { mobileConnected, parseDecorOverlays, parseDevices, parseWmSize, pngSize, portalProbeApplied, stripToPng, translateInstallError, wifiDisabled } from './adb.ts';
 
 const DEVICES_OUTPUT = `List of devices attached
 emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1
@@ -71,6 +71,17 @@ test('stripToPng 剥离 screencap 混入 stdout 的警告前缀', () => {
 
 test('stripToPng 无 PNG 数据时抛错', () => {
   assert.throws(() => stripToPng(Buffer.from('stdout without image data')), /PNG/);
+});
+
+test('pngSize 读 IHDR 的宽高，非 PNG 或数据不足返回 undefined', () => {
+  const ihdr = Buffer.alloc(17);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write('IHDR', 4, 'ascii');
+  ihdr.writeUInt32BE(1080, 8);
+  ihdr.writeUInt32BE(2400, 12);
+  assert.deepEqual(pngSize(Buffer.concat([PNG_SIG, ihdr])), { width: 1080, height: 2400 });
+  assert.equal(pngSize(Buffer.concat([Buffer.from('junk'), PNG_SIG, ihdr])), undefined);
+  assert.equal(pngSize(Buffer.concat([PNG_SIG, ihdr.subarray(0, 10)])), undefined);
 });
 
 test('portalProbeApplied 判断探测源是否已生效', () => {

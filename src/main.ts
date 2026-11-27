@@ -5,6 +5,7 @@ import { appendLog } from './core/log.ts';
 import { loadAppSettings } from './core/settings.ts';
 import { stopAllLocations } from './core/location.ts';
 import { stopWindowGuards } from './core/win.ts';
+import { finalizeCaptures } from './core/capture.ts';
 
 // 运行日志统一写 <dataRoot>/logs/app.log；dataRoot 每次现读，重置后也能拿到最新值
 function logLine(line: string): void {
@@ -118,10 +119,15 @@ function startMain(): void {
     if (shutdownStarted) return;
     event.preventDefault();
     shutdownStarted = true;
-    void stopAllLocations().finally(() => {
-      stopWindowGuards();
-      app.quit();
-    });
+    // 在录的录屏先收尾落盘（有上限，不拖住退出），再走原有的收尾
+    void finalizeCaptures(4000)
+      .catch(() => undefined)
+      .finally(() =>
+        stopAllLocations().finally(() => {
+          stopWindowGuards();
+          app.quit();
+        }),
+      );
   });
 }
 

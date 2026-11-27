@@ -112,6 +112,8 @@ import {
   getAvdHardware,
   renameAvd,
   markAvdWipe,
+  readAvdPrefs,
+  writeAvdPrefs,
   AVD_NAME_RE,
   type AvdHardware,
 } from './core/avd.ts';
@@ -145,10 +147,22 @@ import {
   openLocationPanel,
   openPill,
   powerOffHosAvd,
+  sendToPill,
   startHosPillMove,
   startPillMove,
   type PillAction,
 } from './core/shell.ts';
+import {
+  captureEventFrom,
+  captureFrameSupported,
+  captureHooks,
+  captureRecordingSerials,
+  captureStatus,
+  captureToggle,
+  saveScreenshot,
+  stopCapture,
+} from './core/capture.ts';
+import { captureDirs, mediaRoot } from './core/media.ts';
 import {
   locationStatus,
   nudgeLocation,
@@ -907,6 +921,23 @@ export function registerIpc(): void {
     imagesEmulatorsBusy(bootSettings.dataRoot),
     '启动对齐',
   );
+  // 录屏工作窗 → 主进程的唯一入口；别处的渲染进程冒充不了
+  ipcMain.on('capture:event', (event, payload: unknown) =>
+    captureEventFrom(event.sender, payload),
+  );
+  captureHooks({
+    // 主窗按广播同步界面；药丸窗不消费广播，按串号单发
+    onState: (state) => {
+      broadcast('capture:state', state);
+      sendToPill(state.serial, 'capture:state', state);
+    },
+    onSaved: (result, endedByDevice) =>
+      broadcast('capture:saved', {
+        file: result.file,
+        warning: result.warning,
+        endedByDevice,
+      }),
+  });
   handle('env:status', () => {
     const settings = loadAppSettings();
     const sdk = detectSdk(settings.sdkPath);
@@ -1195,6 +1226,7 @@ export function registerIpc(): void {
       cameraMode?: string;
       webcam?: string;
       pillEnabled?: boolean;
+      mediaDir?: string;
       proxyEnabled?: boolean;
       proxyPort?: number;
       androidDownloadRoute?: string;
@@ -1233,6 +1265,14 @@ export function registerIpc(): void {
     const parallel = Number(s.parallelDownloads);
     // agent 桥字段由 agent:apply 单独管理，普通设置保存不覆盖
     const agent = loadAppSettings();
+    // 图像存储位置：给出时须是绝对路径，空串表示改回数据根下的 media；
+    // 不携带该字段时保持现值
+    const mediaDir =
+      typeof s.mediaDir === 'string'
+        ? path.isAbsolute(s.mediaDir.trim()) && !/[<>"|?*]/.test(s.mediaDir)
+          ? path.resolve(s.mediaDir.trim())
+          : undefined
+        : agent.mediaDir;
     const pillWasOn = agent.pillEnabled !== false;
     const pillOn = s.pillEnabled !== false;
     // 数据根变更：先随迁全部数据再切换；迁不完（源被占用）则放弃切换，避免数据两边分裂后被当成已迁移
@@ -1304,6 +1344,7 @@ export function registerIpc(): void {
       cameraMode,
       webcam,
       pillEnabled: pillOn,
+      mediaDir,
       proxyEnabled: s.proxyEnabled === true,
       proxyPort,
       androidDownloadRoute: routeOf(s.androidDownloadRoute),
@@ -1450,12 +1491,12 @@ export function registerIpc(): void {
   handle('storage:info', () => {
     const settings = loadAppSettings();
     return ok({
-      items: storageItems(settings.dataRoot),
+      items: storageItems(settings),
       avdCount: countAllAvds(settings.dataRoot),
     });
   });
 
-  // 在资源管理器中定位文件；仅允许数据目录内的条目，防任意路径打开
+  // 在资源管理器中定位文件；仅允许数据目录与图像存储位置内的条目，防任意路径打开
   handle('storage:reveal', (rawPath: unknown) => {
     if (typeof rawPath !== 'string' || !rawPath) return fail('参数错误');
     const settings = loadAppSettings();
@@ -1466,10 +1507,15 @@ export function registerIpc(): void {
     };
     if (
       !underRoot(settings.dataRoot) &&
+      !underRoot(mediaRoot(settings)) &&
       resolved !== path.resolve(settingsPath(defaultDataRoot()))
     ) {
       return fail('路径不在数据目录内');
     }
+    // 截图/录屏目录用到才建：没存过东西时"打开位置"也要打得开
+    const media = captureDirs(settings);
+    if (resolved === path.resolve(media.imgs) || resolved === path.resolve(media.videos))
+      fs.mkdirSync(resolved, { recursive: true });
     shell.showItemInFolder(resolved);
     return ok(true);
   });
@@ -2239,7 +2285,7 @@ export function registerIpc(): void {
     }
     if (isHosPillSerial(serial)) {
       const result = await handleHosPillAction(
-        settings.dataRoot,
+        settings,
         serial,
         rawAction as PillAction,
       );
@@ -2252,20 +2298,66 @@ export function registerIpc(): void {
     if (!sdk) return fail('未检测到 Android SDK');
     if (!serial.startsWith('emulator-')) return fail('非法参数');
     // 必须 await：Promise 不能塞进返回对象（Electron 结构化克隆会抛 cannot be cloned）
-    const result = await handlePillAction(
-      sdk,
-      settings.dataRoot,
-      serial,
-      rawAction as PillAction,
-    );
+    const result = await handlePillAction(sdk, serial, rawAction as PillAction);
     // 与 HOS 分支同口径留痕：Android 分支以 {ok:false} 返回而非抛错，handle
     // 包装器的 appendLog 兜不到
-    if (!result.ok)
+    if (!result.ok) {
       appendLog(
         settings.dataRoot,
         `Android 药丸动作 ${rawAction} 失败：${result.error ?? '未知错误'}`,
       );
+      return ok(result);
+    }
+    // 截图落盘在这里（贴边框要走录屏工作窗，药丸动作本身只管取图）
+    if (result.png) {
+      const file = await saveScreenshot(sdk, settings, serial, result.png);
+      return ok({ ok: true, savedTo: file });
+    }
     return ok(result);
+  });
+  // ---------- 录屏（仅 Android；HarmonyOS 暂不支持） ----------
+  handle('capture:toggle', async (rawSerial: unknown) => ok(await captureToggle(rawSerial)));
+  handle('capture:status', (rawSerial: unknown) =>
+    ok(captureStatus(typeof rawSerial === 'string' ? rawSerial : '')),
+  );
+  // 药丸等辅助窗口没有提示组件：把提示投递到主窗口右上角的弹窗
+  handle('app:notify', (rawMsg: unknown, rawKind: unknown) => {
+    if (typeof rawMsg !== 'string' || !rawMsg) return fail('非法参数');
+    broadcast('toast:show', { msg: rawMsg.slice(0, 300), kind: rawKind === 'ok' ? 'ok' : 'err' });
+    return ok(true);
+  });
+
+  // ---------- 虚拟机偏好（截图录屏是否带边框）：运行中也能改，下一次截图/录屏即生效 ----------
+  handle('avd:prefs', (rawScope: unknown, name: unknown) => {
+    const scope = parseScope(rawScope);
+    const { sdk, settings } = status();
+    if (!scope || typeof name !== 'string' || !AVD_NAME_RE.test(name))
+      return fail('非法参数');
+    const { dataRoot } = settings;
+    const avdDir = path.join(scopeDirs(dataRoot, scope).avdHome, `${name}.avd`);
+    if (!fs.existsSync(avdDir)) return fail('虚拟机不存在');
+    // 没有皮肤的机型贴不了边框，设置页据此不显示这个选项
+    return ok({
+      ...readAvdPrefs(dataRoot, scope, name),
+      frameAvailable: !!sdk && captureFrameSupported(sdk, dataRoot, scope, name),
+    });
+  });
+  handle('avd:setPrefs', (rawScope: unknown, name: unknown, rawPatch: unknown) => {
+    const scope = parseScope(rawScope);
+    if (!scope || typeof name !== 'string' || !AVD_NAME_RE.test(name))
+      return fail('非法参数');
+    const raw = rawPatch && typeof rawPatch === 'object' ? (rawPatch as Record<string, unknown>) : {};
+    if (raw.captureFrame !== undefined && typeof raw.captureFrame !== 'boolean')
+      return fail('非法参数');
+    // 只写给出的项：把没给的混进去会把已有偏好冲掉
+    return ok(
+      writeAvdPrefs(
+        loadAppSettings().dataRoot,
+        scope,
+        name,
+        typeof raw.captureFrame === 'boolean' ? { captureFrame: raw.captureFrame } : {},
+      ),
+    );
   });
   handle('pill:move-start', (rawSerial: unknown) => {
     const serial = typeof rawSerial === 'string' ? rawSerial : '';
@@ -2627,6 +2719,10 @@ export function registerIpc(): void {
             closePill(serial);
             closeLocationPanel(serial);
           }
+        }
+        // 设备已下线却还在录（帧流自己断开是主路径，这里兜底）
+        for (const serial of captureRecordingSerials()) {
+          if (!result.some((r) => r.serial === serial)) stopCapture(serial, '虚拟机已断开');
         }
         // 回收已下线设备的缓存（端口可能被新实例复用）
         for (const serial of [...avdNameCache.keys(), ...pillRetryAt.keys()]) {

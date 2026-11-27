@@ -20,6 +20,8 @@ export interface Settings {
   webcam?: string;
   /** 模拟器操作中心（屏幕右侧药丸工具条），默认启用 */
   pillEnabled?: boolean;
+  /** 截图与录屏的根目录；缺省为 <数据根>\media（截图进 imgs、录屏进 videos） */
+  mediaDir?: string;
   /** 设备网络代理 */
   proxyEnabled?: boolean;
   proxyPort?: number;

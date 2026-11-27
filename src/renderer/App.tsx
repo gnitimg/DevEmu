@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logoUrl from '../../assets/icon.png';
 import usageMd from '../../assets/docs/usage.md?raw';
-import { api, onAutoInstall, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onUpdateAvailable, onUpdateDownloaded, onUpdateError, onUpdatePatch, onUpdateProgress, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
+import { api, onAutoInstall, onCaptureSaved, onDownloadsChanged, onEnvChanged, onHuaweiChanged, onUpdateAvailable, onUpdateDownloaded, onUpdateError, onUpdatePatch, onUpdateProgress, onToast, onWinMaximized, type DownloadItem, type EmuDevice, type HarmonyInfo, type Scope } from './api.ts';
+import { baseName } from './format.ts';
 import { Projects } from './pages/Projects.tsx';
 import { ProjectDetail } from './pages/ProjectDetail.tsx';
 import { DevicePool } from './pages/DevicePool.tsx';
@@ -215,6 +216,19 @@ export function App() {
         : { kind: 'project', projectId: deviceScope },
     [deviceScope],
   );
+
+  // 录屏收尾后的提示：可能是在药丸窗口里点的，所以由主进程广播过来统一在这里弹
+  useEffect(
+    () =>
+      onCaptureSaved((info) => {
+        const name = baseName(info.file);
+        toast(info.warning ? `${info.warning}，已保存：${name}` : `录屏已保存：${name}`, info.warning ? 'err' : 'ok');
+      }),
+    [],
+  );
+
+  // 辅助窗口（药丸等）投递来的提示
+  useEffect(() => onToast((info) => toast(info.msg, info.kind)), []);
 
   // 设备启动完成后的自动补装结果：失败逐个提示，成功汇总一条
   useEffect(

@@ -3,6 +3,8 @@ import path from 'node:path';
 import { defaultDataRoot, settingsPath } from './settings.ts';
 import { agentScriptFile } from './agent.ts';
 import { logFile } from './log.ts';
+import { captureDirs } from './media.ts';
+import type { Settings } from './types.ts';
 
 export interface StorageItem {
   id: string;
@@ -10,11 +12,17 @@ export interface StorageItem {
   path: string;
 }
 
-/** 设置页“文件位置”清单：常用文件的存放位置（只读展示 + 一键打开） */
-export function storageItems(dataRoot: string): StorageItem[] {
+/** 设置页”文件位置”清单：常用文件的存放位置（只读展示 + 一键打开） */
+export function storageItems(
+  settings: Pick<Settings, 'dataRoot' | 'mediaDir'>,
+): StorageItem[] {
+  const dataRoot = settings.dataRoot;
+  const media = captureDirs(settings);
   return [
     { id: 'settings', label: '设置文件', path: settingsPath(defaultDataRoot()) },
     { id: 'logs', label: '应用日志', path: logFile(dataRoot) },
+    { id: 'imgs', label: '截图', path: media.imgs },
+    { id: 'videos', label: '录屏', path: media.videos },
     { id: 'downloads', label: '下载记录', path: path.join(dataRoot, 'downloads.json') },
     { id: 'agent', label: 'Agent 接入脚本', path: agentScriptFile(dataRoot) },
     { id: 'avd', label: '共享虚拟机', path: path.join(dataRoot, 'devices', 'avd') },

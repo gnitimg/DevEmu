@@ -3,13 +3,25 @@
  * 通过 hash 路由挂载（#pill?serial=emulator-5554），复用主应用的 preload 桥。
  * 透明窗口 + CSS 胶囊圆角，深色玻璃质感、描边图标。
  */
+import { formatElapsed } from '../renderer/format.ts';
 
 type PillActionId = 'power' | 'powerLong' | 'volup' | 'voldown' | 'screenshot' | 'rotate' | 'back' | 'home' | 'recents';
+
+interface CaptureState {
+  serial: string;
+  recording: boolean;
+  since?: number;
+}
+
 
 interface PillBridge {
   pillAction: (serial: string, action: PillActionId) => Promise<unknown>;
   pillMoveStart: (serial: string) => Promise<unknown>;
   pillOpenLocation: (serial: string) => Promise<unknown>;
+  captureToggle: (serial: string) => Promise<{ ok: boolean; error?: string } | undefined>;
+  captureStatus: (serial: string) => Promise<CaptureState | undefined>;
+  onCaptureState?: (cb: (state: CaptureState) => void) => () => void;
+  notify: (msg: string, kind?: 'err' | 'ok') => Promise<unknown>;
 }
 
 function bridge(): PillBridge {
@@ -17,8 +29,9 @@ function bridge(): PillBridge {
 }
 
 const STROKE = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
-// 竖排圆形按钮（上→下）：电源 / 音量+ / 音量- / 截图 / 旋转 / 定位 / 返回 / 桌面 / 多任务
-type PillButton = { id: PillActionId | 'location'; title: string; svg: string };
+// 竖排圆形按钮（上→下）：电源 / 音量+ / 音量- / 截图 / 录屏 / 旋转 / 定位 / 返回 / 桌面 / 多任务
+type PillButton = { id: PillActionId | 'location' | 'record'; title: string; svg: string };
+const RECORD_SVG = `<circle cx="12" cy="12" r="8.5" ${STROKE}/><circle cx="12" cy="12" r="3.8" fill="currentColor"/>`;
 const BUTTONS: PillButton[] = [
   {
     id: 'power',
@@ -39,6 +52,11 @@ const BUTTONS: PillButton[] = [
     id: 'screenshot',
     title: '截图',
     svg: `<rect x="3.5" y="7" width="17" height="12.5" rx="2.6" ${STROKE}/><circle cx="12" cy="13.2" r="3.4" ${STROKE}/><path d="M9.2 7l1.4-2.3h2.8L14.8 7" ${STROKE}/>`,
+  },
+  {
+    id: 'record',
+    title: '录屏',
+    svg: RECORD_SVG,
   },
   {
     id: 'rotate',
@@ -141,6 +159,35 @@ body.pill-body { user-select: none; font-family: 'Segoe UI Variable', 'Segoe UI'
   transition: background 0.16s ease;
 }
 .pill-grip:hover span { background: rgba(255, 255, 255, 0.6); }
+/* 录制中：红点呼吸 + 计时，按钮本身常亮红底 */
+.pill-btn.recording {
+  color: #ff5f57;
+  background: rgba(255, 95, 87, 0.16);
+}
+.pill-btn.recording:hover { background: rgba(255, 95, 87, 0.26); }
+.pill-rec {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+.pill-rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff5f57;
+  animation: pillRecBlink 1.2s ease-in-out infinite;
+}
+.pill-rec-time {
+  font-size: 9px;
+  line-height: 10px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes pillRecBlink {
+  50% { opacity: 0.3; }
+}
 `;
 
 /** 挂载药丸 UI（入口在 hash 以 #pill 开头时调用） */
@@ -148,7 +195,8 @@ export function renderPill(): void {
   const params = new URLSearchParams(location.hash.includes('?') ? location.hash.slice(location.hash.indexOf('?') + 1) : '');
   const serial = params.get('serial') ?? '';
   const kind = params.get('kind') === 'hos' ? 'hos' : 'android';
-  const buttons = BUTTONS;
+  // 录屏只做了 Android：HarmonyOS 的药丸不出这个按钮
+  const buttons = kind === 'hos' ? BUTTONS.filter((b) => b.id !== 'record') : BUTTONS;
 
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -203,6 +251,51 @@ export function renderPill(): void {
       });
       btn.addEventListener('pointerleave', () => {
         if (!longFired) cancelPress();
+      });
+    } else if (b.id === 'record') {
+      // 录屏状态由主进程掌握（药丸窗口会重建）：进来先问一次，之后跟事件走
+      let recSince = 0;
+      let recTimer = 0;
+      const paintRecord = (on: boolean, since?: number) => {
+        btn.classList.toggle('recording', on);
+        btn.title = on ? '停止录屏' : '录屏';
+        btn.setAttribute('aria-label', btn.title);
+        window.clearInterval(recTimer);
+        if (!on) {
+          btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${RECORD_SVG}</svg>`;
+          return;
+        }
+        recSince = since ?? Date.now();
+        btn.innerHTML = '<span class="pill-rec"><span class="pill-rec-dot"></span><span class="pill-rec-time"></span></span>';
+        const time = btn.querySelector('.pill-rec-time');
+        const tick = () => {
+          if (time) time.textContent = formatElapsed(Date.now() - recSince);
+        };
+        tick();
+        recTimer = window.setInterval(tick, 1000);
+      };
+      bridge()
+        .captureStatus(serial)
+        .then((state) => {
+          if (state?.recording) paintRecord(true, state.since);
+        })
+        .catch(() => undefined);
+      bridge().onCaptureState?.((state) => {
+        if (state.serial === serial) paintRecord(state.recording, state.since);
+      });
+      btn.addEventListener('click', () => {
+        if (btn.classList.contains('busy')) return;
+        btn.classList.add('busy');
+        bridge()
+          .captureToggle(serial)
+          .then((reply) => {
+            // 药丸窗没有提示组件：失败原因投递到主窗口去弹
+            if (reply && !reply.ok) void bridge().notify(reply.error ?? '录屏失败', 'err').catch(() => undefined);
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            setTimeout(() => btn.classList.remove('busy'), 300);
+          });
       });
     } else if (b.id === 'location') {
       btn.addEventListener('click', () => {

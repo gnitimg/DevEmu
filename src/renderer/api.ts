@@ -467,6 +467,12 @@ export const api = {
     call<boolean>('uninstall', scope, apkId, serial),
   listCrashes: (scope: Scope) => call<CrashRecord[]>('listCrashes', scope),
   readCrash: (scope: Scope, id: string) => call<string>('readCrash', scope, id),
+  captureToggle: (serial: string) => call<CaptureReply>('captureToggle', serial),
+  captureStatus: (serial: string) => call<CaptureState>('captureStatus', serial),
+  notify: (msg: string, kind?: 'err' | 'ok') => call<boolean>('notify', msg, kind),
+  avdPrefs: (scope: Scope, name: string) => call<AvdPrefs>('avdPrefs', scope, name),
+  setAvdPrefs: (scope: Scope, name: string, patch: { captureFrame?: boolean }) =>
+    call<OpResult>('setAvdPrefs', scope, name, patch),
   agentStatus: () => call<AgentStatus>('agentStatus'),
   agentApply: (enabled: boolean, port?: number) =>
     call<AgentStatus>('agentApply', { enabled, port }),
@@ -506,6 +512,51 @@ export type StorageItem = {
   path: string;
 };
 export type StorageInfo = { items: StorageItem[]; avdCount: number };
+
+/** 录屏状态与结果（与主进程 captureSession 同形） */
+export type CaptureState = { serial: string; recording: boolean; since?: number; file?: string };
+export type CaptureResult = {
+  file: string;
+  bytes: number;
+  durationMs: number;
+  frames: number;
+  warning?: string;
+};
+/** 录屏开关的应答：开录成功回报文件，停录成功带结果；失败给原因 */
+export type CaptureReply =
+  | { ok: true; recording: boolean; file?: string; result?: CaptureResult }
+  | { ok: false; error: string };
+export type CaptureSavedInfo = { file: string; warning?: string; endedByDevice: boolean };
+
+/** 虚拟机自己的偏好：frameAvailable 为 false 的机型没有皮肤，贴不了边框 */
+export type AvdPrefs = { captureFrame: boolean; frameAvailable: boolean };
+
+export function onCaptureState(cb: (state: CaptureState) => void): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onCaptureState?: (cb: (state: unknown) => void) => () => void };
+    }
+  ).devemu.onCaptureState;
+  return fn ? fn((state) => cb(state as CaptureState)) : () => undefined;
+}
+
+export function onCaptureSaved(cb: (info: CaptureSavedInfo) => void): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onCaptureSaved?: (cb: (info: unknown) => void) => () => void };
+    }
+  ).devemu.onCaptureSaved;
+  return fn ? fn((info) => cb(info as CaptureSavedInfo)) : () => undefined;
+}
+
+export function onToast(cb: (info: { msg: string; kind: 'err' | 'ok' }) => void): () => void {
+  const fn = (
+    window as unknown as {
+      devemu: { onToast?: (cb: (info: unknown) => void) => () => void };
+    }
+  ).devemu.onToast;
+  return fn ? fn((info) => cb(info as { msg: string; kind: 'err' | 'ok' })) : () => undefined;
+}
 
 /** Agent 控制桥状态（设置页 Agent 接入分区） */
 export type AgentStatus = {

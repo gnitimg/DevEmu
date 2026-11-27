@@ -41,6 +41,14 @@ test('settings cameraMode 往返保存加载', async () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('settings mediaDir 往返保存加载，缺省为空', async () => {
+  const root = tmpRoot();
+  assert.equal(loadSettings(root).mediaDir, undefined);
+  saveSettings({ dataRoot: root, mediaDir: 'D:\\截图' });
+  assert.equal(loadSettings(root).mediaDir, 'D:\\截图');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('settings 损坏时回退默认', async () => {
   const root = tmpRoot();
   fs.writeFileSync(settingsPath(root), '{broken json', 'utf8');
@@ -75,6 +83,7 @@ test('migrateDataRoot 全量随迁且源目录清空', async () => {
     [path.join('location', 'routes', 'r1.json'), 'route'],
     [path.join('location', 'prefs.json'), 'prefs'],
     [path.join('camera', 'screen.jpg'), 'jpg'],
+    [path.join('media', 'videos', 'v.mp4'), 'mp4'],
     [path.join('screenshots', 's.png'), 'png'],
     [path.join('sdk', 'system-images', 'android-36', 'google_apis_playstore', 'x86_64', 'system.img'), 'img'],
     ['downloads.json', 'dl'],
@@ -93,6 +102,7 @@ test('migrateDataRoot 全量随迁且源目录清空', async () => {
       'logs',
       'location',
       'camera',
+      'media',
       'screenshots',
       'sdk',
       'downloads.json',

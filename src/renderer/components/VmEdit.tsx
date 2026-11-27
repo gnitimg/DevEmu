@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type Scope } from '../api.ts';
+import { api, type AvdPrefs, type Scope } from '../api.ts';
 import { Modal } from './Modal.tsx';
 import { displayedStorageGb, rawStorageGb } from '../../core/storageUnits.ts';
 
@@ -103,6 +103,9 @@ export function EditVmModal({
   const [storage, setStorage] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // 截图录屏带边框：没有皮肤的机型贴不了，不显示开关
+  const [prefs, setPrefs] = useState<AvdPrefs | null>(null);
+  const [frameDraft, setFrameDraft] = useState(false);
 
   useEffect(() => {
     api.avdHardware(scope, avdName).then((r) => {
@@ -114,6 +117,12 @@ export function EditVmModal({
         setError('读取配置失败');
       } else {
         setError(r.error);
+      }
+    });
+    api.avdPrefs(scope, avdName).then((r) => {
+      if (r.ok) {
+        setPrefs(r.data);
+        setFrameDraft(r.data.captureFrame);
       }
     });
   }, [scope, avdName]);
@@ -132,6 +141,14 @@ export function EditVmModal({
     }
     setSaving(true);
     setError('');
+    if (prefs?.frameAvailable && frameDraft !== prefs.captureFrame) {
+      const pr = await api.setAvdPrefs(scope, avdName, { captureFrame: frameDraft });
+      if (!pr.ok || !pr.data.ok) {
+        setError(pr.ok ? pr.data.error ?? '保存失败' : pr.error);
+        setSaving(false);
+        return;
+      }
+    }
     // 容量入口暂缓：只提交内存与核数，避免把显示档位误写回分区
     const r = await api.setAvdHardware(scope, avdName, parseHwFields(ram, cores, ''));
     if (!r.ok || !r.data.ok) {
@@ -166,6 +183,19 @@ export function EditVmModal({
         setStorage={setStorage}
         storageReadOnly={storage ? `${storage} GB` : '—'}
       />
+      {prefs?.frameAvailable && (
+        <div className="form-row">
+          <label>截图录屏带边框</label>
+          <label className="switch-wrap">
+            <input
+              type="checkbox"
+              checked={frameDraft}
+              onChange={(e) => setFrameDraft(e.target.checked)}
+            />
+            开启
+          </label>
+        </div>
+      )}
       {error && <div className="error-line" style={{ border: 'none', padding: '0 0 0 1px' }}>{error}</div>}
     </Modal>
   );

@@ -12,9 +12,10 @@ import {
   onQemuGone,
 } from './win.ts';
 import { listRunning } from './emulator.ts';
-import type { SdkInfo } from './types.ts';
+import type { SdkInfo, Settings } from './types.ts';
 import { VM_GAP_DIP } from './windowGroup.ts';
 import { releaseLocationKeys, stopLocation } from './location.ts';
+import { captureStamp, ensureCaptureDir } from './media.ts';
 import { findHosEmulatorPid, runHosScenario, stopHosAvd } from './hosemu.ts';
 
 /**
@@ -60,6 +61,12 @@ const hosTargets = new Map<string, HosPillTarget>();
 
 export function hasPill(serial: string): boolean {
   return !!pills.get(serial) && !pills.get(serial)!.isDestroyed();
+}
+
+/** 给某台设备的药丸窗口发消息（没开药丸则无事发生） */
+export function sendToPill(serial: string, channel: string, payload: unknown): void {
+  const win = pills.get(serial);
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
 /** 当前开着药丸或定位面板的设备 serial（设备消失回收兜底用） */
@@ -428,14 +435,14 @@ const KEYCODES: Partial<Record<PillAction, number>> = {
   recents: 187,
 };
 
-/** 药丸按钮动作：按键走 adb，旋转走模拟器控制台（adb emu），截图存到数据目录；
+/** 药丸按钮动作：按键走 adb，旋转走模拟器控制台（adb emu），截图只管取图——
+ *  落盘与贴边框由调用方经 saveScreenshot 处理；
  *  powerLong（长按电源 3 秒）关机这台虚拟机（guest 内断电，不落快照） */
 export async function handlePillAction(
   sdk: SdkInfo,
-  dataRoot: string,
   serial: string,
   action: PillAction,
-): Promise<{ ok: boolean; savedTo?: string; error?: string }> {
+): Promise<{ ok: boolean; png?: Buffer; error?: string }> {
   if (action === 'powerLong') {
     const entry = listRunning().find((e) => e.serial === serial);
     if (!entry) return { ok: false, error: '虚拟机未在运行' };
@@ -466,17 +473,7 @@ export async function handlePillAction(
       error: res && res.code !== 0 ? res.stderr.trim() : undefined,
     };
   }
-  if (action === 'screenshot') {
-    const dir = path.join(dataRoot, 'screenshots');
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(
-      dir,
-      `${serial}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
-    );
-    const png = await screenshot(sdk.adb, serial);
-    fs.writeFileSync(file, png);
-    return { ok: true, savedTo: file };
-  }
+  if (action === 'screenshot') return { ok: true, png: await screenshot(sdk.adb, serial) };
   return { ok: false, error: '未知动作' };
 }
 
@@ -511,7 +508,7 @@ export function startHosPillMove(serial: string): boolean {
 
 /** HarmonyOS 药丸动作：走 Emulator.exe 场景模拟（电源/音量/旋转/截图/手势） */
 export async function handleHosPillAction(
-  dataRoot: string,
+  settings: Settings,
   serial: string,
   action: PillAction,
 ): Promise<{ ok: boolean; savedTo?: string; error?: string }> {
@@ -527,7 +524,7 @@ export async function handleHosPillAction(
     }
   }
   if (action === 'screenshot') {
-    return captureHosScreenshot(target, dataRoot);
+    return captureHosScreenshot(target, settings);
   }
   const nativeW = target.width || 1256;
   const nativeH = target.height || 2760;
@@ -637,10 +634,9 @@ export async function powerOffHosAvd(
 
 async function captureHosScreenshot(
   target: HosPillTarget,
-  dataRoot: string,
+  settings: Settings,
 ): Promise<{ ok: boolean; savedTo?: string; error?: string }> {
-  const dir = path.join(dataRoot, 'screenshots');
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = ensureCaptureDir(settings, 'imgs');
   const isPng = (f: string) => /\.png$/i.test(f);
   // 直接写截图目录：用独立临时目录时模拟器会长期占用目录句柄，删不掉只能泄漏
   const before = new Set(fs.readdirSync(dir).filter(isPng));
@@ -656,10 +652,7 @@ async function captureHosScreenshot(
     .map((f) => path.join(dir, f))
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
   if (!png) return { ok: false, error: '模拟器未生成截图（可能尚未完成启动）' };
-  const file = path.join(
-    dir,
-    `${target.name}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
-  );
+  const file = path.join(dir, `${target.name}-${captureStamp()}.png`);
   // 截图子进程退出后仍会短暂占用文件：Windows 下改名要等句柄释放
   for (let i = 0; i < 20; i++) {
     try {

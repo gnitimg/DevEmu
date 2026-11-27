@@ -79,6 +79,8 @@ export function Settings({
   sdkSystem?: 'android' | 'harmonyos';
 }) {
   const [dataRoot, setDataRoot] = useState('');
+  // 截图与录屏的根目录；空串表示用数据根下的 media
+  const [mediaDir, setMediaDir] = useState('');
   const [sdkPath, setSdkPath] = useState('');
   const [harmonyPath, setHarmonyPath] = useState('');
   const [javaPath, setJavaPath] = useState('');
@@ -132,6 +134,7 @@ export function Settings({
     if (env && !syncedOnce.current) {
       syncedOnce.current = true;
       setDataRoot(env.settings.dataRoot);
+      setMediaDir(env.settings.mediaDir ?? '');
       setSdkPath(env.settings.sdkPath ?? env.sdk?.root ?? '');
       setHarmonyPath(env.settings.harmonySdkPath ?? env.harmony?.sdkRoot ?? '');
       setJavaPath(env.settings.javaPath ?? env.java ?? '');
@@ -208,6 +211,7 @@ export function Settings({
       const port = Number(proxyPort);
       const r = await api.saveSettings({
         dataRoot: dataRoot.trim(),
+        mediaDir: mediaDir.trim(),
         sdkPath: sdkPath.trim() || undefined,
         javaPath: javaPath.trim() || undefined,
         harmonySdkPath: harmonyPath.trim() || undefined,
@@ -237,6 +241,7 @@ export function Settings({
     },
     [
       dataRoot,
+      mediaDir,
       sdkPath,
       harmonyPath,
       javaPath,
@@ -265,6 +270,7 @@ export function Settings({
     return () => clearTimeout(timer);
   }, [
     dataRoot,
+    mediaDir,
     sdkPath,
     harmonyPath,
     javaPath,
@@ -407,7 +413,7 @@ export function Settings({
     }
   }
 
-  type PickField = 'dataRoot' | 'sdkPath' | 'harmonyPath' | 'javaPath';
+  type PickField = 'dataRoot' | 'mediaDir' | 'sdkPath' | 'harmonyPath' | 'javaPath';
 
   /** 迁移数据：选目标目录 → 探测 <目录>\.data 状态 → 直接确认或三选 */
   async function startMigrate() {
@@ -462,6 +468,7 @@ export function Settings({
     touch();
     if (field === 'sdkPath') setSdkPath(dir);
     else if (field === 'harmonyPath') setHarmonyPath(dir);
+    else if (field === 'mediaDir') setMediaDir(dir);
     else setJavaPath(dir);
   }
 
@@ -482,6 +489,11 @@ export function Settings({
       }
       if (c.data.exists && !c.data.empty) setMigrateChoiceAsk({ target: c.data.target });
       else setMigrateAsk({ target: c.data.target });
+      return;
+    }
+    // 图像存储位置只换个目录，没有环境可检测
+    if (field === 'mediaDir') {
+      applyPick(field, r.data);
       return;
     }
     const kind = FIELD_KIND[field];
@@ -539,6 +551,10 @@ export function Settings({
       setter(v);
     };
 
+  // 输入框里显示实际生效的位置：没另选时是数据根下的 media
+  const mediaPath =
+    mediaDir.trim() || `${dataRoot.trim().replace(/[\\/]+$/, '')}\\media`;
+
   return (
     <div>
       <div className="page-head">
@@ -568,6 +584,29 @@ export function Settings({
                   <button
                     className="btn"
                     onClick={() => browse('dataRoot', '选择数据根目录')}
+                  >
+                    浏览
+                  </button>
+                </div>
+              </div>
+              <div className="settings-row">
+                <span className="settings-row-label">图像存储位置</span>
+                <div className="path-row">
+                  <input value={mediaPath} readOnly spellCheck={false} title={mediaPath} />
+                  {mediaDir.trim() !== '' && (
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        touch();
+                        setMediaDir('');
+                      }}
+                    >
+                      恢复默认
+                    </button>
+                  )}
+                  <button
+                    className="btn"
+                    onClick={() => void browse('mediaDir', '选择图像存储位置')}
                   >
                     浏览
                   </button>

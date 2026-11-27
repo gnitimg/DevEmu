@@ -1,7 +1,40 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { readSharedFrame } from './core/sharedFrame.ts';
+import { CAPTURE_ROLE_ARG } from './core/captureProtocol.ts';
+import type { CaptureCommand, CaptureEvent, FrameNotice } from './core/captureProtocol.ts';
 
 function invoke(channel: string): (...args: unknown[]) => Promise<unknown> {
   return (...args: unknown[]) => ipcRenderer.invoke(channel, ...args);
+}
+
+// 录屏工作窗多一层桥：收主进程的命令与帧通知，回传编码分块。
+// 与药丸/定位面板同一姿态——带全量 API 的自家窗口，靠拦导航做纵深防御。
+if (process.argv.includes(CAPTURE_ROLE_ARG)) {
+  let fsModule: Promise<typeof import('node:fs')> | undefined;
+  // node:fs 按需引入：这份 preload 也跑在沙箱化的主窗里，顶层引入会让它们全部加载失败
+  const loadFs = () =>
+    (fsModule ??= import(/* @vite-ignore */ 'node:fs').then(
+      (m) => (m.default ?? m) as typeof import('node:fs'),
+    ));
+  contextBridge.exposeInMainWorld('devemuCapture', {
+    onCommand: (cb: (cmd: CaptureCommand) => void) => {
+      const listener = (_e: unknown, cmd: CaptureCommand) => cb(cmd);
+      ipcRenderer.on('capture:command', listener);
+      return () => ipcRenderer.removeListener('capture:command', listener);
+    },
+    // 像素在共享文件里，由 preload 读好再过桥；读不到给 null
+    onFrame: (cb: (notice: FrameNotice, pixels: ArrayBuffer | null) => void) => {
+      const listener = (_e: unknown, notice: FrameNotice) => {
+        void loadFs().then(
+          (fs) => cb(notice, readSharedFrame(fs, notice)),
+          () => cb(notice, null),
+        );
+      };
+      ipcRenderer.on('capture:frame', listener);
+      return () => ipcRenderer.removeListener('capture:frame', listener);
+    },
+    send: (event: CaptureEvent) => ipcRenderer.send('capture:event', event),
+  });
 }
 
 contextBridge.exposeInMainWorld('devemu', {
@@ -147,6 +180,26 @@ contextBridge.exposeInMainWorld('devemu', {
   pillAction: invoke('pill:action'),
   pillMoveStart: invoke('pill:move-start'),
   pillOpenLocation: invoke('pill:open-location'),
+  captureToggle: invoke('capture:toggle'),
+  captureStatus: invoke('capture:status'),
+  onCaptureState: (cb: (state: unknown) => void) => {
+    const listener = (_e: unknown, state: unknown) => cb(state);
+    ipcRenderer.on('capture:state', listener);
+    return () => ipcRenderer.removeListener('capture:state', listener);
+  },
+  onCaptureSaved: (cb: (info: unknown) => void) => {
+    const listener = (_e: unknown, info: unknown) => cb(info);
+    ipcRenderer.on('capture:saved', listener);
+    return () => ipcRenderer.removeListener('capture:saved', listener);
+  },
+  onToast: (cb: (info: unknown) => void) => {
+    const listener = (_e: unknown, info: unknown) => cb(info);
+    ipcRenderer.on('toast:show', listener);
+    return () => ipcRenderer.removeListener('toast:show', listener);
+  },
+  notify: invoke('app:notify'),
+  avdPrefs: invoke('avd:prefs'),
+  setAvdPrefs: invoke('avd:setPrefs'),
   locationStart: invoke('location:start'),
   locationStop: invoke('location:stop'),
   locationPause: invoke('location:pause'),

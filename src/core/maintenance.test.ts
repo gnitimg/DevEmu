@@ -18,11 +18,13 @@ function tmpRoot(): string {
 
 test('storageItems 覆盖常用文件，设置文件固定在默认数据目录', () => {
   const root = tmpRoot();
-  const items = storageItems(root);
+  const items = storageItems({ dataRoot: root });
   const ids = items.map((i) => i.id);
   for (const id of [
     'settings',
     'logs',
+    'imgs',
+    'videos',
     'downloads',
     'agent',
     'avd',
@@ -35,6 +37,19 @@ test('storageItems 覆盖常用文件，设置文件固定在默认数据目录'
   assert.equal(byId.settings, settingsPath(defaultDataRoot()));
   assert.equal(byId.logs, logFile(root));
   assert.ok(byId.avd!.startsWith(root));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('storageItems 的截图与录屏位置跟着图像存储位置走', () => {
+  const root = tmpRoot();
+  const elsewhere = path.join(root, 'elsewhere');
+  const byId = Object.fromEntries(
+    storageItems({ dataRoot: root, mediaDir: elsewhere }).map((i) => [i.id, i.path]),
+  );
+  assert.equal(byId.imgs, path.join(elsewhere, 'imgs'));
+  assert.equal(byId.videos, path.join(elsewhere, 'videos'));
+  // 其余条目仍留在数据根
+  assert.equal(byId.logs, logFile(root));
   fs.rmSync(root, { recursive: true, force: true });
 });
 

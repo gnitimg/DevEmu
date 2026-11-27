@@ -92,6 +92,7 @@ export function loadSettings(dataRoot: string): Settings {
       cameraMode: parsed.cameraMode,
       webcam: parsed.webcam,
       pillEnabled: parsed.pillEnabled,
+      mediaDir: parsed.mediaDir,
       proxyEnabled: parsed.proxyEnabled,
       proxyPort: parsed.proxyPort,
       // 旧版单一 downloadRoute 迁移为 Android 线路
@@ -160,6 +161,8 @@ const MIGRATE_ITEMS = [
   'logs',
   'location',
   'camera',
+  // 截图与录屏（自定义了图像存储位置时该项不在数据根内，自然不随迁）
+  'media',
   'screenshots',
   // 重定向后的 Android 系统镜像根（sdkImages.ts 建链到此处），换数据根必须随迁
   'sdk',

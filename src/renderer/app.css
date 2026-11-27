@@ -868,6 +868,19 @@ table.tbl {
   animation: breathe 2s ease-in-out infinite;
 }
 
+/* 录屏按钮的录制指示 */
+.dot.rec {
+  background: var(--danger);
+  animation: breathe 1.2s ease-in-out infinite;
+}
+
+.btn-recording,
+.btn-recording:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-weak);
+}
+
 @keyframes breathe {
   0%,
   100% {
@@ -1221,6 +1234,17 @@ table.tbl {
 .form-row input,
 .form-row select {
   width: 100%;
+}
+
+/* 表单行里的开关不占满整行 */
+.form-row .switch-wrap {
+  display: flex;
+  width: auto;
+  margin: 0;
+}
+
+.form-row .switch-wrap input {
+  width: auto;
 }
 
 .form-hint {

@@ -96,6 +96,12 @@ export function stripToPng(data: Buffer): Buffer {
   return off === 0 ? data : data.subarray(off);
 }
 
+/** 读 PNG 的宽高（IHDR 紧跟签名）；不是 PNG 返回 undefined */
+export function pngSize(data: Buffer): { width: number; height: number } | undefined {
+  if (data.length < 24 || data.indexOf(PNG_SIG) !== 0) return undefined;
+  return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
+}
+
 export async function screenshot(adb: string, serial: string): Promise<Buffer> {
   const res = await run(adb, ['-s', serial, 'exec-out', 'screencap', '-p'], { timeoutMs: 30_000, binary: true });
   if (res.code !== 0 || res.stdout.length < 100) throw new Error('截图失败：设备未就绪');

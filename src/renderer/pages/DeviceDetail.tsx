@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, osFromImagePkg, prettyModel, scopeKeyOf, type EmuDevice, type Scope } from '../api.ts';
+import {
+  api,
+  onCaptureState,
+  osFromImagePkg,
+  prettyModel,
+  scopeKeyOf,
+  type AvdPrefs,
+  type EmuDevice,
+  type Scope,
+} from '../api.ts';
+import { formatElapsed } from '../format.ts';
 import { CrashesPanel } from '../components/CrashesPanel.tsx';
 import { DeviceAppsPanel } from '../components/DeviceAppsPanel.tsx';
 import { toast } from '../components/Toast.tsx';
@@ -36,6 +46,18 @@ export function DeviceDetail({
   const [cores, setCores] = useState('');
   const [storage, setStorage] = useState('');
   const [saving, setSaving] = useState(false);
+  // 本虚拟机的偏好：截图录屏是否带边框（没有皮肤的机型贴不了，不显示该行）
+  const [prefs, setPrefs] = useState<AvdPrefs | null>(null);
+  const [frameDraft, setFrameDraft] = useState(false);
+  // 录屏状态由主进程掌握：药丸里点的、这里点的，两边跟着同一份状态走
+  const [capture, setCapture] = useState<{
+    recording: boolean;
+    since?: number;
+    file?: string;
+  }>({ recording: false });
+  const [captureBusy, setCaptureBusy] = useState(false);
+  // 只为让计时文案每秒重渲染
+  const [captureNow, setCaptureNow] = useState(() => Date.now());
 
   const reload = useCallback(() => {
     api.listAvds(scope).then((r) => {
@@ -46,6 +68,9 @@ export function DeviceDetail({
     });
     api.avdHardware(scope, avdName).then((r) => {
       if (r.ok) setHw(r.data);
+    });
+    api.avdPrefs(scope, avdName).then((r) => {
+      if (r.ok) setPrefs(r.data);
     });
   }, [avdName, scope]);
 
@@ -77,6 +102,37 @@ export function DeviceDetail({
     }, Math.max(0, left));
     return () => clearTimeout(t);
   }, [run, starting]);
+
+  const captureSerial = run?.serial;
+  useEffect(() => {
+    if (!captureSerial) {
+      setCapture({ recording: false });
+      return;
+    }
+    api.captureStatus(captureSerial).then((r) => {
+      if (r.ok) setCapture({ recording: r.data.recording, since: r.data.since });
+    });
+    return onCaptureState((state) => {
+      if (state.serial === captureSerial)
+        setCapture({ recording: state.recording, since: state.since });
+    });
+  }, [captureSerial]);
+
+  useEffect(() => {
+    if (!capture.recording) return;
+    const timer = setInterval(() => setCaptureNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [capture.recording]);
+
+  async function toggleCapture() {
+    if (!captureSerial) return;
+    setCaptureBusy(true);
+    setError('');
+    const r = await api.captureToggle(captureSerial);
+    setCaptureBusy(false);
+    if (!r.ok) setError(r.error);
+    else if (!r.data.ok) setError(r.data.error);
+  }
 
   async function launch() {
     setBusy('launch');
@@ -118,6 +174,7 @@ export function DeviceDetail({
     setRam(hw?.ramMb ? gbFromMb(hw.ramMb) : '');
     setCores(hw?.cores ? String(hw.cores) : '');
     setStorage(hw?.storageGb ? String(Math.round(hw.storageGb)) : '');
+    setFrameDraft(prefs?.captureFrame ?? false);
     setEditing(true);
   }
 
@@ -156,7 +213,9 @@ export function DeviceDetail({
       (next.ramMb !== undefined && next.ramMb !== hw?.ramMb) ||
       (next.cores !== undefined && next.cores !== hw?.cores) ||
       (next.storageGb !== undefined && next.storageGb !== currentStorage);
-    if (trimmed === avdName && !changed) {
+    // 带边框是截图/录屏时现读的偏好，不算硬件变更：不触发重启
+    const frameChanged = !!prefs?.frameAvailable && frameDraft !== prefs.captureFrame;
+    if (trimmed === avdName && !changed && !frameChanged) {
       setEditing(false);
       return;
     }
@@ -194,24 +253,38 @@ export function DeviceDetail({
       onRenamed?.(trimmed);
     }
 
-    let r = await api.setAvdHardware(scope, trimmed, next);
-    if (!r.ok && r.needsWipe) {
-      const approve = window.confirm(
-        `该虚拟机镜像的数据分区已加密，无法在不丢失数据的前提下扩容。继续将清空虚拟机内的全部数据，并按 ${next.storageGb} GB 重建，是否继续？`,
-      );
-      if (!approve) {
+    if (frameChanged) {
+      const pr = await api.setAvdPrefs(scope, trimmed, { captureFrame: frameDraft });
+      if (!pr.ok || !pr.data.ok) {
+        setError(pr.ok ? pr.data.error ?? '保存失败' : pr.error);
         setSaving(false);
         if (restart) relaunch(trimmed);
         return;
       }
-      r = await api.setAvdHardware(scope, trimmed, next, { wipeData: true });
+    }
+
+    // 硬件没动就不碰硬件接口：它在虚拟机运行时会拒绝，而只改带边框无需关机
+    if (changed) {
+      let r = await api.setAvdHardware(scope, trimmed, next);
+      if (!r.ok && r.needsWipe) {
+        const approve = window.confirm(
+          `该虚拟机镜像的数据分区已加密，无法在不丢失数据的前提下扩容。继续将清空虚拟机内的全部数据，并按 ${next.storageGb} GB 重建，是否继续？`,
+        );
+        if (!approve) {
+          setSaving(false);
+          if (restart) relaunch(trimmed);
+          return;
+        }
+        r = await api.setAvdHardware(scope, trimmed, next, { wipeData: true });
+      }
+      setSaving(false);
+      if (!r.ok || !r.data.ok) {
+        setError(r.ok ? r.data.error ?? '保存失败' : r.error);
+        if (restart) relaunch(trimmed);
+        return;
+      }
     }
     setSaving(false);
-    if (!r.ok || !r.data.ok) {
-      setError(r.ok ? r.data.error ?? '保存失败' : r.error);
-      if (restart) relaunch(trimmed);
-      return;
-    }
     setEditing(false);
     reload();
     if (restart) relaunch(trimmed);
@@ -225,6 +298,19 @@ export function DeviceDetail({
       <div className="page-head">
         <h1 className="page-title mono">{avdName}</h1>
         <div className="page-actions">
+          {run && (
+            <button
+              className={`btn${capture.recording ? ' btn-recording' : ''}`}
+              disabled={busy !== '' || captureBusy}
+              title={capture.recording ? capture.file ?? undefined : undefined}
+              onClick={() => void toggleCapture()}
+              >
+                {capture.recording && <span className="dot rec" />}
+                {capture.recording
+                  ? `停止录屏 ${formatElapsed(captureNow - (capture.since ?? captureNow))}`
+                  : '录屏'}
+            </button>
+          )}
           {run ? (
             <button className="btn btn-danger" disabled={busy !== ''} onClick={stop}>
               {busy === 'stop' ? '关闭中' : '关闭'}
@@ -335,10 +421,31 @@ export function DeviceDetail({
               <tr>
                 <th>硬盘容量</th>
                 <td>
-                  {/* 扩容入口暂缓开放：核心扩容/重建逻辑保留在 avd.ts 与主进程，恢复时还原此输入框 */}
-                  <span className="num">{hw?.storageGb ? `${displayedStorageGb(hw.storageGb)} GB` : '—'}</span>
-                </td>
-              </tr>
+              {/* 扩容入口暂缓开放：核心扩容/重建逻辑保留在 avd.ts 与主进程，恢复时还原此输入框 */}
+              <span className="num">{hw?.storageGb ? `${displayedStorageGb(hw.storageGb)} GB` : '—'}</span>
+            </td>
+          </tr>
+          {prefs?.frameAvailable && (
+            <tr>
+              <th>截图录屏带边框</th>
+              <td>
+                {editing ? (
+                  <label className="switch-wrap">
+                    <input
+                      type="checkbox"
+                      checked={frameDraft}
+                      onChange={(e) => setFrameDraft(e.target.checked)}
+                    />
+                    开启
+                  </label>
+                ) : prefs.captureFrame ? (
+                  <span className="chip ok">开启</span>
+                ) : (
+                  <span className="chip idle">关闭</span>
+                )}
+              </td>
+            </tr>
+          )}
             </tbody>
           </table>
         </div>
