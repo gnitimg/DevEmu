@@ -138,35 +138,39 @@ export function About({ env }: { env: EnvStatus | null }) {
             </div>
           </div>
         </div>
-        <div className="section changelog-panel">
-          <div className="section-head">
-            <h2 className="section-title">更新记录</h2>
-            <span className="section-count">{CHANGELOGS.length} 个版本</span>
+        <div className="changelog-slot">
+          <div className="section changelog-panel">
+            <div className="section-head">
+              <h2 className="section-title">更新记录</h2>
+              <span className="section-count">{CHANGELOGS.length} 个版本</span>
+            </div>
+            <div className="changelog-list">
+              {CHANGELOGS.length === 0 ? (
+                <div className="about-body">暂无更新记录</div>
+              ) : (
+                CHANGELOGS.map((c) => (
+                  <button
+                    key={c.version}
+                    className="about-row"
+                    onClick={() =>
+                      setDoc({
+                        title: `更新记录 · ${c.version}`,
+                        body: c.body,
+                        rel: relTime(c.date),
+                        version: c.version,
+                      })
+                    }
+                  >
+                    <span className="mono">{c.version}</span>
+                    <span className="about-row-time">{relTime(c.date)}</span>
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 3.5 10.5 8 6 12.5" />
+                    </svg>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
-          {CHANGELOGS.length === 0 ? (
-            <div className="about-body">暂无更新记录</div>
-          ) : (
-            CHANGELOGS.map((c) => (
-              <button
-                key={c.version}
-                className="about-row"
-                onClick={() =>
-                  setDoc({
-                    title: `更新记录 · ${c.version}`,
-                    body: c.body,
-                    rel: relTime(c.date),
-                    version: c.version,
-                  })
-                }
-              >
-                <span className="mono">{c.version}</span>
-                <span className="about-row-time">{relTime(c.date)}</span>
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M6 3.5 10.5 8 6 12.5" />
-                </svg>
-              </button>
-            ))
-          )}
         </div>
       </div>
 

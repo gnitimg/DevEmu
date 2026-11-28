@@ -2253,21 +2253,56 @@ table.tbl.crash-tbl {
   color: var(--text-3);
 }
 
+/* 以 .about 宽度做容器查询，判断右栏能否与左栏并排 */
+.about {
+  container-type: inline-size;
+}
+
 .about-layout {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
 .about-main {
-  flex: 1;
-  min-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.about-main > .section {
+  margin-bottom: 0;
+}
+
+.changelog-slot {
+  position: relative;
+  min-width: 0;
 }
 
 .changelog-panel {
-  width: 320px;
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.changelog-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 宽屏并排时面板脱离文档流：行高只由左栏决定，右栏随之等高、列表内部滚动；
+   716px = 左栏最小宽 380 + 右栏宽 320 + 间距 16，恰好是原来的换行阈值 */
+@container (min-width: 716px) {
+  .about-layout {
+    grid-template-columns: minmax(380px, 1fr) 320px;
+  }
+
+  .changelog-panel {
+    position: absolute;
+    inset: 0;
+    margin-bottom: 0;
+  }
 }
 
 .about-row {
